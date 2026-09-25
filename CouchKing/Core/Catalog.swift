@@ -15,6 +15,7 @@ struct Meta: Identifiable, Hashable {
 struct Catalog {
     /// Rows shown on Home, in Android's order. For You + Trending etc. come from the
     /// user's addon; guests get TMDB-powered discovery rows instead (tracker mode).
+    @MainActor
     static func homeRows(session: Session) async -> [(String, [Meta])] {
         var rows: [(String, [Meta])] = []
         guard let addon = session.addons.first else { return rows }
