@@ -1,0 +1,30 @@
+# XcodeGen project definition — CI runs `xcodegen generate` then xcodebuild.
+# No .pbxproj in git = no merge pain; add files by just adding them to CouchKing/.
+name: CouchKing
+options:
+  bundleIdPrefix: app.couchking
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  CouchKing:
+    type: application
+    platform: iOS
+    sources: [CouchKing]
+    info:
+      path: CouchKing/Info.plist
+      properties:
+        CFBundleDisplayName: CouchKing
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        "UISupportedInterfaceOrientations~ipad":
+          [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft,
+           UIInterfaceOrientationLandscapeRight]
+        NSAppTransportSecurity: { NSAllowsArbitraryLoads: false }
+        UIBackgroundModes: [audio]   # keep playing with screen off, like Android
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.couchking.ios
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1"   # iPhone first; iPad later
+        SWIFT_VERSION: "5.9"

@@ -1,0 +1,19 @@
+name: build
+on: { push: { branches: [master, main] }, workflow_dispatch: {} }
+jobs:
+  compile:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate
+      - name: Build (simulator — compile check, no signing needed)
+        run: |
+          xcodebuild -project CouchKing.xcodeproj -scheme CouchKing \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build | tail -40
+  # TestFlight upload activates once AJ's Apple Developer account exists and these
+  # secrets are set: APPSTORE_ISSUER_ID, APPSTORE_KEY_ID, APPSTORE_P8 (base64 .p8),
+  # plus a distribution cert/profile via fastlane match or manual (phase 2).
