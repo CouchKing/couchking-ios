@@ -240,6 +240,7 @@ struct PlayerWindows {
     var afterCredits: [[Int]] = []
     var resumeMs = 0
 
+    @MainActor
     static func fetch(session: Session, id: String, season: Int?, episode: Int?) async -> PlayerWindows {
         var w = PlayerWindows()
         let k = session.subKey
