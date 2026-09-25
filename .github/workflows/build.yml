@@ -2,7 +2,7 @@ name: build
 on: { push: { branches: [master, main] }, workflow_dispatch: {} }
 jobs:
   compile:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Install XcodeGen
