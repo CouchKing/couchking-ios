@@ -32,10 +32,15 @@ jobs:
           APP=$(find dd-ios/Build/Products -name "CouchKing.app" | head -1)
           mkdir Payload && cp -r "$APP" Payload/
           zip -qr CouchKing-unsigned.ipa Payload
+      - name: Package simulator app (drag onto Simulator on any Mac)
+        run: |
+          SIMAPP=$(find dd/Build/Products -name "CouchKing.app" | head -1)
+          ditto -c -k --keepParent "$SIMAPP" CouchKing-Simulator.app.zip
       - uses: actions/upload-artifact@v4
         with:
           name: couchking-ios
           path: |
             shot-home.png
             CouchKing-unsigned.ipa
+            CouchKing-Simulator.app.zip
   # TestFlight lane activates once the Apple Developer account + signing secrets exist.
