@@ -11,9 +11,16 @@ jobs:
         run: xcodegen generate
       - name: Build for simulator
         run: |
+          set -o pipefail
           xcodebuild -project CouchKing.xcodeproj -scheme CouchKing \
             -destination 'platform=iOS Simulator,name=iPhone 15' \
-            -derivedDataPath dd CODE_SIGNING_ALLOWED=NO build | tail -20
+            -derivedDataPath dd CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build.log | tail -20
+      - name: Surface errors
+        if: failure()
+        run: grep -E "error:" build.log | sort -u | head -40
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: build-log, path: build.log }
       - name: Run in simulator + screenshots
         continue-on-error: true   # screenshots are a bonus — never block the artifacts
         run: |
