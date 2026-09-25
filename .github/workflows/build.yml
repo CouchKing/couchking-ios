@@ -15,6 +15,7 @@ jobs:
             -destination 'platform=iOS Simulator,name=iPhone 15' \
             -derivedDataPath dd CODE_SIGNING_ALLOWED=NO build | tail -20
       - name: Run in simulator + screenshots
+        continue-on-error: true   # screenshots are a bonus — never block the artifacts
         run: |
           set -x
           APP=$(find dd -name "CouchKing.app" -path "*iphonesimulator*" -type d | head -1)
@@ -39,8 +40,10 @@ jobs:
           SIMAPP=$(find dd/Build/Products -name "CouchKing.app" | head -1)
           ditto -c -k --keepParent "$SIMAPP" CouchKing-Simulator.app.zip
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: couchking-ios
+          if-no-files-found: warn
           path: |
             shot-home.png
             CouchKing-unsigned.ipa
