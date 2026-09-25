@@ -4,7 +4,11 @@ import SwiftUI
 // Look & feel / About. Person-level settings sync per profile (2.0.93 semantics).
 struct SettingsView: View {
     @EnvironmentObject var session: Session
-    @State private var email = "", password = "", name = "", creating = false, err = ""
+    @State private var email = ""
+    @State private var password = ""
+    @State private var name = ""
+    @State private var creating = false
+    @State private var err = ""
     @State private var addonCode = ""
 
     var body: some View {
