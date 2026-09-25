@@ -1,45 +1,73 @@
 import SwiftUI
+import SafariServices
 
-// Details page — Android parity: trailer / library / eye (movies) / 👍 / 👎,
-// then episodes (series) or streams (movies, addon users only).
+// Details page — Android parity: poster/meta header, trailer / library / eye (movies) /
+// 👍 / 👎 action circles, cast chips, then episodes (series) or Play (movies).
 struct DetailView: View {
     @EnvironmentObject var session: Session
     let meta: Meta
     @State private var full: [String: Any] = [:]
-    @State private var streams: [[String: Any]] = []
-    @State private var playURL: URL?
+    @State private var showStreams = false
+    @State private var trailerURL: URL?
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 14) {
-                    PosterCard(meta: meta)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(meta.name).font(.title3.bold())
-                        Text(desc).font(.caption).foregroundStyle(.secondary).lineLimit(6)
+                header
+                actionRow
+                if meta.type == "movie", session.hasAddon {
+                    Button { showStreams = true } label: {
+                        Label("Play", systemImage: "play.fill")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 12)
+                            .background(Theme.accent, in: RoundedRectangle(cornerRadius: 12))
+                            .foregroundStyle(.white)
                     }
                 }
-                actionRow
-                if session.hasAddon {
-                    StreamList(meta: meta, streams: streams, playURL: $playURL)
-                } else {
-                    WhereToWatch(meta: meta)   // tracker mode: providers, not streams
+                castRow
+                if meta.type == "series" {
+                    EpisodesView(meta: meta, videos: full["videos"] as? [[String: Any]] ?? [])
+                }
+                if !session.hasAddon {
+                    Text("Sign in with an enabled account to watch — tracking works for everyone.")
+                        .font(.caption).foregroundStyle(.secondary)
                 }
             }
             .padding(14)
         }
         .background(Theme.bg)
         .task { await load() }
-        .fullScreenCover(item: $playURL) { url in PlayerView(url: url, meta: meta) }
+        .sheet(isPresented: $showStreams) {
+            StreamSheet(meta: meta).presentationDetents([.medium, .large])
+        }
+        .sheet(item: $trailerURL) { url in SafariView(url: url) }
     }
 
-    private var desc: String {
-        (full["description"] as? String) ?? ""
+    private var header: some View {
+        HStack(alignment: .top, spacing: 14) {
+            PosterCard(meta: meta)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(meta.name).font(.title3.bold())
+                HStack(spacing: 6) {
+                    if let y = full["releaseInfo"] as? String { Text(y) }
+                    if let r = full["imdbRating"] as? String { Text("⭐ " + r) }
+                }
+                .font(.caption).foregroundStyle(.secondary)
+                Text(full["description"] as? String ?? "")
+                    .font(.caption).foregroundStyle(.secondary).lineLimit(7)
+            }
+        }
     }
 
     private var actionRow: some View {
         HStack(spacing: 14) {
-            ActionCircle(icon: "plus", active: inList, label: "Library") { toggleList() }
+            if let yt = ytId {
+                ActionCircle(icon: "film", active: false, label: "Trailer") {
+                    trailerURL = URL(string: "https://www.youtube.com/watch?v=\(yt)")
+                }
+            }
+            ActionCircle(icon: "plus.circle", active: inList, label: inList ? "In Library" : "Library") { toggleList() }
             if meta.type == "movie" {
                 ActionCircle(icon: "eye", active: isWatched, label: "Watched") { toggleWatched() }
             }
@@ -53,6 +81,25 @@ struct DetailView: View {
         }
     }
 
+    @ViewBuilder private var castRow: some View {
+        let cast = (full["cast"] as? [String] ?? []).prefix(10)
+        if !cast.isEmpty {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack {
+                    ForEach(Array(cast), id: \.self) { nm in
+                        Text(nm).font(.caption)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                            .background(Theme.card, in: Capsule())
+                    }
+                }
+            }
+        }
+    }
+
+    private var ytId: String? {
+        if let t = (full["trailers"] as? [[String: Any]])?.first?["source"] as? String { return t }
+        return (full["trailerStreams"] as? [[String: Any]])?.first?["ytId"] as? String
+    }
     private var inList: Bool {
         ((session.pstate()["watchlist"] as? [[String: Any]]) ?? []).contains { $0["id"] as? String == meta.id }
     }
@@ -65,7 +112,6 @@ struct DetailView: View {
         m[key] = Int(Date().timeIntervalSince1970 * 1000)
         ps[ledger] = m
     }
-
     private func toggleList() {
         var ps = session.pstate()
         var wl = ps["watchlist"] as? [[String: Any]] ?? []
@@ -77,7 +123,6 @@ struct DetailView: View {
         ps["watchlist"] = wl
         session.setPstate(ps)
     }
-
     private func toggleWatched() {
         var ps = session.pstate()
         var ids = ps["watchedIds"] as? [String] ?? []
@@ -95,15 +140,13 @@ struct DetailView: View {
     }
 
     private func load() async {
-        guard let addon = session.addons.first else { return }
-        if let r = try? await API.json("/meta/\(meta.type)/\(meta.id).json", base: addon.url),
+        // addon meta first (has videos for episodes); Cinemeta as guest fallback
+        if let addon = session.addons.first,
+           let r = try? await API.json("/meta/\(meta.type)/\(meta.id).json", base: addon.url),
+           let m = r["meta"] as? [String: Any] { full = m; return }
+        if let r = try? await API.json("/meta/\(meta.type)/\(meta.id).json",
+                                       base: "https://v3-cinemeta.strem.io"),
            let m = r["meta"] as? [String: Any] { full = m }
-        if meta.type == "movie" {
-            let u = session.profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-            if let r = try? await API.json("/stream/movie/\(meta.id).json?u=\(u)", base: addon.url) {
-                streams = r["streams"] as? [[String: Any]] ?? []
-            }
-        }
     }
 }
 
@@ -123,39 +166,10 @@ struct ActionCircle: View {
     }
 }
 
-struct StreamList: View {
-    let meta: Meta
-    let streams: [[String: Any]]
-    @Binding var playURL: URL?
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !streams.isEmpty { Text("Streams").font(.headline) }
-            ForEach(Array(streams.prefix(8).enumerated()), id: \.offset) { _, s in
-                Button {
-                    if let u = s["url"] as? String, let url = URL(string: u) { playURL = url }
-                } label: {
-                    VStack(alignment: .leading) {
-                        Text(s["name"] as? String ?? "Stream").font(.subheadline.bold())
-                        Text((s["title"] as? String ?? s["description"] as? String ?? ""))
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-}
-
-struct WhereToWatch: View {
-    let meta: Meta
-    var body: some View {
-        // Tracker mode: TMDB watch-providers (labels only — the Amazon deep-link lesson).
-        Text("Where to watch appears here for guests.")
-            .font(.caption).foregroundStyle(.secondary)
-    }
+struct SafariView: UIViewControllerRepresentable {
+    let url: URL
+    func makeUIViewController(context: Context) -> SFSafariViewController { SFSafariViewController(url: url) }
+    func updateUIViewController(_ vc: SFSafariViewController, context: Context) {}
 }
 
 extension URL: Identifiable { public var id: String { absoluteString } }

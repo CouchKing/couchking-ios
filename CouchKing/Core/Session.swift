@@ -159,3 +159,102 @@ struct Addon: Identifiable {
     var id: String { url }
     let url: String, name: String
 }
+
+// ---- parity extensions (settings sync, profiles CRUD, player context) ----
+extension Session {
+    /// subKey + userName parsed from the installed addon's config URL (Android parity:
+    /// the addon path carries {"subKey":..,"userName":..} URL-encoded).
+    var subKey: String {
+        guard let a = addons.first,
+              let comp = a.url.removingPercentEncoding,
+              let m = comp.range(of: #""subKey"\s*:\s*"([^"]+)""#, options: .regularExpression)
+        else { return "" }
+        let s = String(comp[m])
+        return s.replacingOccurrences(of: #""subKey""#, with: "")
+            .replacingOccurrences(of: #"[":\s]"#, with: "", options: .regularExpression)
+    }
+
+    // Per-person prefs live in the profile state (2.0.93 semantics) — these helpers keep
+    // a local mirror for instant UI and push the profile copy for cross-device sync.
+    func pref<T>(_ key: String, _ def: T) -> T {
+        ((pstate()["prefs"] as? [String: Any])?[key] as? T) ?? def
+    }
+    func setPref(_ key: String, _ value: Any) {
+        var ps = pstate()
+        var prefs = ps["prefs"] as? [String: Any] ?? [:]
+        prefs[key] = value
+        ps["prefs"] = prefs
+        setPstate(ps)
+    }
+
+    // ---- profiles CRUD (Android parity: max 5, tombstoned deletes) ----
+    func addProfile(name: String, avatar: String) {
+        guard profiles.count < 5 else { return }
+        let id = "p" + String(Int(Date().timeIntervalSince1970 * 1000), radix: 36)
+        var profs = state["profiles"] as? [[String: Any]] ?? []
+        profs.append(["id": id, "name": name, "avatar": avatar, "color": "",
+                      "mt": Int(Date().timeIntervalSince1970 * 1000)])
+        state["profiles"] = profs
+        var states = state["states"] as? [String: Any] ?? [:]
+        states[id] = [:] as [String: Any]
+        state["states"] = states
+        profiles = profs.compactMap(Profile.init)
+        push()
+    }
+    func renameProfile(_ id: String, name: String, avatar: String) {
+        var profs = state["profiles"] as? [[String: Any]] ?? []
+        for i in profs.indices where profs[i]["id"] as? String == id {
+            profs[i]["name"] = name; profs[i]["avatar"] = avatar
+            profs[i]["mt"] = Int(Date().timeIntervalSince1970 * 1000)
+        }
+        state["profiles"] = profs
+        profiles = profs.compactMap(Profile.init)
+        push()
+    }
+    func deleteProfile(_ id: String) {
+        var profs = state["profiles"] as? [[String: Any]] ?? []
+        profs.removeAll { $0["id"] as? String == id }
+        state["profiles"] = profs
+        var tomb = state["profilesRemoved"] as? [String: Any] ?? [:]
+        tomb[id] = Int(Date().timeIntervalSince1970 * 1000)
+        state["profilesRemoved"] = tomb
+        var states = state["states"] as? [String: Any] ?? [:]
+        states.removeValue(forKey: id)
+        state["states"] = states
+        profiles = profs.compactMap(Profile.init)
+        if currentProfile == id { currentProfile = "" ; UserDefaults.standard.set("", forKey: "curProfile") }
+        push()
+    }
+    func removeAddon(_ url: String) {
+        addons.removeAll { $0.url == url }
+        state["addons"] = addons.map { ["url": $0.url, "name": $0.name] }
+        liveTvOn = false
+        push()
+        Task { await detectLiveTv() }
+    }
+}
+
+// Skip windows + resume from the addon (same endpoint the Android player uses).
+struct PlayerWindows {
+    var introFrom = 0, introTo = 0, recapFrom = 0, recapTo = 0, credits = 0
+    var afterCredits: [[Int]] = []
+    var resumeMs = 0
+
+    static func fetch(session: Session, id: String, season: Int?, episode: Int?) async -> PlayerWindows {
+        var w = PlayerWindows()
+        let k = session.subKey
+        guard !k.isEmpty else { return w }
+        let u = session.profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        var path = "/player/resume?k=\(k)&u=\(u)&i=\(id)"
+        if let s = season, let e = episode { path += "&s=\(s)&e=\(e)" }
+        guard let r = try? await API.json(path) else { return w }
+        w.introFrom = r["introFrom"] as? Int ?? 0
+        w.introTo = r["introTo"] as? Int ?? 0
+        w.recapFrom = r["recapFrom"] as? Int ?? 0
+        w.recapTo = r["recapTo"] as? Int ?? 0
+        w.credits = r["credits"] as? Int ?? 0
+        w.afterCredits = r["afterCredits"] as? [[Int]] ?? []
+        w.resumeMs = r["pos"] as? Int ?? 0
+        return w
+    }
+}
