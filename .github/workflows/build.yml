@@ -16,14 +16,16 @@ jobs:
             -derivedDataPath dd CODE_SIGNING_ALLOWED=NO build | tail -20
       - name: Run in simulator + screenshots
         run: |
-          UDID=$(xcrun simctl list devices available | grep "iPhone 15 (" | head -1 | grep -oE '[0-9A-F-]{36}')
-          xcrun simctl boot $UDID || true
-          xcrun simctl bootstatus $UDID -b
-          APP=$(find dd/Build/Products -name "CouchKing.app" | head -1)
-          xcrun simctl install $UDID "$APP"
-          xcrun simctl launch $UDID app.couchking.ios
-          sleep 10
-          xcrun simctl io $UDID screenshot shot-home.png
+          set -x
+          APP=$(find dd -name "CouchKing.app" -path "*iphonesimulator*" -type d | head -1)
+          echo "APP=$APP"; test -n "$APP"; ls "$APP" | head
+          UDID=$(xcrun simctl create ck-test "iPhone 15")
+          xcrun simctl boot "$UDID"
+          xcrun simctl bootstatus "$UDID" -b
+          xcrun simctl install "$UDID" "$APP"
+          xcrun simctl launch "$UDID" app.couchking.ios
+          sleep 12
+          xcrun simctl io "$UDID" screenshot shot-home.png
       - name: Unsigned device build (AltStore-installable IPA)
         run: |
           xcodebuild -project CouchKing.xcodeproj -scheme CouchKing \
