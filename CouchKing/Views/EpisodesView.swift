@@ -120,7 +120,20 @@ struct StreamSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                if loading { ProgressView() }
+                // expiry banner WHERE the streams would be — browsing never blocks, only
+                // play time shows it (Android expiryBanner parity, AJ Sep 18 rule)
+                if session.isExpired {
+                    VStack(alignment: .center, spacing: 6) {
+                        Text("⛔").font(.system(size: 44))
+                        Text("Subscription expired").font(.headline)
+                        Text("Renew your plan to keep watching.")
+                            .font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 28)
+                    .listRowBackground(Color.clear)
+                }
+                else if loading { ProgressView() }
                 else if streams.isEmpty { Text("No streams right now — try again in a minute.") }
                 ForEach(Array(streams.prefix(10).enumerated()), id: \.offset) { _, s in
                     Button {
@@ -145,7 +158,7 @@ struct StreamSheet: View {
 
     private func load() async {
         defer { loading = false }
-        guard let addon = session.addons.first else { return }
+        guard !session.isExpired, let addon = session.addons.first else { return }
         let u = session.profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         let sid = season != nil ? "\(meta.id):\(season!):\(episode!)" : meta.id
         let type = season != nil ? "series" : "movie"

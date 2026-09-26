@@ -6,6 +6,7 @@ import SwiftUI
 @main
 struct CouchKingApp: App {
     @StateObject private var session = Session.shared
+    @Environment(\.scenePhase) private var scenePhase
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -13,6 +14,11 @@ struct CouchKingApp: App {
                 .preferredColorScheme(.dark)
                 .tint(Theme.accent)
                 .task { await session.boot() }
+                // Android onResume parity: every foreground silently pulls state, refreshes
+                // cached expiry, picks up a just-assigned addon, and re-detects Live TV.
+                .onChange(of: scenePhase) { phase in
+                    if phase == .active { Task { await session.foregroundResume() } }
+                }
         }
     }
 }

@@ -10,6 +10,8 @@ struct SettingsView: View {
     @State private var creating = false
     @State private var err = ""
     @State private var addonCode = ""
+    @State private var confirmDelete = false
+    @State private var syncMsg = ""
 
     var body: some View {
         NavigationStack {
@@ -25,15 +27,53 @@ struct SettingsView: View {
         }
     }
 
+    /// Account card status line — Android Settings card parity: lifetime / expired /
+    /// "Access through … · N days left" / plain signed-in.
+    private var accessLine: String {
+        if session.accessDaysLeft > 3650 { return "Lifetime access" }
+        // ≤ 0 days = EXPIRED/REVOKED — no ambiguous "expires today" (revoked should read
+        // as gone, not like they still have access today)
+        if !session.accessExpiry.isEmpty && session.accessDaysLeft <= 0 {
+            return "⛔ Subscription expired — renew to keep watching"
+        }
+        if !session.accessExpiry.isEmpty {
+            return "Access through \(session.accessExpiry) · \(session.accessDaysLeft) days left"
+        }
+        return "Signed in"
+    }
+
     private var accountSection: some View {
         Section("Account") {
             if session.signedIn {
-                LabeledContent("Signed in", value: session.email)
-                Button("Sign out", role: .destructive) {
-                    session.email = ""; session.token = ""
-                    UserDefaults.standard.removeObject(forKey: "email")
-                    UserDefaults.standard.removeObject(forKey: "token")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(session.email).font(.body.bold())
+                    Text(accessLine).font(.caption)
+                        .foregroundStyle(session.isExpired ? .red : .secondary)
                 }
+                Button(syncMsg.isEmpty ? "Sync library now" : syncMsg) {
+                    syncMsg = "Syncing…"
+                    Task {
+                        await session.pull(); await session.checkAccess()
+                        syncMsg = "Library synced"
+                        try? await Task.sleep(for: .seconds(2))
+                        syncMsg = ""
+                    }
+                }
+                Button("Sign out", role: .destructive) { session.signOut() }
+                Button("Delete account", role: .destructive) { confirmDelete = true }
+                    .confirmationDialog("Delete account?", isPresented: $confirmDelete, titleVisibility: .visible) {
+                        Button("Delete", role: .destructive) {
+                            Task {
+                                if !(await session.deleteAccount()) {
+                                    err = "Couldn't delete — check your connection"
+                                }
+                            }
+                        }
+                        Button("Cancel", role: .cancel) {}
+                    } message: {
+                        Text("This permanently deletes your account and synced library on the server.")
+                    }
+                if !err.isEmpty { Text(err).font(.caption).foregroundStyle(.red) }
             } else {
                 TextField("Email", text: $email)
                     .keyboardType(.emailAddress).textInputAutocapitalization(.never)
@@ -47,6 +87,8 @@ struct SettingsView: View {
                 Button(creating ? "Have an account? Sign in" : "New here? Create one") {
                     creating.toggle()
                 }.font(.footnote)
+                NavigationLink("Forgot password?") { ForgotPasswordView(prefill: email) }
+                    .font(.footnote)
             }
         }
     }
@@ -157,6 +199,73 @@ struct PrefPicker<T: Hashable>: View {
             set: { session.setPref(key, $0) }
         )) {
             ForEach(options, id: \.0) { v, name in Text(name).tag(v) }
+        }
+    }
+}
+
+/// Forgot password (Android showForgotPassword parity): email → 6-digit code (15 min) →
+/// new password. The service resets the account token, so other devices just re-prompt.
+struct ForgotPasswordView: View {
+    @EnvironmentObject var session: Session
+    @Environment(\.dismiss) private var dismiss
+    var prefill: String = ""
+    @State private var email = ""
+    @State private var code = ""
+    @State private var pass = ""
+    @State private var pass2 = ""
+    @State private var sent = false
+    @State private var msg = ""
+
+    var body: some View {
+        Form {
+            Section {
+                Text("We'll email you a 6-digit code — it expires in 15 minutes.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                TextField("Email", text: $email)
+                    .keyboardType(.emailAddress).textInputAutocapitalization(.never)
+                Button("Email me the code") { sendCode() }
+                    .disabled(!email.contains("@") || !email.contains("."))
+            }
+            if sent {
+                Section {
+                    TextField("6-digit code", text: $code).keyboardType(.numberPad)
+                    SecureField("New password (4+ characters)", text: $pass)
+                    SecureField("Confirm new password", text: $pass2)
+                    Button("Set new password") { reset() }
+                }
+            }
+            if !msg.isEmpty {
+                Text(msg).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .navigationTitle("Reset password")
+        .onAppear { if email.isEmpty { email = prefill } }
+    }
+
+    private func sendCode() {
+        msg = "Sending…"
+        Task {
+            _ = try? await API.postJSON("/tvapp/reset-request", body: ["email": email.trimmingCharacters(in: .whitespaces)])
+            msg = "If that email has an account, the code is on its way"
+            sent = true
+        }
+    }
+
+    private func reset() {
+        let addr = email.trimmingCharacters(in: .whitespaces)
+        if code.trimmingCharacters(in: .whitespaces).count != 6 { msg = "Enter the 6-digit code from the email"; return }
+        if pass.count < 4 { msg = "Password needs 4+ characters"; return }
+        if pass != pass2 { msg = "Passwords don't match"; return }
+        Task {
+            let r = try? await API.postJSON("/tvapp/reset", body: [
+                "email": addr, "code": code.trimmingCharacters(in: .whitespaces), "password": pass])
+            guard r?["ok"] as? Bool == true else {
+                msg = (r?["error"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Wrong or expired code"
+                return
+            }
+            msg = "Password updated — signing you in"
+            if await session.signIn(email: addr, password: pass, create: false) == nil { dismiss() }
+            else { msg = "Password updated — sign in with your new password" }
         }
     }
 }

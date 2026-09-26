@@ -15,10 +15,29 @@ final class Session: ObservableObject {
     @Published var addons: [Addon] = []
     @Published var liveTvOn = false
     @Published var state: [String: Any] = [:]   // full account blob; states[pid] = per-profile
+    // cached access status (Android Store.accessExpiry/accessDaysLeft): drives the Settings
+    // account card + the play-time expiry banner. Browsing never blocks on it.
+    @Published var accessExpiry: String = UserDefaults.standard.string(forKey: "accessExpiry") ?? ""
+    @Published var accessDaysLeft: Int = UserDefaults.standard.object(forKey: "accessDaysLeft") as? Int ?? -1
+
+    static let appVer = "ios-" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
 
     var signedIn: Bool { !email.isEmpty && !token.isEmpty }
     var hasAddon: Bool { !addons.isEmpty }
     var needsProfilePick: Bool { signedIn && profiles.count > 1 && currentProfile.isEmpty }
+
+    /// Which account the on-device library belongs to. Survives sign-out (unlike email/token)
+    /// so a later sign-in by a DIFFERENT email still knows the local state isn't theirs.
+    var contentOwner: String {
+        get { UserDefaults.standard.string(forKey: "contentOwner") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "contentOwner") }
+    }
+
+    /// ≤0 days with a real expiry date = expired/revoked (Android isExpired). Browse stays
+    /// open — only the stream list shows the banner, at play time.
+    var isExpired: Bool {
+        signedIn && !accessExpiry.isEmpty && accessDaysLeft <= 0 && accessDaysLeft > -3650
+    }
 
     /// "AJ #b9e1" — the per-person label every play/click carries (Android parity).
     var profileSeg: String {
@@ -40,21 +59,112 @@ final class Session: ObservableObject {
     }
 
     /// Same contract as Android: POST /tvapp/auth {email,password,mode,name}.
+    /// NOTHING commits until the credentials are accepted (Android Sync.auth order) — a
+    /// typo'd or abandoned sign-in must never wipe the real owner's library or leave the
+    /// device half signed-in as a garbage account.
     func signIn(email: String, password: String, create: Bool, name: String = "") async -> String? {
         do {
-            var body: [String: Any] = ["email": email, "password": password]
+            var body: [String: Any] = ["email": email, "password": password, "appVer": Self.appVer]
             if create { if !name.isEmpty { body["name"] = name } } else { body["mode"] = "signin" }
             let r = try await API.postJSON("/tvapp/auth", body: body)
             guard let t = r["token"] as? String, !t.isEmpty else {
                 return (r["error"] as? String) ?? "Sign-in failed"
             }
-            self.email = email; self.token = t
+            // verified — NOW commit. A DIFFERENT account than the one this device's library
+            // belongs to: start clean (content-owner guard, Store.contentOwner parity).
+            if !contentOwner.isEmpty && contentOwner.lowercased() != email.lowercased() {
+                clearContentState()
+            }
+            contentOwner = email
+            self.email = email
             UserDefaults.standard.set(email, forKey: "email")
+            // same email returning after sign-out: everything comes back from the on-device
+            // stash BEFORE any network — profiles, addons, every profile's library/continue
+            unstashAccount(email)
+            self.token = t
             UserDefaults.standard.set(t, forKey: "token")
             await pull()
             await checkAccess()
+            await detectLiveTv()
             return nil
         } catch { return "Can't reach the service — check the address in Settings → Addons." }
+    }
+
+    /// Android sign-out semantics: park the WHOLE account state under its email (device-local
+    /// safety net so re-sign-in restores instantly, even offline), then a guest starts CLEAN —
+    /// addons, library, Live TV all leave with the account. The serviceBase deliberately
+    /// SURVIVES: it's where accounts live, not account content.
+    func signOut() {
+        stashAccount()
+        email = ""; token = ""
+        UserDefaults.standard.removeObject(forKey: "email")
+        UserDefaults.standard.removeObject(forKey: "token")
+        clearContentState()
+        setAccessStatus(expires: "", daysLeft: -1)
+    }
+
+    /// Wipe everything an ACCOUNT owns from memory + device: library, profiles, addons,
+    /// Live TV. Without this, sign-in merged the device's existing library into the new
+    /// account and pushed it up — every email used on the device "shared" one library.
+    func clearContentState() {
+        state = [:]; profiles = []; addons = []; liveTvOn = false
+        currentProfile = ""
+        UserDefaults.standard.set("", forKey: "curProfile")
+    }
+
+    private func stashKey(_ e: String) -> String {
+        "acctstash:" + e.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    func stashAccount() {
+        guard !email.isEmpty, !state.isEmpty,
+              JSONSerialization.isValidJSONObject(state),
+              let d = try? JSONSerialization.data(withJSONObject: state) else { return }
+        UserDefaults.standard.set(d, forKey: stashKey(email))
+    }
+
+    @discardableResult
+    func unstashAccount(_ email: String) -> Bool {
+        let k = stashKey(email)
+        guard let d = UserDefaults.standard.data(forKey: k),
+              let st = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { return false }
+        apply(st)   // local state is empty right after sign-out/owner-wipe, so apply = restore
+        UserDefaults.standard.removeObject(forKey: k)
+        return true
+    }
+
+    func dropStash(_ email: String) { UserDefaults.standard.removeObject(forKey: stashKey(email)) }
+
+    /// Permanently delete the account server-side (App Store requires this for apps with
+    /// account creation), then forget it locally. Returns false when unreachable/refused.
+    func deleteAccount() async -> Bool {
+        guard signedIn else { return false }
+        guard let r = try? await API.postJSON("/tvapp/delete", body: ["email": email, "token": token]),
+              r["ok"] as? Bool == true else { return false }
+        dropStash(email)
+        email = ""; token = ""
+        UserDefaults.standard.removeObject(forKey: "email")
+        UserDefaults.standard.removeObject(forKey: "token")
+        contentOwner = ""
+        clearContentState()
+        setAccessStatus(expires: "", daysLeft: -1)
+        return true
+    }
+
+    func setAccessStatus(expires: String, daysLeft: Int) {
+        accessExpiry = expires; accessDaysLeft = daysLeft
+        UserDefaults.standard.set(expires, forKey: "accessExpiry")
+        UserDefaults.standard.set(daysLeft, forKey: "accessDaysLeft")
+    }
+
+    /// Every foreground (Android onResume parity): pull cross-device state, refresh the
+    /// cached expiry, pick up an addon assigned AFTER sign-in without visiting Settings,
+    /// and re-detect Live TV so the tab appears/disappears live.
+    func foregroundResume() async {
+        guard signedIn else { return }
+        await pull()
+        await checkAccess()
+        await detectLiveTv()
     }
 
     func pull() async {
@@ -65,9 +175,14 @@ final class Session: ObservableObject {
 
     /// Store-channel flow (identical to Android store flavor): after sign-in, ask the
     /// user-entered service whether this account has an assigned addon → auto-install.
+    /// Also caches expires/daysLeft for the Settings card + play-time expiry banner.
     func checkAccess() async {
+        guard signedIn else { return }
         let e = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        guard let r = try? await API.json("/tvapp/access?e=\(e)&t=\(token)") else { return }
+        let k = subKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        guard let r = try? await API.json("/tvapp/access?e=\(e)&t=\(token)&k=\(k)") else { return }
+        setAccessStatus(expires: r["expires"] as? String ?? "",
+                        daysLeft: r["daysLeft"] as? Int ?? -1)
         if let allowed = r["allowed"] as? Bool, allowed,
            let addonUrl = r["addon"] as? String, !addonUrl.isEmpty,
            !addons.contains(where: { $0.url == addonUrl }) {
@@ -85,7 +200,7 @@ final class Session: ObservableObject {
         var out = state
         out["v"] = 2
         out["activeProfile"] = currentProfile   // per-profile settings guard (server 2.0.93+)
-        let body: [String: Any] = ["email": email, "token": token, "appVer": "ios-1.0.0", "state": out]
+        let body: [String: Any] = ["email": email, "token": token, "appVer": Self.appVer, "state": out]
         Task { _ = try? await API.postJSON("/tvapp/state", body: body) }
     }
 
