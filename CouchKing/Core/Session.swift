@@ -257,6 +257,27 @@ final class Session: ObservableObject {
         setPstate(ps)
     }
 
+    /// One tiny POST per beat/sit-down (Android Ck.reportServer): powers For You's
+    /// completion signal, cross-device resume, and the learned credits timing.
+    func reportProgress(id: String, season: Int?, episode: Int?, pos: Int, dur: Int) {
+        let k = subKey
+        guard !k.isEmpty, dur > 0, pos >= 5000 else { return }
+        let body: [String: Any] = ["k": k, "u": profileSeg, "i": id,
+                                   "s": season.map(String.init) ?? "",
+                                   "e": episode.map(String.init) ?? "",
+                                   "pos": pos, "dur": dur]
+        Task { _ = try? await API.postJSON("/player/progress", body: body) }
+    }
+
+    /// Wipe the server's resume for a title (Android Ck.clearServer) — without it the
+    /// other device re-fetches ckpos and a finished/cleared title comes right back.
+    func clearServerResume(id: String) {
+        let k = subKey
+        guard !k.isEmpty else { return }
+        let body: [String: Any] = ["k": k, "u": profileSeg, "i": id]
+        Task { _ = try? await API.postJSON("/player/clear", body: body) }
+    }
+
     func detectLiveTv() async {
         for a in addons {
             if let m = try? await API.json("/manifest.json", base: a.url),

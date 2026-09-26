@@ -174,4 +174,7 @@ struct PlayRequest: Identifiable {
     let meta: Meta
     let season: Int?
     let episode: Int?
+    // "Are you still watching?" chain: consecutive fully-input-less auto-advanced
+    // episodes so far (rides along because each auto-advance is a fresh PlayerView)
+    var idleEps: Int = 0
 }
