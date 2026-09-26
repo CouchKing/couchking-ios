@@ -169,8 +169,14 @@ final class Session: ObservableObject {
 
     func pull() async {
         guard signedIn else { return }
+        // upgrade migration: devices from before contentOwner existed — the signed-in
+        // account claims the local library so a future different-email sign-in wipes it
+        if contentOwner.isEmpty { contentOwner = email }
         let e = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        if let st = try? await API.json("/tvapp/state?e=\(e)&t=\(token)") { apply(st) }
+        if let st = try? await API.json("/tvapp/state?e=\(e)&t=\(token)") {
+            apply(st)
+            push()   // push the union straight back (Android Sync.pullMerge: merge, then push)
+        }
     }
 
     /// Store-channel flow (identical to Android store flavor): after sign-in, ask the
@@ -204,11 +210,13 @@ final class Session: ObservableObject {
         Task { _ = try? await API.postJSON("/tvapp/state", body: body) }
     }
 
+    /// Merge a remote/stashed blob into local state (union — nothing ever lost; offline
+    /// changes since the last push survive) and re-derive profiles/addons from the result.
     private func apply(_ st: [String: Any]) {
-        state = st
-        profiles = (st["profiles"] as? [[String: Any]] ?? []).compactMap(Profile.init)
+        state = StateMerge.merge(local: state, remote: st)
+        profiles = (state["profiles"] as? [[String: Any]] ?? []).compactMap(Profile.init)
         if profiles.count == 1 { currentProfile = profiles[0].id }
-        addons = (st["addons"] as? [[String: Any]] ?? []).compactMap {
+        addons = (state["addons"] as? [[String: Any]] ?? []).compactMap {
             guard let u = $0["url"] as? String else { return nil }
             return Addon(url: u, name: $0["name"] as? String ?? "Addon")
         }
@@ -223,7 +231,9 @@ final class Session: ObservableObject {
         return ps
     }
 
-    func setPstate(_ ps: [String: Any]) {
+    /// `push: false` = local-only save (the player's 30s resume beat; the account blob
+    /// rides up on its own 90s cadence instead of every save).
+    func setPstate(_ ps: [String: Any], push doPush: Bool = true) {
         if currentProfile.isEmpty { state.merge(ps) { _, new in new } }
         else {
             var states = state["states"] as? [String: Any] ?? [:]
@@ -231,7 +241,7 @@ final class Session: ObservableObject {
             state["states"] = states
         }
         objectWillChange.send()
-        push()
+        if doPush { push() }
     }
 
     // ---- thumbs (identical semantics to Android/web: {v: 1|-1|0, ts}) ----
