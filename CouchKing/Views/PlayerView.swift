@@ -101,7 +101,7 @@ struct PlayerView: View {
                     .font(.system(size: 17 * session.pref("subScale", 1.0)))
                     .multilineTextAlignment(.center)
                     .padding(6)
-                    .background(session.pref("subBg", true) ? .black.opacity(0.6) : .clear,
+                    .background(session.pref("subBg", false) ? .black.opacity(0.6) : .clear,
                                 in: RoundedRectangle(cornerRadius: 6))
                     .padding(.bottom, 8)
             }

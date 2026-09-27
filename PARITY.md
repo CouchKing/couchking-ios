@@ -145,7 +145,7 @@ Android references are file + function/rough line so the implementer can read th
 
 - ✅ Settings screen with Account / Profiles / Addons / Player / Look sections
 - ✅ Per-profile synced prefs helpers (pref/setPref → profile blob → push)
-- 🟡 Pref keys/values parity: Android keys are `subScale` (0.8/1.0/1.3/1.6), `subLang` (**"en"|"off" ONLY** — AJ: "either English or off"; iOS offers Spanish → remove), `autoplayNext`, `seekStep` (5/10/15/30 — iOS lacks 5), `blurUnwatched`, `subBg` (default **false** on Android, iOS defaults true), `subOutline` (default true — missing on iOS), `subPos` (missing), `scaleMode` (missing), `audioLang` (missing), `showTitles` — Store.kt L807-843. Align keys+defaults exactly or cross-device prefs will disagree.
+- ✅ Pref keys/values parity: Android keys are `subScale` (0.8/1.0/1.3/1.6), `subLang` (**"en"|"off" ONLY** — AJ: "either English or off"; iOS offers Spanish → remove), `autoplayNext`, `seekStep` (5/10/15/30 — iOS lacks 5), `blurUnwatched`, `subBg` (default **false** on Android, iOS defaults true), `subOutline` (default true — missing on iOS), `subPos` (missing), `scaleMode` (missing), `audioLang` (missing), `showTitles` — Store.kt L807-843. Align keys+defaults exactly or cross-device prefs will disagree.
 - ❌ Subtitle live preview box in Player settings (shows exactly what the options produce) — `showPlayerSettings` (~L5703-5720)
 - ❌ Shelves picker + Reorder (see §3)
 - 🟡 Addons: iOS has add-by-code + remove. Android: addons section signed-in only (guests get a sign-in prompt), `Addons.probe` validates + names the manifest before adding, silent service-assignment refresh on open — `showAddons` (~L5883)

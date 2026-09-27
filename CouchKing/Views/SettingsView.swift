@@ -134,16 +134,18 @@ struct SettingsView: View {
         }
     }
 
+    // Keys/values/defaults MATCH Android exactly (Store.kt) so cross-device prefs agree (#148).
     private var playerSection: some View {
         Section("Player") {
             PrefToggle(label: "Autoplay next episode", key: "autoplayNext", def: true)
             PrefPicker(label: "Skip step", key: "seekStep", def: 10,
-                       options: [(10, "10s"), (15, "15s"), (30, "30s")])
+                       options: [(5, "5s"), (10, "10s"), (15, "15s"), (30, "30s")])
             PrefPicker(label: "Subtitle size", key: "subScale", def: 1.0,
-                       options: [(0.75, "Tiny"), (0.9, "Small"), (1.0, "Normal"), (1.3, "Large"), (1.6, "Huge")])
-            PrefPicker(label: "Subtitle language", key: "subLang", def: "en",
-                       options: [("en", "English"), ("es", "Spanish"), ("off", "Off")])
-            PrefToggle(label: "Subtitle background", key: "subBg", def: true)
+                       options: [(0.8, "Small"), (1.0, "Normal"), (1.3, "Large"), (1.6, "Huge")])
+            PrefPicker(label: "Subtitles", key: "subLang", def: "en",
+                       options: [("en", "English"), ("off", "Off")])   // Android: English or off only
+            PrefToggle(label: "Subtitle background", key: "subBg", def: false)   // Android default: off
+            PrefToggle(label: "Subtitle outline", key: "subOutline", def: true)
         }
     }
 
