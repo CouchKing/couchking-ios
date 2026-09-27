@@ -348,8 +348,12 @@ final class Session: ObservableObject {
 
     /// The Home shelf lineup: the saved order (dropping catalogs the manifest no longer has),
     /// or every browsable catalog in manifest order when never customized.
+    /// Every shelf that can go on Home: the manifest's browsable catalogs + the curated
+    /// watch-order rows (available to guests too — they resolve through Cinemeta).
+    func allShelves() -> [AddonCatalog] { catalogs.filter { $0.isShelf } + Curated.shelves }
+
     func enabledShelves() -> [AddonCatalog] {
-        let all = catalogs.filter { $0.isShelf }
+        let all = allShelves()
         guard let keys = shelfKeys() else { return all }
         return keys.compactMap { k in all.first { $0.id == k } }
     }
@@ -549,6 +553,25 @@ extension Session {
         }
         return out.sorted { $0.order > $1.order }
     }
+}
+
+extension Session {
+    /// The person's own library as rec-graph seeds (IOS_CONTRACTS §1b): continue + watchlist +
+    /// watched, strongest first (continue → watchlist → watched), de-duplicated.
+    func librarySeeds() -> [Meta] {
+        let ps = pstate()
+        var out: [Meta] = []
+        var seen = Set<String>()
+        for k in ["continue", "watchlist", "watchedTitles"] {
+            for e in ps[k] as? [[String: Any]] ?? [] {
+                guard let m = Meta(e, type: e["type"] as? String ?? "movie"), !seen.contains(m.id) else { continue }
+                seen.insert(m.id); out.append(m)
+            }
+        }
+        return out
+    }
+    /// Every id the library already holds (recs never re-suggest these).
+    func libraryIds() -> Set<String> { Set(librarySeeds().map(\.id)) }
 }
 
 // ---- library / watched / progress mutations (Android titleMenu + scoped tombstones) ----

@@ -21,7 +21,7 @@ struct SettingsView: View {
                 accountSection
                 if session.signedIn { profilesSection }
                 addonsSection
-                if session.hasAddon { shelvesSection }
+                shelvesSection
                 playerSection
                 lookSection
                 aboutSection
@@ -422,7 +422,7 @@ struct ShelfPickerView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 ForEach([("movie", "Movies"), ("series", "Shows")], id: \.0) { t, title in
-                    let cats = session.catalogs.filter { $0.isShelf && $0.type == t }
+                    let cats = session.allShelves().filter { $0.type == t }
                     if !cats.isEmpty {
                         Text(title).font(.headline)
                         LazyVGrid(columns: cols, spacing: 8) {

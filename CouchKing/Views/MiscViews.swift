@@ -32,19 +32,21 @@ struct SearchView: View {
     @State private var q = ""
     @State private var movies: [Meta] = []
     @State private var shows: [Meta] = []
+    @State private var people: [TMDB.Person] = []
     @State private var searchTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
             Group {
-                if q.trimmingCharacters(in: .whitespaces).isEmpty && movies.isEmpty && shows.isEmpty {
+                if q.trimmingCharacters(in: .whitespaces).isEmpty && movies.isEmpty && shows.isEmpty && people.isEmpty {
                     BrowseView()
                 } else {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 18) {
+                            if !people.isEmpty { PeopleRow(people: people) }
                             if !shows.isEmpty { PosterRow(title: "Shows", metas: shows) }
                             if !movies.isEmpty { PosterRow(title: "Movies", metas: movies) }
-                            if !q.isEmpty && movies.isEmpty && shows.isEmpty {
+                            if !q.isEmpty && movies.isEmpty && shows.isEmpty && people.isEmpty {
                                 Text("No matches for “\(q)”.").foregroundStyle(.secondary).padding(24)
                             }
                         }
@@ -55,12 +57,13 @@ struct SearchView: View {
             .background(Theme.bg)
             .navigationTitle("Search")
             .navigationDestination(for: Meta.self) { DetailView(meta: $0) }
-            .searchable(text: $q, prompt: "Movies, shows…")
+            .navigationDestination(for: TMDB.Person.self) { PersonView(person: $0) }
+            .searchable(text: $q, prompt: "Movies, shows, people…")
             .onSubmit(of: .search) { searchTask?.cancel(); Task { await run(q) } }
             .onChange(of: q) { v in
                 searchTask?.cancel()
                 let t = v.trimmingCharacters(in: .whitespaces)
-                if t.isEmpty { movies = []; shows = []; return }
+                if t.isEmpty { movies = []; shows = []; people = []; return }
                 searchTask = Task {
                     try? await Task.sleep(for: .milliseconds(450))
                     guard !Task.isCancelled else { return }
@@ -75,6 +78,7 @@ struct SearchView: View {
         guard text.count >= 2 else { return }
         let enc = text.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
         var mv: [Meta] = [], sv: [Meta] = []
+        async let ppl = TMDB.people(text)   // people search rides TMDB for everyone (§1)
         if let base = session.addonBase() {
             let mc = session.catalogs.first { $0.type == "movie" && !$0.isLive }?.cid ?? "couchking-movies"
             let sc = session.catalogs.first { $0.type == "series" && !$0.isLive }?.cid ?? "couchking-series"
@@ -87,9 +91,37 @@ struct SearchView: View {
             async let s = API.json("/catalog/series/top/search=\(enc).json", base: Catalog.cinemeta)
             mv = Catalog.metas(try? await m, type: "movie"); sv = Catalog.metas(try? await s, type: "series")
         }
+        let pv = await ppl
         // drop a stale response after the query moved on
         guard q.trimmingCharacters(in: .whitespaces) == text else { return }
-        movies = mv; shows = sv
+        movies = mv; shows = sv; people = Array(pv.prefix(10))
+    }
+}
+
+/// Person cards strip (Android people search) → person page.
+struct PeopleRow: View {
+    let people: [TMDB.Person]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("People").font(.headline).padding(.horizontal, 14)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 12) {
+                    ForEach(people) { p in
+                        NavigationLink(value: p) {
+                            VStack(spacing: 4) {
+                                AsyncImage(url: URL(string: p.profile ?? "")) { img in
+                                    img.resizable().aspectRatio(contentMode: .fill)
+                                } placeholder: { Theme.card.overlay(Image(systemName: "person.fill").foregroundStyle(.secondary)) }
+                                .frame(width: 72, height: 72).clipShape(Circle())
+                                Text(p.name).font(.caption2).lineLimit(1).frame(width: 84)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 14)
+            }
+        }
     }
 }
 

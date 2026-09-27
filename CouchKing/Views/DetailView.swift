@@ -10,6 +10,9 @@ struct DetailView: View {
     let meta: Meta
     @State private var full: [String: Any] = [:]
     @State private var trailerId: TrailerId?
+    @State private var providers: TMDB.Providers?
+    @State private var providersLoaded = false
+    @State private var person: TMDB.Person?
 
     private var rich: Meta { Meta(full, type: meta.type) ?? meta }
 
@@ -25,6 +28,7 @@ struct DetailView: View {
                         Text("Streams").font(.headline)
                         StreamList(meta: meta)
                     }
+                    if !session.hasAddon { whereToWatch }
                     castRow
                     if meta.type == "series" {
                         EpisodesView(meta: meta, videos: full["videos"] as? [[String: Any]] ?? [])
@@ -41,6 +45,50 @@ struct DetailView: View {
         .ignoresSafeArea(edges: .top)
         .task { await load() }
         .sheet(item: $trailerId) { t in TrailerView(ytId: t.id) }
+        .sheet(item: $person) { p in
+            NavigationStack {
+                PersonView(person: p)
+                    .navigationDestination(for: Meta.self) { DetailView(meta: $0) }
+            }
+        }
+    }
+
+    /// Where-to-watch chips for guests/tracker users (IOS_CONTRACTS §1c): stream chips accented,
+    /// "Rent · X" / "Buy · X" chips, all opening the JustWatch link; "🎬 In theaters now" gold
+    /// notice for a recent movie with no providers. Hidden once an addon is installed.
+    @ViewBuilder private var whereToWatch: some View {
+        if let p = providers, !p.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("▶ Where to watch").font(.headline)
+                let rent = Array(p.rent.prefix(4))
+                let buy = Array(p.buy.filter { !rent.contains($0) }.prefix(4))
+                let chips: [(String, Bool)] = p.stream.prefix(4).map { ($0, true) }
+                    + rent.map { ("Rent · " + $0, false) } + buy.map { ("Buy · " + $0, false) }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(chips, id: \.0) { label, accent in
+                            Button {
+                                if let l = p.link, let u = URL(string: l) { UIApplication.shared.open(u) }
+                            } label: {
+                                Text(label).font(.caption)
+                                    .padding(.horizontal, 10).padding(.vertical, 6)
+                                    .background(accent ? Theme.accent : Theme.card, in: Capsule())
+                                    .foregroundStyle(accent ? .white : .primary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        } else if providersLoaded, meta.type == "movie", inTheaters {
+            Text("🎬 In theaters now — home release hasn't happened yet")
+                .font(.caption.bold()).foregroundStyle(Color(red: 0.95, green: 0.78, blue: 0.3))
+        }
+    }
+
+    private var inTheaters: Bool {
+        let year = Int((rich.releaseInfo ?? "").prefix(4)) ?? 0
+        return year >= Calendar.current.component(.year, from: Date()) - 1
     }
 
     /// Backdrop image fading into the page, with the logo (or the name) sitting on it.
@@ -130,10 +178,16 @@ struct DetailView: View {
         if !cast.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack {
+                    // cast chips → person page (TMDB person search by name, IOS_CONTRACTS §1)
                     ForEach(Array(cast), id: \.self) { nm in
-                        Text(nm).font(.caption)
-                            .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(Theme.card, in: Capsule())
+                        Button {
+                            Task { if let p = await TMDB.people(nm).first { person = p } }
+                        } label: {
+                            Text(nm).font(.caption)
+                                .padding(.horizontal, 10).padding(.vertical, 6)
+                                .background(Theme.card, in: Capsule())
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -149,6 +203,10 @@ struct DetailView: View {
         full = await Catalog.fullMeta(session: session, type: meta.type, id: meta.id)
         if meta.type == "series", let v = full["videos"] as? [[String: Any]] {
             MetaCache.shared.put(meta.id, videos: v)
+        }
+        if !session.hasAddon {
+            providers = await TMDB.providers(imdb: meta.id, kind: meta.type == "series" ? "tv" : "movie")
+            providersLoaded = true
         }
     }
 }
@@ -209,3 +267,40 @@ struct YouTubeEmbed: UIViewRepresentable {
     func updateUIView(_ v: WKWebView, context: Context) {}
 }
 
+
+
+/// Person page (Android showPerson): headshot, department, filmography grid resolved to IMDb ids.
+struct PersonView: View {
+    let person: TMDB.Person
+    @State private var credits: [Meta] = []
+    @State private var loading = true
+    private let cols = [GridItem(.adaptive(minimum: 108), spacing: 10)]
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 14) {
+                    AsyncImage(url: URL(string: person.profile ?? "")) { img in
+                        img.resizable().aspectRatio(contentMode: .fill)
+                    } placeholder: { Theme.card.overlay(Image(systemName: "person.fill").foregroundStyle(.secondary)) }
+                    .frame(width: 84, height: 84).clipShape(Circle())
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(person.name).font(.title3.bold())
+                        if !person.known.isEmpty { Text(person.known).font(.caption).foregroundStyle(.secondary) }
+                    }
+                }
+                Text("Filmography").font(.headline)
+                LazyVGrid(columns: cols, spacing: 12) {
+                    ForEach(credits) { m in
+                        NavigationLink(value: m) { PosterCard(meta: m) }.buttonStyle(.plain)
+                    }
+                }
+                if loading { ProgressView().frame(maxWidth: .infinity) }
+            }
+            .padding(14)
+        }
+        .background(Theme.bg)
+        .navigationTitle(person.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .task { credits = await TMDB.filmography(person.id); loading = false }
+    }
+}

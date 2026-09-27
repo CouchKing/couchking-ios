@@ -84,21 +84,33 @@ struct HomeView: View {
         var fresh: [(String, [Meta])] = []
         if session.hasAddon {
             for (title, cat) in Catalog.homeLineup(session: session) {
-                var metas = await Catalog.fetch(session: session, type: cat.type, cid: cat.cid)
+                var metas = await Catalog.shelf(session: session, cat)
                 guard gen == loadGen else { return }
                 if metas.isEmpty { continue }
                 // For You rows keep their ranked order; curated `ids` rows are NEVER shuffled
-                if !cat.isForYou && !cat.isOrdered { metas = Catalog.mix(metas, session: session, salt: cat.id) }
+                if !cat.isForYou && !cat.isOrdered && cat.curated.isEmpty {
+                    metas = Catalog.mix(metas, session: session, salt: cat.id)
+                }
                 fresh.append((title, metas))
                 rows = fresh
             }
         } else {
+            // tracker For You: addon algo → TMDB rec graph seeded by the library → trending
+            let fy = await Catalog.guestForYou(session: session)
+            guard gen == loadGen else { return }
+            if !fy.isEmpty { fresh.append(("For You", fy)); rows = fresh }
             for (title, type, path) in Catalog.guestRows {
                 let metas = await Catalog.guestRow(type, path)
                 guard gen == loadGen else { return }
                 if metas.isEmpty { continue }
                 fresh.append((title, Catalog.mix(metas, session: session, salt: title)))
                 rows = fresh
+            }
+            // curated watch-order shelves work for guests too (Cinemeta-resolved, never shuffled)
+            for cat in session.enabledShelves() where !cat.curated.isEmpty {
+                let metas = await Catalog.shelf(session: session, cat)
+                guard gen == loadGen else { return }
+                if !metas.isEmpty { fresh.append((cat.name, metas)); rows = fresh }
             }
         }
         rows = fresh
