@@ -1,4 +1,4 @@
-# CouchKing iOS — Android Parity Checklist (audited Sep 25, 2026)
+# CouchKing iOS — Android Parity Checklist (audited Sep 25, 2026 · updated Sep 27 after the parity branch)
 
 Reference: Android app 2.0.93 line — `/data/couchking-tv/app/src/main/java/app/mediaboard/`
 (MainActivity.kt ~6,044 lines, PlayerActivity.kt ~1,701, Store.kt, Discovery.kt, Addons.kt,
@@ -170,7 +170,7 @@ Android references are file + function/rough line so the implementer can read th
 - ✅ Back-stack page restore (NavigationStack keeps Home's scroll + row offsets across Detail round-trips; search/library state lives in `@State`): Android returns to the exact scroll spot + the very tile you left (`pushPage`/`rememberHomeSpot`/`saveRowFocus`/`restoreRowFocus`/`findTileById`, per-row X memory). iOS NavigationStack gives coarse equivalents free — verify Home scroll + row offsets survive Detail round-trips — MainActivity ~L3651-3712, L3946-3991
 - ✅ In-place tile mutation (badges/progress derive from state, SwiftUI diffs tiles in place — no page rebuilds) — `repaintTiles`/`removeTileInPlace` (~L3743-3817)
 - ✅ Theme: accent `#7B5BF5`, panel `#1B1830`, card `#2C2649` (`Theme`)
-- 🟡 CouchKing-styled sheets: centered gate/still-watching/error cards + purple ✓ pick rows (subtitle panel) DONE; the delete-account confirm still uses the system dialog — Sheets.kt
+- ✅ CouchKing-styled sheets: centered gate / still-watching / error / confirm cards with the accent ring (`GateModal`, `ConfirmCard`) + purple ✓ pick rows (subtitle panel) instead of system alerts — Sheets.kt
 - ✅ Poster/image discipline: shared URLCache 64MB memory / 300MB disk so scrolling doesn't re-fetch posters (`CouchKingApp.init`) — MainActivity ~L181-258, `artPassNow` (~L3879)
 - ❌ Crash guard + `no-streams` telemetry (`CrashGuard.report`) — CrashGuard.kt, `Addons.debugNoStreams` (Addons.kt L145)
 - ✅ Brand "CouchKing" crown/gradient span (`BrandTitle`), expiry banner component (`StreamList`), centered gate modal component (`GateModal`) — ~L5991, L419, L2453

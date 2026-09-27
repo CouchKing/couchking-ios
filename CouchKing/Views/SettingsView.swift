@@ -29,6 +29,21 @@ struct SettingsView: View {
             .navigationTitle("Settings")
             // silent service-assignment refresh on open (Android showAddons / onResume)
             .task { await session.checkAccess() }
+            // CouchKing-styled centered confirm card instead of the system alert (Sheets.kt)
+            .overlay {
+                if confirmDelete {
+                    ConfirmCard(title: "Delete account?",
+                                text: "This permanently deletes your account and synced library on the server.",
+                                confirm: "Delete") {
+                        confirmDelete = false
+                        Task {
+                            if !(await session.deleteAccount()) {
+                                err = "Couldn't delete — check your connection"
+                            }
+                        }
+                    } cancel: { confirmDelete = false }
+                }
+            }
         }
     }
 
@@ -66,18 +81,6 @@ struct SettingsView: View {
                 }
                 Button("Sign out", role: .destructive) { session.signOut() }
                 Button("Delete account", role: .destructive) { confirmDelete = true }
-                    .confirmationDialog("Delete account?", isPresented: $confirmDelete, titleVisibility: .visible) {
-                        Button("Delete", role: .destructive) {
-                            Task {
-                                if !(await session.deleteAccount()) {
-                                    err = "Couldn't delete — check your connection"
-                                }
-                            }
-                        }
-                        Button("Cancel", role: .cancel) {}
-                    } message: {
-                        Text("This permanently deletes your account and synced library on the server.")
-                    }
                 if !err.isEmpty { Text(err).font(.caption).foregroundStyle(.red) }
             } else {
                 TextField("Email", text: $email)
@@ -530,5 +533,37 @@ struct UpdateGateView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.bg)
+    }
+}
+
+
+/// Centered confirm card with the purple focus ring (Android Sheets.kt confirm card).
+struct ConfirmCard: View {
+    let title: String, text: String, confirm: String
+    let action: () -> Void
+    let cancel: () -> Void
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.6).ignoresSafeArea().onTapGesture(perform: cancel)
+            VStack(spacing: 14) {
+                Text("👑").font(.system(size: 36))
+                Text(title).font(.title3.bold())
+                Text(text).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                HStack(spacing: 12) {
+                    Button(action: cancel) {
+                        Text("Cancel").font(.headline).padding(.horizontal, 20).padding(.vertical, 10)
+                            .background(Theme.card, in: Capsule())
+                    }
+                    Button(action: action) {
+                        Text(confirm).font(.headline).padding(.horizontal, 20).padding(.vertical, 10)
+                            .background(.red.opacity(0.85), in: Capsule()).foregroundStyle(.white)
+                    }
+                }
+            }
+            .padding(26)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Theme.accent.opacity(0.6), lineWidth: 1))
+            .padding(30)
+        }
     }
 }
