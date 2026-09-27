@@ -10,6 +10,8 @@ struct Meta: Identifiable, Hashable {
         name = o["name"] as? String ?? ""
         poster = o["poster"] as? String
     }
+    /// Round-trips into the synced state blobs (watchlist/continue/watched entries).
+    var dict: [String: Any] { ["id": id, "type": type, "name": name, "poster": poster ?? ""] }
 }
 
 struct Catalog {

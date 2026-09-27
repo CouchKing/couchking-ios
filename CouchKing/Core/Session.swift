@@ -418,6 +418,77 @@ extension Session {
     }
 }
 
+// ---- library / watched / progress mutations (Android titleMenu + scoped tombstones) ----
+// Every list carries an addedTs/removedTs ledger keyed wl:/wt:/cw: so the server merge keeps
+// adds and removes straight across devices (Android Store scoped-tombstones, Sep 17).
+extension Session {
+    private func nowMs() -> Int { Int(Date().timeIntervalSince1970 * 1000) }
+
+    func inLibrary(_ id: String) -> Bool {
+        (pstate()["watchlist"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == id }
+    }
+    func isWatched(_ id: String) -> Bool {
+        (pstate()["watched"] as? [String: Any])?[id] != nil
+    }
+
+    func toggleLibrary(_ meta: Meta) {
+        var ps = pstate()
+        var wl = ps["watchlist"] as? [[String: Any]] ?? []
+        var added = ps["addedTs"] as? [String: Any] ?? [:]
+        var removed = ps["removedTs"] as? [String: Any] ?? [:]
+        let now = nowMs()
+        if let i = wl.firstIndex(where: { $0["id"] as? String == meta.id }) {
+            wl.remove(at: i); removed["wl:" + meta.id] = now; added["wl:" + meta.id] = nil
+        } else {
+            wl.insert(meta.dict, at: 0); added["wl:" + meta.id] = now; removed["wl:" + meta.id] = nil
+        }
+        ps["watchlist"] = wl; ps["addedTs"] = added; ps["removedTs"] = removed
+        setPstate(ps)
+    }
+
+    func toggleWatched(_ meta: Meta) {
+        var ps = pstate()
+        var watched = ps["watched"] as? [String: Any] ?? [:]
+        var wt = ps["watchedTitles"] as? [[String: Any]] ?? []
+        var added = ps["addedTs"] as? [String: Any] ?? [:]
+        var removed = ps["removedTs"] as? [String: Any] ?? [:]
+        let now = nowMs()
+        if watched[meta.id] != nil {
+            watched[meta.id] = nil; wt.removeAll { $0["id"] as? String == meta.id }
+            removed["wt:" + meta.id] = now; added["wt:" + meta.id] = nil
+        } else {
+            watched[meta.id] = now
+            if !wt.contains(where: { $0["id"] as? String == meta.id }) { wt.insert(meta.dict, at: 0) }
+            added["wt:" + meta.id] = now; removed["wt:" + meta.id] = nil
+            // finished → leaves Continue Watching
+            var cw = ps["continue"] as? [[String: Any]] ?? []
+            cw.removeAll { $0["id"] as? String == meta.id }
+            ps["continue"] = cw
+        }
+        ps["watched"] = watched; ps["watchedTitles"] = wt
+        ps["addedTs"] = added; ps["removedTs"] = removed
+        setPstate(ps)
+    }
+
+    /// Clear progress = drop from Continue Watching + wipe resume positions (Android "Clear
+    /// Progress" single option leaves CW) and tell the server so it can't re-hydrate.
+    func clearProgress(_ meta: Meta) {
+        var ps = pstate()
+        var cw = ps["continue"] as? [[String: Any]] ?? []
+        cw.removeAll { $0["id"] as? String == meta.id }
+        ps["continue"] = cw
+        var positions = ps["positions"] as? [String: Any] ?? [:]
+        positions = positions.filter { !($0.key == meta.id || $0.key.hasPrefix(meta.id + ":")) }
+        ps["positions"] = positions
+        var cwlast = ps["cwlast"] as? [String: Any] ?? [:]
+        cwlast[meta.id] = nil; ps["cwlast"] = cwlast
+        var removed = ps["removedTs"] as? [String: Any] ?? [:]
+        removed["cw:" + meta.id] = nowMs(); ps["removedTs"] = removed
+        setPstate(ps)
+        clearServerResume(id: meta.id)
+    }
+}
+
 // Skip windows + resume from the addon (same endpoint the Android player uses).
 struct PlayerWindows {
     var introFrom = 0, introTo = 0, recapFrom = 0, recapTo = 0, credits = 0

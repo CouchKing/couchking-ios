@@ -84,8 +84,32 @@ struct PosterCard: View {
                     .foregroundStyle(.primary)
             }
         }
+        .titleMenu(meta)
     }
 }
+
+// Long-press title menu (Android titleMenu): Add/Remove Library · Mark watched/unwatched ·
+// Clear progress — all mutate the synced state in place (tap the poster for Details).
+struct TitleContextMenu: ViewModifier {
+    @EnvironmentObject var session: Session
+    let meta: Meta
+    func body(content: Content) -> some View {
+        content.contextMenu {
+            Button(session.inLibrary(meta.id) ? "Remove from Library" : "Add to Library",
+                   systemImage: session.inLibrary(meta.id) ? "minus.circle" : "plus.circle") {
+                session.toggleLibrary(meta)
+            }
+            Button(session.isWatched(meta.id) ? "Mark unwatched" : "Mark watched",
+                   systemImage: session.isWatched(meta.id) ? "eye.slash" : "checkmark.circle") {
+                session.toggleWatched(meta)
+            }
+            Button("Clear progress", systemImage: "arrow.counterclockwise", role: .destructive) {
+                session.clearProgress(meta)
+            }
+        }
+    }
+}
+extension View { func titleMenu(_ meta: Meta) -> some View { modifier(TitleContextMenu(meta: meta)) } }
 
 // Continue Watching — Android Home CW row: newest-first tiles with a resume progress bar.
 struct ContinueRow: View {
@@ -128,6 +152,7 @@ struct CWCard: View {
             }
             Text(item.meta.name).font(.caption2).lineLimit(1).frame(width: 108)
         }
+        .titleMenu(item.meta)
     }
 }
 

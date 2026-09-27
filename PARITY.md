@@ -49,7 +49,7 @@ Android references are file + function/rough line so the implementer can read th
 - ❌ Curated watch-order rows (Marvel chronological etc. — `ids` rows rendered in EXACT order, never shuffled) — `Discovery.SHELF_CATALOG` ids rows, `idsRow` (~L2678)
 - ❌ Guest/tracker Home: TMDB-powered discovery rows when no addon (the store-review experience — SPEC.md relies on this) — `buildShelvesInto` FORYOU/tmdb branches
 - 🟡 Poster tiles: iOS has poster + optional title. Android adds: watchlist ✓ badge, watched "done" badge, progress bar variant, new-eps badge, long-press context menu, focus ring, lazy art loading with viewport pass. — `poster`/`wlBadge`/`doneBadge` (MainActivity ~L3209, L3720-3742)
-- ❌ Long-press/context title menu: Details / Add-Remove Library / Mark Watched-Unwatched / Clear Progress (single option = leaves CW), all mutating tiles IN PLACE without page rebuild — `titleMenu`/`repaintTiles`/`removeTileInPlace` (MainActivity ~L3459-3817)
+- 🟡 Long-press/context title menu (Add/Remove Library, Mark watched/unwatched, Clear progress DONE via SwiftUI contextMenu, mutates in place; Details via tap): Details / Add-Remove Library / Mark Watched-Unwatched / Clear Progress (single option = leaves CW), all mutating tiles IN PLACE without page rebuild — `titleMenu`/`repaintTiles`/`removeTileInPlace` (MainActivity ~L3459-3817)
 - ❌ Live cross-device refresh while Home is open: 60s foreground pull + in-place Continue row/episode-bars repaint; also on every foreground resume (player-driven `homeStale` flag) — `liveSyncTick`/`refreshContinueRow`/`refreshEpisodeBars` (MainActivity ~L335, L3580-3650). iOS has the 60s pull in `Session.boot` but nothing repaints rows in place.
 
 ## 4. Search
