@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 // Account + profile session, mirroring Android's Store.kt semantics:
 // - per-profile content state (watchlist/watched/continue/positions/ratings/prefs)
@@ -14,6 +15,11 @@ final class Session: ObservableObject {
     @Published var currentProfile: String = UserDefaults.standard.string(forKey: "curProfile") ?? ""
     @Published var addons: [Addon] = []
     @Published var liveTvOn = false
+    @Published var catalogs: [AddonCatalog] = []   // the addon manifest's catalog list
+    /// Bumped by the player on exit (Android `homeStale`) so Home re-pulls + repaints CW.
+    @Published var homeStale = 0
+    /// Mandatory store update gate (Android showStoreMandatoryUpdate): set → blocking screen.
+    @Published var updateRequired: StoreVersion?
     @Published var state: [String: Any] = [:]   // full account blob; states[pid] = per-profile
     // cached access status (Android Store.accessExpiry/accessDaysLeft): drives the Settings
     // account card + the play-time expiry banner. Browsing never blocks on it.
@@ -46,6 +52,7 @@ final class Session: ObservableObject {
     }
 
     func boot() async {
+        await checkStoreVersion()
         guard signedIn else { return }
         await pull()
         await detectLiveTv()
@@ -107,7 +114,7 @@ final class Session: ObservableObject {
     /// Live TV. Without this, sign-in merged the device's existing library into the new
     /// account and pushed it up — every email used on the device "shared" one library.
     func clearContentState() {
-        state = [:]; profiles = []; addons = []; liveTvOn = false
+        state = [:]; profiles = []; addons = []; liveTvOn = false; catalogs = []
         currentProfile = ""
         UserDefaults.standard.set("", forKey: "curProfile")
     }
@@ -161,6 +168,7 @@ final class Session: ObservableObject {
     /// cached expiry, pick up an addon assigned AFTER sign-in without visiting Settings,
     /// and re-detect Live TV so the tab appears/disappears live.
     func foregroundResume() async {
+        await checkStoreVersion()   // re-check on every foreground; clears a stale gate once updated
         guard signedIn else { return }
         await pull()
         await checkAccess()
@@ -278,15 +286,102 @@ final class Session: ObservableObject {
         Task { _ = try? await API.postJSON("/player/clear", body: body) }
     }
 
+    /// Re-read the addon manifest (every resume / sign-out / addon change): caches the catalog
+    /// list the Home lineup + Discover + shelves picker are built from, and flips the Live TV
+    /// tab on/off live when a `tv` catalog appears/disappears (Android detectLiveTv).
     func detectLiveTv() async {
+        var found: [AddonCatalog] = []
         for a in addons {
             if let m = try? await API.json("/manifest.json", base: a.url),
-               let cats = m["catalogs"] as? [[String: Any]],
-               cats.contains(where: { $0["type"] as? String == "tv" }) {
-                liveTvOn = true; return
+               let cats = m["catalogs"] as? [[String: Any]] {
+                found += cats.compactMap(AddonCatalog.init)
             }
         }
-        liveTvOn = false
+        catalogs = found
+        liveTvOn = found.contains { $0.isLive }
+    }
+
+    /// Switch the active person: per-profile content leaves memory immediately (rows,
+    /// CW, prefs all re-derive from the new pstate) and Home repaints (Android switchProfile /
+    /// clearProfileContent). Empty id = back to the "Who's watching?" gate.
+    func switchProfile(_ id: String) {
+        currentProfile = id
+        UserDefaults.standard.set(id, forKey: "curProfile")
+        homeStale += 1
+        objectWillChange.send()
+    }
+
+    /// Android `Addons.withUser`: the addon URL's config segment is URL-encoded JSON
+    /// ({"subKey":…,"userName":…}); swap THIS profile's "Name #tag" into userName so every
+    /// catalog/stream/For You call attributes to the person. Falls back to the raw URL
+    /// when the addon has no config segment.
+    func addonBase() -> String? {
+        guard let a = addons.first else { return nil }
+        return Session.withUser(a.url, profileSeg)
+    }
+
+    static func withUser(_ url: String, _ user: String) -> String {
+        guard !user.isEmpty, var comps = URLComponents(string: url) else { return url }
+        var parts = comps.path.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        for i in parts.indices {
+            guard let dec = parts[i].removingPercentEncoding, dec.hasPrefix("{"),
+                  let d = dec.data(using: .utf8),
+                  var cfg = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] else { continue }
+            cfg["userName"] = user
+            guard let out = try? JSONSerialization.data(withJSONObject: cfg, options: [.withoutEscapingSlashes]),
+                  let js = String(data: out, encoding: .utf8) else { continue }
+            var allowed = CharacterSet.urlPathAllowed
+            allowed.remove(charactersIn: "/:{}\"")
+            parts[i] = js.addingPercentEncoding(withAllowedCharacters: allowed) ?? parts[i]
+            comps.percentEncodedPath = parts.joined(separator: "/")
+            return comps.string ?? url
+        }
+        return url
+    }
+
+    // ---- customizable shelves (Android Store.enabledShelves / persistShelves) ----
+    /// Shelf keys ("type/id") the person enabled, in their order; nil = never customized.
+    func shelfKeys() -> [String]? { pstate()["shelves"] as? [String] }
+
+    /// The Home shelf lineup: the saved order (dropping catalogs the manifest no longer has),
+    /// or every browsable catalog in manifest order when never customized.
+    func enabledShelves() -> [AddonCatalog] {
+        let all = catalogs.filter { $0.isShelf }
+        guard let keys = shelfKeys() else { return all }
+        return keys.compactMap { k in all.first { $0.id == k } }
+    }
+
+    private static var shelfPushTask: Task<Void, Never>?
+    /// Save the lineup (order = user order). Debounced push so the 60s pull can't revert a
+    /// half-finished reorder (Android persistShelves).
+    func setShelves(_ keys: [String]) {
+        var ps = pstate()
+        ps["shelves"] = keys
+        setPstate(ps, push: false)
+        Session.shelfPushTask?.cancel()
+        Session.shelfPushTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled else { return }
+            self?.push()
+        }
+    }
+
+    // ---- store mandatory-update gate (Android showStoreMandatoryUpdate + Updater.newer) ----
+    /// GET <serviceBase>/tvapp/store-version → {minVersion, latest, url}. Below minVersion =
+    /// blocking screen with one button to the App Store listing. Rides the user-entered
+    /// service base (nothing baked); a cleared gate stays cleared once the app is current.
+    func checkStoreVersion() async {
+        guard !API.serviceBase.isEmpty else { return }
+        guard let r = try? await API.json("/tvapp/store-version?platform=ios&v=\(Self.appVer)") else { return }
+        let minV = (r["minVersion"] as? String) ?? (r["minVersionIos"] as? String) ?? ""
+        let cur = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0"
+        if !minV.isEmpty, StoreVersion.newer(minV, than: cur) {
+            updateRequired = StoreVersion(minVersion: minV,
+                                          latest: r["latest"] as? String ?? minV,
+                                          url: (r["iosUrl"] as? String) ?? (r["url"] as? String) ?? "")
+        } else {
+            updateRequired = nil
+        }
     }
 }
 
@@ -299,11 +394,38 @@ struct Profile: Identifiable {
         avatar = o["avatar"] as? String ?? "🍿"
         color = o["color"] as? String ?? ""
     }
+    /// Android addAvatarColorPicker palette — the hue drives the avatar tile everywhere.
+    static let colors = ["#7B5BF5", "#E6467A", "#F28C28", "#2BB673", "#2F9BE8", "#F2C94C",
+                         "#9B59B6", "#1ABC9C", "#E74C3C", "#95A5A6"]
+    static func tint(_ hex: String) -> Color {
+        var h = hex.trimmingCharacters(in: .whitespaces)
+        if h.hasPrefix("#") { h.removeFirst() }
+        guard h.count == 6, let v = UInt32(h, radix: 16) else { return Theme.card }
+        return Color(red: Double((v >> 16) & 0xFF) / 255, green: Double((v >> 8) & 0xFF) / 255,
+                     blue: Double(v & 0xFF) / 255)
+    }
 }
 
 struct Addon: Identifiable {
     var id: String { url }
     let url: String, name: String
+}
+
+struct StoreVersion {
+    let minVersion: String, latest: String, url: String
+    /// Numeric segment compare (Android Updater.newer): "1.2.10" > "1.2.9"; missing = 0.
+    static func newer(_ a: String, than b: String) -> Bool {
+        func segs(_ v: String) -> [Int] {
+            v.split(whereSeparator: { !$0.isNumber && $0 != "." }).first
+                .map { $0.split(separator: ".").map { Int($0) ?? 0 } } ?? []
+        }
+        let x = segs(a), y = segs(b)
+        for i in 0..<max(x.count, y.count) {
+            let p = i < x.count ? x[i] : 0, q = i < y.count ? y[i] : 0
+            if p != q { return p > q }
+        }
+        return false
+    }
 }
 
 // ---- parity extensions (settings sync, profiles CRUD, player context) ----
@@ -334,11 +456,11 @@ extension Session {
     }
 
     // ---- profiles CRUD (Android parity: max 5, tombstoned deletes) ----
-    func addProfile(name: String, avatar: String) {
+    func addProfile(name: String, avatar: String, color: String = "") {
         guard profiles.count < 5 else { return }
         let id = "p" + String(Int(Date().timeIntervalSince1970 * 1000), radix: 36)
         var profs = state["profiles"] as? [[String: Any]] ?? []
-        profs.append(["id": id, "name": name, "avatar": avatar, "color": "",
+        profs.append(["id": id, "name": name, "avatar": avatar, "color": color,
                       "mt": Int(Date().timeIntervalSince1970 * 1000)])
         state["profiles"] = profs
         var states = state["states"] as? [String: Any] ?? [:]
@@ -347,10 +469,11 @@ extension Session {
         profiles = profs.compactMap(Profile.init)
         push()
     }
-    func renameProfile(_ id: String, name: String, avatar: String) {
+    func renameProfile(_ id: String, name: String, avatar: String, color: String? = nil) {
         var profs = state["profiles"] as? [[String: Any]] ?? []
         for i in profs.indices where profs[i]["id"] as? String == id {
             profs[i]["name"] = name; profs[i]["avatar"] = avatar
+            if let color { profs[i]["color"] = color }
             profs[i]["mt"] = Int(Date().timeIntervalSince1970 * 1000)
         }
         state["profiles"] = profs
@@ -380,10 +503,15 @@ extension Session {
     }
 }
 
-// A Continue Watching tile: the title + how far through it is (0…1) for the progress bar.
+// A Continue Watching tile: the title, how far through it is (0…1) for the progress bar, the
+// episode the tap resumes (cwlast), its activity stamp (cwOrder) and the +N new-episodes badge.
 struct CWItem: Identifiable {
     let meta: Meta
     let progress: Double
+    var resumeKey: String = ""     // "tt1:2:5" for a show, the id for a movie
+    var order: Int = 0             // Android cwOrder: watch stamp, floated by a new ep's air time
+    var newEps: Int = 0
+    var latestAir: Int = 0
     var id: String { meta.id }
 }
 
@@ -404,17 +532,19 @@ extension Session {
             // series resume-target is the last-watched episode's posKey; movies key on the id
             let key = (cwlast[id] as? String) ?? id
             var prog = 0.0
+            var stamp = StateMerge.stamp(e["ts"])
             if let s = positions[key] as? String {
                 let p = s.split(separator: "|")
                 if p.count >= 2, let pos = Double(p[0]), let dur = Double(p[1]), dur > 0 {
                     prog = min(1.0, pos / dur)
                 }
+                stamp = max(stamp, StateMerge.posStamp(s))
             }
             // drop a movie that's marked fully watched (a finished show stays — next episode)
             if meta.type == "movie" && watchedIds.contains(id) { continue }
-            out.append(CWItem(meta: meta, progress: prog))
+            out.append(CWItem(meta: meta, progress: prog, resumeKey: key, order: stamp))
         }
-        return out
+        return out.sorted { $0.order > $1.order }
     }
 }
 
@@ -512,5 +642,31 @@ struct PlayerWindows {
         w.afterCredits = r["afterCredits"] as? [[Int]] ?? []
         w.resumeMs = r["pos"] as? Int ?? 0
         return w
+    }
+
+    /// Chapter windows riding on a stream object (Android `windows` intent extra): either a
+    /// nested `windows` dict or the same keys flat on the stream.
+    init(stream s: [String: Any]) {
+        let w = (s["windows"] as? [String: Any]) ?? s
+        func i(_ k: String) -> Int {
+            if let v = w[k] as? Int { return v }
+            if let v = w[k] as? Double { return Int(v) }
+            return 0
+        }
+        introFrom = i("introFrom"); introTo = i("introTo")
+        recapFrom = i("recapFrom"); recapTo = i("recapTo")
+        credits = i("credits")
+        afterCredits = w["afterCredits"] as? [[Int]] ?? []
+    }
+    init() {}
+
+    var hasWindows: Bool { introTo > 0 || recapTo > 0 || credits > 0 || !afterCredits.isEmpty }
+
+    /// Take the stream's windows over the server's, keeping the server's resume position.
+    mutating func adopt(_ o: PlayerWindows) {
+        if o.introTo > 0 { introFrom = o.introFrom; introTo = o.introTo }
+        if o.recapTo > 0 { recapFrom = o.recapFrom; recapTo = o.recapTo }
+        if o.credits > 0 { credits = o.credits }
+        if !o.afterCredits.isEmpty { afterCredits = o.afterCredits }
     }
 }
