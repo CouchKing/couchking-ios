@@ -12,6 +12,8 @@ struct CouchKingApp: App {
         // one shared cache so scrolling back through rows never re-fetches artwork.
         URLCache.shared = URLCache(memoryCapacity: 64 * 1024 * 1024,
                                    diskCapacity: 300 * 1024 * 1024)
+        // video app audio session: playback category so PiP + background audio work
+        PlaybackAudio.configure()
     }
     var body: some Scene {
         WindowGroup {

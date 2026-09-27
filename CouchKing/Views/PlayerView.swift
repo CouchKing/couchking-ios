@@ -70,6 +70,13 @@ struct PlayerView: View {
     @State private var probeInfo = ""
     @State private var subxTask: Task<Void, Never>?
     @State private var subxFrom = 0
+    // ---- Picture-in-Picture + our own transport (the AVPlayerLayer surface has no native controls) ----
+    @StateObject private var pip = PiPModel()
+    @State private var playing = false
+    @State private var controlsVisible = true
+    @State private var hideTask: Task<Void, Never>?
+    @State private var scrubbing = false
+    @State private var scrubMs: Double = 0
 
     private var isLive: Bool { request.meta.type == "tv" }
     /// The url actually playing (the real file after a placeholder hot-swap).
@@ -86,8 +93,12 @@ struct PlayerView: View {
 
     var body: some View {
         ZStack {
-            PlayerContainer(player: player, gravity: gravity)
+            PlayerSurface(player: player, gravity: gravity, pip: pip)
                 .ignoresSafeArea()
+            // tap on the picture = show/hide the controls (buttons above keep their own taps)
+            Color.clear.contentShape(Rectangle())
+                .ignoresSafeArea()
+                .onTapGesture { toggleControls() }
             if !firstFrame && !failed { loadingScreen }
             overlay
             if placeholder { placeholderBanner }
@@ -147,29 +158,7 @@ struct PlayerView: View {
 
     @ViewBuilder private var overlay: some View {
         VStack {
-            HStack(spacing: 8) {
-                Button { dismiss() } label: {
-                    Image(systemName: "xmark").padding(10)
-                        .background(.black.opacity(0.5), in: Circle())
-                }
-                Spacer()
-                // "Ends 9:47 PM" — hidden in live mode (rolling HLS duration lies) and while a
-                // placeholder clip loops. Android ticker.
-                if durMs > 1000 && !isLive && !placeholder {
-                    Text(endsText).font(.caption).foregroundStyle(.white.opacity(0.85))
-                        .padding(.horizontal, 10).padding(.vertical, 6)
-                        .background(.black.opacity(0.5), in: Capsule())
-                }
-                Spacer()
-                AirPlayButton()
-                    .frame(width: 40, height: 40)
-                    .background(.black.opacity(0.5), in: Circle())
-                Menu { menuItems } label: {
-                    Image(systemName: "ellipsis").padding(10)
-                        .background(.black.opacity(0.5), in: Circle())
-                }
-            }
-            .padding()
+            if controlsVisible { topBar.transition(.opacity) }
             if showStats {
                 Text(stats).font(.system(size: 11, design: .monospaced))
                     .padding(8).background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
@@ -202,19 +191,130 @@ struct PlayerView: View {
                 SubtitleText(text: currentCue)
                     .padding(.bottom, subBottomPad)
             }
+            // seek-step buttons hide with the controls; the skip pill never does
             HStack(spacing: 10) {
-                if !isLive && !placeholder {
+                if controlsVisible && !isLive && !placeholder {
                     let step = session.pref("seekStep", 10)
-                    SeekButton(icon: "gobackward", label: "\(step)") { epTouched = true; seek(ms: max(0, posMs - step * 1000)) }
-                    SeekButton(icon: "goforward", label: "\(step)") { epTouched = true; seek(ms: posMs + step * 1000) }
+                    SeekButton(icon: "gobackward", label: "\(step)") { epTouched = true; seek(ms: max(0, posMs - step * 1000)); scheduleHide() }
+                    SeekButton(icon: "goforward", label: "\(step)") { epTouched = true; seek(ms: posMs + step * 1000); scheduleHide() }
                 }
                 Spacer()
                 skipButton
                     .transition(.move(edge: .trailing).combined(with: .opacity))
             }
             .animation(.easeOut(duration: 0.25), value: skipKey)
-            .padding(.bottom, 40)
             .padding(.horizontal, 20)
+            .padding(.bottom, controlsVisible ? 8 : 40)
+            if controlsVisible { transportBar.transition(.opacity) }
+        }
+        .animation(.easeInOut(duration: 0.2), value: controlsVisible)
+    }
+
+    /// Close · Ends · PiP · AirPlay · more (subtitles / audio / speed / aspect / episodes / stats).
+    private var topBar: some View {
+        HStack(spacing: 8) {
+            Button { dismiss() } label: {
+                Image(systemName: "xmark").padding(10)
+                    .background(.black.opacity(0.5), in: Circle())
+            }
+            Spacer()
+            // "Ends 9:47 PM" — hidden in live mode (rolling HLS duration lies) and while a
+            // placeholder clip loops. Android ticker.
+            if durMs > 1000 && !isLive && !placeholder {
+                Text(endsText).font(.caption).foregroundStyle(.white.opacity(0.85))
+                    .padding(.horizontal, 10).padding(.vertical, 6)
+                    .background(.black.opacity(0.5), in: Capsule())
+            }
+            Spacer()
+            // Picture-in-Picture pop-out (top corner, next to AirPlay)
+            if PiPModel.supported {
+                Button { epTouched = true; pip.toggle(); scheduleHide() } label: {
+                    Image(systemName: pip.active ? "pip.exit" : "pip.enter").padding(10)
+                        .background(.black.opacity(0.5), in: Circle())
+                }
+                .disabled(!pip.possible && !pip.active)
+                .opacity(pip.possible || pip.active ? 1 : 0.4)
+                .accessibilityLabel(pip.active ? "Exit picture in picture" : "Picture in picture")
+            }
+            AirPlayButton()
+                .frame(width: 40, height: 40)
+                .background(.black.opacity(0.5), in: Circle())
+            Menu { menuItems } label: {
+                Image(systemName: "ellipsis").padding(10)
+                    .background(.black.opacity(0.5), in: Circle())
+            }
+        }
+        .padding()
+    }
+
+    /// Play/pause + scrubber with elapsed / remaining — replaces the native AVPlayerViewController
+    /// controls the layer surface doesn't have. Live mode: play/pause + LIVE badge, no scrubber.
+    private var transportBar: some View {
+        HStack(spacing: 10) {
+            Button { togglePlay() } label: {
+                Image(systemName: playing ? "pause.fill" : "play.fill")
+                    .font(.title3).frame(width: 40, height: 40)
+                    .background(.black.opacity(0.5), in: Circle())
+                    .foregroundStyle(.white)
+            }
+            .accessibilityLabel(playing ? "Pause" : "Play")
+            if isLive {
+                Text("LIVE").font(.caption2.bold())
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .background(.red, in: RoundedRectangle(cornerRadius: 4))
+                    .foregroundStyle(.white)
+                Spacer()
+            } else if durMs > 0 && !placeholder {
+                let shown = scrubbing ? Int(scrubMs) : posMs
+                Text(clock(shown)).font(.caption.monospacedDigit()).foregroundStyle(.white)
+                Slider(value: Binding(get: { scrubbing ? scrubMs : Double(posMs) },
+                                      set: { scrubMs = $0 }),
+                       in: 0...Double(max(durMs, 1)),
+                       onEditingChanged: { editing in
+                           if editing {
+                               scrubbing = true; scrubMs = Double(posMs); hideTask?.cancel()
+                           } else {
+                               scrubbing = false; epTouched = true
+                               seek(ms: Int(scrubMs)); scheduleHide()
+                           }
+                       })
+                    .tint(Theme.accent)
+                Text("-" + clock(max(0, durMs - shown))).font(.caption.monospacedDigit()).foregroundStyle(.white)
+            } else {
+                Spacer()
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 28)
+    }
+
+    private func togglePlay() {
+        epTouched = true
+        if player.timeControlStatus == .paused {
+            player.play()          // resumes at defaultRate, so the chosen speed sticks
+            playing = true
+        } else {
+            player.pause()
+            playing = false
+        }
+        scheduleHide()
+    }
+
+    /// Tap the picture: show the controls (and re-arm the auto-hide), or hide them.
+    private func toggleControls() {
+        epTouched = true
+        if controlsVisible { hideTask?.cancel(); controlsVisible = false }
+        else { controlsVisible = true; scheduleHide() }
+    }
+
+    /// Controls fade out 4s after the last interaction while playing; they stay while paused
+    /// or scrubbing.
+    private func scheduleHide() {
+        hideTask?.cancel()
+        hideTask = Task {
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            if playing && !scrubbing && !showSubPanel && !showEpisodes { controlsVisible = false }
         }
     }
 
@@ -439,6 +539,7 @@ struct PlayerView: View {
     private func start() async {
         // keep-screen-on while playing (Android FLAG_KEEP_SCREEN_ON fix, Sep 18)
         UIApplication.shared.isIdleTimerDisabled = true
+        PlaybackAudio.activate()   // .playback: sound on silent, in background, in the PiP window
         scaleMode = session.pref("scaleMode", "fit")
         if !isLive {
             windows = await PlayerWindows.fetch(session: session, id: request.meta.id,
@@ -527,9 +628,14 @@ struct PlayerView: View {
 
     private func tick(_ ms: Int) {
         let prev = lastTickPos
+        let nowPlaying = player.timeControlStatus != .paused
+        if nowPlaying != playing {
+            playing = nowPlaying
+            if !nowPlaying { hideTask?.cancel(); controlsVisible = true }   // paused → controls stay up
+        }
         posMs = ms
         lastTickPos = ms
-        if !firstFrame, player.rate > 0, ms > 0 { firstFrame = true }
+        if !firstFrame, player.rate > 0, ms > 0 { firstFrame = true; scheduleHide() }
         currentCue = subCues.first(where: { ms >= $0.from && ms <= $0.to })?.text ?? ""
         // seek discontinuity (Android onPositionDiscontinuity / pendingIntroFrom): jumping back
         // BEFORE a window re-arms its latch; crossing a window's end without skipping latches it
@@ -939,6 +1045,13 @@ struct PlayerView: View {
     private func onEnded() {
         if placeholder { seek(ms: 0); player.play(); return }   // loop the clip until the real file lands
         finishEpisode()
+        // Popped out: the next episode opens as a new player screen, which can't re-enter PiP
+        // from the background — so close the pop-out and leave Next-Up waiting for the return.
+        if pip.active {
+            pip.stop()
+            if nextEp != nil { showNextUp = true; controlsVisible = true }
+            return
+        }
         guard !isLive, session.pref("autoplayNext", true), request.season != nil,
               let ep = nextEp else { dismiss(); return }
         // 2 consecutive fully-input-less auto-advances → ask before rolling a third
@@ -970,6 +1083,8 @@ struct PlayerView: View {
                                        episode: request.episode, pos: pos, dur: durMs)
             }
         }
+        pip.stop()
+        hideTask?.cancel(); hideTask = nil
         placeholderPoll?.cancel(); placeholderPoll = nil
         subxTask?.cancel(); subxTask = nil
         if let t = timeObserver { player.removeTimeObserver(t) }
@@ -983,25 +1098,6 @@ struct PlayerView: View {
 }
 
 // MARK: - pieces
-
-/// AVPlayerViewController host (native controls + AirPlay) with a settable video gravity for
-/// the aspect cycle — SwiftUI's VideoPlayer can't change gravity.
-struct PlayerContainer: UIViewControllerRepresentable {
-    let player: AVPlayer
-    let gravity: AVLayerVideoGravity
-    func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let vc = AVPlayerViewController()
-        vc.player = player
-        vc.videoGravity = gravity
-        vc.allowsPictureInPicturePlayback = true
-        vc.canStartPictureInPictureAutomaticallyFromInline = true
-        return vc
-    }
-    func updateUIViewController(_ vc: AVPlayerViewController, context: Context) {
-        if vc.player !== player { vc.player = player }
-        if vc.videoGravity != gravity { vc.videoGravity = gravity }
-    }
-}
 
 struct SkipPill: View {
     let text: String, action: () -> Void
