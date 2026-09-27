@@ -28,6 +28,7 @@ struct PlayerView: View {
     @State private var showStillWatching = false
     @State private var timeObserver: Any?
     @State private var endObserver: NSObjectProtocol?
+    @State private var rate: Float = 1.0      // playback speed (Android speed picker)
 
     init(request: PlayRequest) { self.request = request }
     // legacy call sites (movie stream list) still hand us a bare url
@@ -58,6 +59,23 @@ struct PlayerView: View {
                         .background(.black.opacity(0.5), in: Circle())
                 }
                 Spacer()
+                // "Ends 9:47 PM" — hidden in live mode (rolling HLS duration lies). Android ticker.
+                if durMs > 1000 && request.meta.type != "tv" {
+                    Text(endsText).font(.caption).foregroundStyle(.white.opacity(0.85))
+                        .padding(.horizontal, 10).padding(.vertical, 6)
+                        .background(.black.opacity(0.5), in: Capsule())
+                }
+                Spacer()
+                Menu {
+                    ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { r in
+                        Button { setRate(Float(r)) } label: {
+                            Text(rate == Float(r) ? "✓ \(r, specifier: "%g")×" : "\(r, specifier: "%g")×")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "speedometer").padding(10)
+                        .background(.black.opacity(0.5), in: Circle())
+                }
             }
             .padding()
             Spacer()
@@ -114,6 +132,20 @@ struct PlayerView: View {
         .background(Theme.card, in: RoundedRectangle(cornerRadius: 18))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.black.opacity(0.75))
+    }
+
+    // "Ends" clock — remaining runtime (÷ speed) added to now (Android ends-at readout).
+    private var endsText: String {
+        let remain = Double(max(0, durMs - posMs)) / 1000.0 / Double(max(0.1, rate))
+        let f = DateFormatter(); f.timeStyle = .short
+        return "Ends \(f.string(from: Date().addingTimeInterval(remain)))"
+    }
+
+    /// Playback speed (Android showSpeedPicker) — defaultRate keeps it across pause/play (iOS 16+).
+    private func setRate(_ r: Float) {
+        rate = r
+        if #available(iOS 16.0, *) { player.defaultRate = r }
+        if player.timeControlStatus == .playing { player.rate = r }
     }
 
     private func start() async {

@@ -97,11 +97,11 @@ Android references are file + function/rough line so the implementer can read th
 
 - 🟡 Subtitles: iOS = one auto-picked track rendered as overlay. Android: ranked multi-track list (addon `subtitles` json, English-best-first, up to 12), embedded-subs via `/webplay/subx`, side panel that STAYS OPEN with live-apply (size incl. Tiny, background, outline, position raised/high), off toggle, `flashLabel` pill on change — `subtitleOptions`/`showSubtitleSidePanel`/`applySubtitle`/`applySubScale` (~L1250-1367)
 - ❌ Audio track picker (language pref default, `audioLang`) — `showAudioPicker` (~L1368)
-- ❌ Playback speed picker (ends-at time recomputed by speed) — `showSpeedPicker` (~L1395)
+- ✅ Playback speed picker (ends-at time recomputed by speed) — `showSpeedPicker` (~L1395)
 - ❌ Aspect/scale cycle (fit/fill/zoom, `scaleMode` persisted) — `applyScale`/`cycleScale` (~L1411-1431)
 - ❌ Seek step pref applied to seek controls/gestures (5/10/15/30s) — `Store.seekStepSec`, init (~L483)
 - ❌ In-player episode panel: season tabs + episode strip, focus lands on current episode — `toggleEpisodePanel`/`buildSeasonTabs`/`showSeason`/`focusCurrentEpisode` (~L1016-1052, L1467-1491)
-- ❌ Clock + "Ends 9:47 PM" readout (suppressed in live mode — rolling HLS duration lies) — ticker (~L656-668)
+- ✅ Clock + "Ends 9:47 PM" readout (suppressed in live mode — rolling HLS duration lies) — ticker (~L656-668)
 - ❌ Stats overlay (resolution/fps/refresh/dropped frames) — `updateStats` (~L800)
 - ❌ Branded loading screen (channel/show logo pulse before first frame) — `buildLoadingScreen` (~L301)
 - ❌ Placeholder/unaired handling: stream that lands on the "not yet available" clip loops it, hides Ends/skip UI, re-probes every 20s and hot-swaps to the real file when it lands — `maybeDetectPlaceholder` + placeholder branches (~L1097, ticker)
