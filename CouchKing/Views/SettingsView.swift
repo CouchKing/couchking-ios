@@ -12,6 +12,8 @@ struct SettingsView: View {
     @State private var addonCode = ""
     @State private var confirmDelete = false
     @State private var syncMsg = ""
+    @State private var addonMsg = ""
+    @State private var probing = false
 
     var body: some View {
         NavigationStack {
@@ -19,11 +21,29 @@ struct SettingsView: View {
                 accountSection
                 if session.signedIn { profilesSection }
                 addonsSection
+                shelvesSection
                 playerSection
                 lookSection
                 aboutSection
             }
             .navigationTitle("Settings")
+            // silent service-assignment refresh on open (Android showAddons / onResume)
+            .task { await session.checkAccess() }
+            // CouchKing-styled centered confirm card instead of the system alert (Sheets.kt)
+            .overlay {
+                if confirmDelete {
+                    ConfirmCard(title: "Delete account?",
+                                text: "This permanently deletes your account and synced library on the server.",
+                                confirm: "Delete") {
+                        confirmDelete = false
+                        Task {
+                            if !(await session.deleteAccount()) {
+                                err = "Couldn't delete — check your connection"
+                            }
+                        }
+                    } cancel: { confirmDelete = false }
+                }
+            }
         }
     }
 
@@ -61,18 +81,6 @@ struct SettingsView: View {
                 }
                 Button("Sign out", role: .destructive) { session.signOut() }
                 Button("Delete account", role: .destructive) { confirmDelete = true }
-                    .confirmationDialog("Delete account?", isPresented: $confirmDelete, titleVisibility: .visible) {
-                        Button("Delete", role: .destructive) {
-                            Task {
-                                if !(await session.deleteAccount()) {
-                                    err = "Couldn't delete — check your connection"
-                                }
-                            }
-                        }
-                        Button("Cancel", role: .cancel) {}
-                    } message: {
-                        Text("This permanently deletes your account and synced library on the server.")
-                    }
                 if !err.isEmpty { Text(err).font(.caption).foregroundStyle(.red) }
             } else {
                 TextField("Email", text: $email)
@@ -97,7 +105,7 @@ struct SettingsView: View {
         Section("Profiles") {
             ForEach(session.profiles) { p in
                 NavigationLink { ProfileEditView(profile: p) } label: {
-                    HStack { Text(p.avatar); Text(p.name)
+                    HStack { ProfileAvatar(profile: p, size: 30); Text(p.name)
                         if p.id == session.currentProfile {
                             Spacer(); Text("current").font(.caption).foregroundStyle(.secondary)
                         }
@@ -108,29 +116,45 @@ struct SettingsView: View {
                 NavigationLink("Add profile") { ProfileEditView(profile: nil) }
             }
             if session.profiles.count > 1 {
-                Button("Switch profile") {
-                    session.currentProfile = ""
-                    UserDefaults.standard.set("", forKey: "curProfile")
-                }
+                Button("Switch profile") { session.switchProfile("") }
             }
         }
     }
 
+    /// Addons (Android showAddons): signed-in only — guests get a sign-in prompt; the manifest
+    /// is probed + named before anything is added.
     private var addonsSection: some View {
         Section("Addons") {
-            ForEach(session.addons) { a in
-                HStack {
-                    Text(a.name)
-                    Spacer()
-                    Button(role: .destructive) { session.removeAddon(a.url) } label: {
-                        Image(systemName: "trash")
+            if !session.signedIn {
+                Text("Sign in to add the addon your account was given.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            } else {
+                ForEach(session.addons) { a in
+                    HStack {
+                        Text(a.name)
+                        Spacer()
+                        Button(role: .destructive) { session.removeAddon(a.url) } label: {
+                            Image(systemName: "trash")
+                        }
                     }
                 }
+                TextField("Access code", text: $addonCode)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                if !addonMsg.isEmpty { Text(addonMsg).font(.caption).foregroundStyle(.secondary) }
+                Button(probing ? "Checking…" : "Add addon") { addAddon() }
+                    .disabled(probing || addonCode.trimmingCharacters(in: .whitespaces).isEmpty)
             }
-            TextField("Access code", text: $addonCode)
-                .textInputAutocapitalization(.never).autocorrectionDisabled()
-            Button("Add addon") { addAddon() }
-                .disabled(addonCode.trimmingCharacters(in: .whitespaces).isEmpty)
+        }
+    }
+
+    /// Shelves (Android showShelfPicker / showShelfReorder): which catalogs make up Home, in
+    /// what order — synced to the profile with a debounced push.
+    private var shelvesSection: some View {
+        Section("Home shelves") {
+            NavigationLink { ShelfPickerView() } label: {
+                LabeledContent("Choose shelves", value: "\(session.enabledShelves().count) on")
+            }
+            NavigationLink("Reorder shelves") { ShelfReorderView() }
         }
     }
 
@@ -146,6 +170,15 @@ struct SettingsView: View {
                        options: [("en", "English"), ("off", "Off")])   // Android: English or off only
             PrefToggle(label: "Subtitle background", key: "subBg", def: false)   // Android default: off
             PrefToggle(label: "Subtitle outline", key: "subOutline", def: true)
+            PrefPicker(label: "Subtitle position", key: "subPos", def: "normal",
+                       options: [("normal", "Normal"), ("raised", "Raised"), ("high", "High")])
+            PrefPicker(label: "Aspect", key: "scaleMode", def: "fit",
+                       options: [("fit", "Fit"), ("fill", "Fill"), ("zoom", "Zoom")])
+            PrefPicker(label: "Audio language", key: "audioLang", def: "en",
+                       options: [("en", "English"), ("es", "Spanish"), ("fr", "French"), ("de", "German"),
+                                 ("ja", "Japanese"), ("ko", "Korean"), ("any", "Any")])
+            // live preview — shows exactly what the options above produce (Android showPlayerSettings)
+            SubtitlePreview()
         }
     }
 
@@ -158,24 +191,39 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section {
+            NavigationLink("Legal & About") { LegalView() }
             LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
-            Link("Terms & Privacy", destination: URL(string: "https://couchking.app/terms")!)
         }
     }
 
+    /// Android Addons.probe: fetch the manifest, validate it, take ITS name — nothing is added
+    /// until the addon answers.
     private func addAddon() {
         var code = addonCode.trimmingCharacters(in: .whitespaces)
         if !code.hasPrefix("http") { code = "https://" + code }
-        if let u = URL(string: code), let host = u.host {
-            API.serviceBase = "https://" + host
+        if code.hasSuffix("/manifest.json") { code = String(code.dropLast("/manifest.json".count)) }
+        probing = true; addonMsg = ""
+        Task {
+            guard let m = try? await API.json("/manifest.json", base: code),
+                  m["catalogs"] is [[String: Any]] || m["resources"] != nil else {
+                addonMsg = "That code doesn't answer as an addon — check it and try again."
+                probing = false; return
+            }
+            if let u = URL(string: code), let host = u.host {
+                API.serviceBase = "https://" + host
+            }
+            let name = (m["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Addon"
+            if !session.addons.contains(where: { $0.url == code }) {
+                session.addons.append(Addon(url: code, name: name))
+                var st = session.state
+                st["addons"] = session.addons.map { ["url": $0.url, "name": $0.name] }
+                session.state = st
+                session.push()
+            }
+            await session.detectLiveTv(); await session.checkAccess()
+            addonMsg = "Added \(name)"
+            addonCode = ""; probing = false
         }
-        session.addons.append(Addon(url: code, name: "CouchKing"))
-        var st = session.state
-        st["addons"] = session.addons.map { ["url": $0.url, "name": $0.name] }
-        session.state = st
-        session.push()
-        Task { await session.detectLiveTv(); await session.checkAccess() }
-        addonCode = ""
     }
 }
 
@@ -278,11 +326,19 @@ struct ProfileEditView: View {
     let profile: Profile?
     @State private var name = ""
     @State private var avatar = "🍿"
+    @State private var color = Profile.colors[0]
     private let avatars = ["🍿", "👑", "🦊", "🐼", "🦄", "🐯", "👻", "🤖", "🌸", "⚡️", "🎮", "🐶"]
 
     var body: some View {
         Form {
+            HStack {
+                Spacer()
+                Text(avatar).font(.system(size: 44)).frame(width: 84, height: 84)
+                    .background(Profile.tint(color), in: RoundedRectangle(cornerRadius: 18))
+                Spacer()
+            }
             TextField("Name", text: $name)
+            // avatar AND color picker (Android addAvatarColorPicker) — the hue drives the tile everywhere
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 52))]) {
                 ForEach(avatars, id: \.self) { a in
                     Text(a).font(.system(size: 32))
@@ -292,9 +348,16 @@ struct ProfileEditView: View {
                         .onTapGesture { avatar = a }
                 }
             }
+            HStack(spacing: 10) {
+                ForEach(Profile.colors, id: \.self) { c in
+                    Circle().fill(Profile.tint(c)).frame(width: 28, height: 28)
+                        .overlay(Circle().stroke(.white, lineWidth: c == color ? 3 : 0))
+                        .onTapGesture { color = c }
+                }
+            }
             Button(profile == nil ? "Create" : "Save") {
-                if let p = profile { session.renameProfile(p.id, name: name, avatar: avatar) }
-                else { session.addProfile(name: name, avatar: avatar) }
+                if let p = profile { session.renameProfile(p.id, name: name, avatar: avatar, color: color) }
+                else { session.addProfile(name: name, avatar: avatar, color: color) }
                 dismiss()
             }
             .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -305,6 +368,202 @@ struct ProfileEditView: View {
             }
         }
         .navigationTitle(profile == nil ? "New profile" : "Edit profile")
-        .onAppear { if let p = profile { name = p.name; avatar = p.avatar } }
+        .onAppear {
+            if let p = profile { name = p.name; avatar = p.avatar; if !p.color.isEmpty { color = p.color } }
+            else { color = Profile.colors[session.profiles.count % Profile.colors.count] }
+        }
+    }
+}
+
+
+/// Live subtitle preview (Android showPlayerSettings preview box): exactly what the size /
+/// background / outline / position prefs produce in the player.
+struct SubtitlePreview: View {
+    @EnvironmentObject var session: Session
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            LinearGradient(colors: [Theme.panel, .black], startPoint: .top, endPoint: .bottom)
+            SubtitleText(text: "This is how your subtitles will look.")
+                .padding(.bottom, session.pref("subPos", "normal") == "high" ? 40
+                         : session.pref("subPos", "normal") == "raised" ? 22 : 8)
+        }
+        .frame(height: 110)
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .listRowInsets(EdgeInsets())
+    }
+}
+
+/// The subtitle cue as the player renders it: scale, background, outline (shadow ring).
+struct SubtitleText: View {
+    @EnvironmentObject var session: Session
+    let text: String
+    var body: some View {
+        let outline = session.pref("subOutline", true)
+        Text(text)
+            .font(.system(size: 17 * session.pref("subScale", 1.0), weight: .medium))
+            .foregroundStyle(.white)
+            .multilineTextAlignment(.center)
+            .shadow(color: .black.opacity(outline ? 1 : 0), radius: 1, x: 1, y: 1)
+            .shadow(color: .black.opacity(outline ? 1 : 0), radius: 1, x: -1, y: -1)
+            .shadow(color: .black.opacity(outline ? 0.9 : 0), radius: 2)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(session.pref("subBg", false) ? .black.opacity(0.6) : .clear,
+                        in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+/// Shelves picker (Android showShelfPicker): grouped pill chips — Movies then Shows — toggling
+/// a catalog on/off the Home lineup. Order is kept; new picks append.
+struct ShelfPickerView: View {
+    @EnvironmentObject var session: Session
+    private let cols = [GridItem(.adaptive(minimum: 120), spacing: 8)]
+    var body: some View {
+        let enabled = session.enabledShelves().map(\.id)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                ForEach([("movie", "Movies"), ("series", "Shows")], id: \.0) { t, title in
+                    let cats = session.allShelves().filter { $0.type == t }
+                    if !cats.isEmpty {
+                        Text(title).font(.headline)
+                        LazyVGrid(columns: cols, spacing: 8) {
+                            ForEach(cats) { c in
+                                let on = enabled.contains(c.id)
+                                Button {
+                                    var keys = enabled
+                                    if on { keys.removeAll { $0 == c.id } } else { keys.append(c.id) }
+                                    session.setShelves(keys)
+                                } label: {
+                                    Text((on ? "✓ " : "") + c.name).font(.caption)
+                                        .lineLimit(1).frame(maxWidth: .infinity)
+                                        .padding(.horizontal, 10).padding(.vertical, 8)
+                                        .background(on ? Theme.accent : Theme.card, in: Capsule())
+                                        .foregroundStyle(on ? .white : .primary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                }
+                Button("Reset to default") { 
+                    var ps = session.pstate(); ps["shelves"] = nil; session.setPstate(ps)
+                }
+                .font(.footnote).padding(.top, 8)
+            }
+            .padding(16)
+        }
+        .background(Theme.bg)
+        .navigationTitle("Shelves")
+    }
+}
+
+/// Reorder screen (Android showShelfReorder): drag rows; saved with the debounced push.
+struct ShelfReorderView: View {
+    @EnvironmentObject var session: Session
+    var body: some View {
+        List {
+            ForEach(session.enabledShelves()) { c in
+                HStack { Text(c.name); Spacer()
+                    Text(c.type == "movie" ? "Movies" : "Shows").font(.caption).foregroundStyle(.secondary) }
+            }
+            .onMove { from, to in
+                var keys = session.enabledShelves().map(\.id)
+                keys.move(fromOffsets: from, toOffset: to)
+                session.setShelves(keys)
+            }
+        }
+        .environment(\.editMode, .constant(.active))
+        .navigationTitle("Reorder shelves")
+    }
+}
+
+/// Legal & About (Android showAbout / showTerms / showPrivacy, Legal.kt): the full Terms and
+/// Privacy text reachable in-app (App Store review requirement), plus the version row.
+struct LegalView: View {
+    var body: some View {
+        List {
+            Section {
+                HStack { BrandTitle(); Spacer()
+                    Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
+                        .foregroundStyle(.secondary) }
+                Text("Movies, shows and live TV — synced across your devices.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+            Section {
+                NavigationLink("Terms of Service") { LegalTextView(title: "Terms of Service", text: Legal.terms) }
+                NavigationLink("Privacy Policy") { LegalTextView(title: "Privacy Policy", text: Legal.privacy) }
+                Link("couchking.app", destination: URL(string: "https://couchking.app")!)
+            }
+        }
+        .navigationTitle("Legal & About")
+    }
+}
+
+struct LegalTextView: View {
+    let title: String, text: String
+    var body: some View {
+        ScrollView { Text(text).font(.callout).padding(16).frame(maxWidth: .infinity, alignment: .leading) }
+            .background(Theme.bg)
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// Mandatory store update gate (Android showStoreMandatoryUpdate): BLOCKING screen, one
+/// button deep-linking to the App Store listing the service points at (nothing baked).
+struct UpdateGateView: View {
+    let info: StoreVersion
+    var body: some View {
+        VStack(spacing: 18) {
+            Spacer()
+            Text("👑").font(.system(size: 56))
+            Text("Update required").font(.title2.bold())
+            Text("This version of CouchKing is no longer supported. Update to \(info.latest) to keep watching.")
+                .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            Spacer()
+            if let u = URL(string: info.url.isEmpty ? "itms-apps://apps.apple.com" : info.url) {
+                Link(destination: u) {
+                    Text("Update on the App Store").font(.headline).frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Theme.accent, in: RoundedRectangle(cornerRadius: 14))
+                        .foregroundStyle(.white)
+                }
+                .padding(.horizontal, 28).padding(.bottom, 40)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg)
+    }
+}
+
+
+/// Centered confirm card with the purple focus ring (Android Sheets.kt confirm card).
+struct ConfirmCard: View {
+    let title: String, text: String, confirm: String
+    let action: () -> Void
+    let cancel: () -> Void
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.6).ignoresSafeArea().onTapGesture(perform: cancel)
+            VStack(spacing: 14) {
+                Text("👑").font(.system(size: 36))
+                Text(title).font(.title3.bold())
+                Text(text).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                HStack(spacing: 12) {
+                    Button(action: cancel) {
+                        Text("Cancel").font(.headline).padding(.horizontal, 20).padding(.vertical, 10)
+                            .background(Theme.card, in: Capsule())
+                    }
+                    Button(action: action) {
+                        Text(confirm).font(.headline).padding(.horizontal, 20).padding(.vertical, 10)
+                            .background(.red.opacity(0.85), in: Capsule()).foregroundStyle(.white)
+                    }
+                }
+            }
+            .padding(26)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Theme.accent.opacity(0.6), lineWidth: 1))
+            .padding(30)
+        }
     }
 }
