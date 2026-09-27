@@ -46,4 +46,22 @@ struct Catalog {
         }
         return rows
     }
+
+    /// Top 10 Today (Android addTop10Row): trending movies + shows interleaved, first 10.
+    @MainActor
+    static func top10(session: Session) async -> [Meta] {
+        guard let addon = session.addons.first else { return [] }
+        async let m = API.json("/catalog/movie/couchking-movies.json", base: addon.url)
+        async let s = API.json("/catalog/series/couchking-series.json", base: addon.url)
+        let mv = ((try? await m)?["metas"] as? [[String: Any]] ?? []).compactMap { Meta($0, type: "movie") }
+        let sv = ((try? await s)?["metas"] as? [[String: Any]] ?? []).compactMap { Meta($0, type: "series") }
+        var out: [Meta] = []
+        var i = 0
+        while out.count < 10 && (i < mv.count || i < sv.count) {
+            if i < mv.count { out.append(mv[i]) }
+            if out.count < 10 && i < sv.count { out.append(sv[i]) }
+            i += 1
+        }
+        return Array(out.prefix(10))
+    }
 }

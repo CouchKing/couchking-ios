@@ -3,6 +3,7 @@ import SwiftUI
 struct HomeView: View {
     @EnvironmentObject var session: Session
     @State private var rows: [(String, [Meta])] = []
+    @State private var top10: [Meta] = []
     @State private var loading = true
 
     var body: some View {
@@ -15,6 +16,9 @@ struct HomeView: View {
                     let cw = session.continueWatching()
                     if !cw.isEmpty {
                         ContinueRow(items: cw)
+                    }
+                    if !top10.isEmpty {
+                        Top10Row(metas: top10)
                     }
                     ForEach(rows, id: \.0) { row in
                         PosterRow(title: row.0, metas: row.1)
@@ -40,10 +44,16 @@ struct HomeView: View {
             }
             .task(id: session.currentProfile) {
                 loading = true
-                rows = await Catalog.homeRows(session: session)
+                async let r = Catalog.homeRows(session: session)
+                async let t = Catalog.top10(session: session)
+                rows = await r; top10 = await t
                 loading = false
             }
-            .refreshable { rows = await Catalog.homeRows(session: session) }
+            .refreshable {
+                async let r = Catalog.homeRows(session: session)
+                async let t = Catalog.top10(session: session)
+                rows = await r; top10 = await t
+            }
         }
     }
 }
@@ -153,6 +163,46 @@ struct CWCard: View {
             Text(item.meta.name).font(.caption2).lineLimit(1).frame(width: 108)
         }
         .titleMenu(item.meta)
+    }
+}
+
+// Top 10 Today (Android addTop10Row): big ghost rank numeral behind each poster.
+struct Top10Row: View {
+    let metas: [Meta]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Top 10 Today").font(.headline).padding(.horizontal, 14)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 2) {
+                    ForEach(Array(metas.enumerated()), id: \.element.id) { idx, m in
+                        NavigationLink(value: m) { RankedCard(rank: idx + 1, meta: m) }
+                    }
+                }
+                .padding(.horizontal, 14)
+            }
+        }
+        .navigationDestination(for: Meta.self) { DetailView(meta: $0) }
+    }
+}
+
+struct RankedCard: View {
+    let rank: Int
+    let meta: Meta
+    var body: some View {
+        HStack(alignment: .bottom, spacing: -16) {
+            Text("\(rank)")
+                .font(.system(size: 104, weight: .heavy)).italic()
+                .foregroundStyle(Theme.card)
+                .frame(width: rank >= 10 ? 96 : 58, alignment: .trailing)
+            AsyncImage(url: URL(string: meta.poster ?? "")) { img in
+                img.resizable().aspectRatio(contentMode: .fill)
+            } placeholder: {
+                Theme.card.overlay(Image(systemName: "film").foregroundStyle(.secondary))
+            }
+            .frame(width: 96, height: 144)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .titleMenu(meta)
     }
 }
 
