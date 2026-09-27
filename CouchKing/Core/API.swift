@@ -52,9 +52,17 @@ struct API {
     static func probe(_ url: URL, timeout: TimeInterval = 8) async -> Int {
         var req = URLRequest(url: url)
         req.timeoutInterval = timeout
-        req.setValue("bytes=0-0", forHTTPHeaderField: "Range")
+        req.httpMethod = "HEAD"
         guard let r = try? await URLSession.shared.data(for: req) else { return 0 }
         return (r.1 as? HTTPURLResponse)?.statusCode ?? 0
+    }
+
+    /// base64url (IOS_CONTRACTS §4): standard base64 with + → -, / → _, padding stripped.
+    static func b64url(_ s: String) -> String {
+        Data(s.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 
     /// The centered CouchKing modal copy for a gate status (Android showTopBanner reasons).

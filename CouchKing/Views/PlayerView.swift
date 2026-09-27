@@ -62,8 +62,21 @@ struct PlayerView: View {
     @State private var failed = false
     @State private var remuxed = false
     @State private var serverAhead = 0        // mid-play reconcile: another device's position
+    // ---- placeholder / "not yet available" clip (IOS_CONTRACTS §5) ----
+    @State private var placeholder = false
+    @State private var placeholderPoll: Task<Void, Never>?
+    @State private var swapped: [String: Any]?   // the real stream once it lands
+    // ---- /webplay/probe (IOS_CONTRACTS §4) ----
+    @State private var probeInfo = ""
+    @State private var subxTask: Task<Void, Never>?
+    @State private var subxFrom = 0
 
     private var isLive: Bool { request.meta.type == "tv" }
+    /// The url actually playing (the real file after a placeholder hot-swap).
+    private var playURL: URL {
+        if let u = swapped?["url"] as? String, let url = URL(string: u) { return url }
+        return request.url
+    }
 
     init(request: PlayRequest) { self.request = request }
     // legacy call sites (movie stream list) still hand us a bare url
@@ -77,6 +90,7 @@ struct PlayerView: View {
                 .ignoresSafeArea()
             if !firstFrame && !failed { loadingScreen }
             overlay
+            if placeholder { placeholderBanner }
             if showNextUp, let ep = nextEp { nextUpCard(ep) }
             if showStillWatching { stillWatchingCard }
             if failed { errorCard }
@@ -139,8 +153,9 @@ struct PlayerView: View {
                         .background(.black.opacity(0.5), in: Circle())
                 }
                 Spacer()
-                // "Ends 9:47 PM" — hidden in live mode (rolling HLS duration lies). Android ticker.
-                if durMs > 1000 && !isLive {
+                // "Ends 9:47 PM" — hidden in live mode (rolling HLS duration lies) and while a
+                // placeholder clip loops. Android ticker.
+                if durMs > 1000 && !isLive && !placeholder {
                     Text(endsText).font(.caption).foregroundStyle(.white.opacity(0.85))
                         .padding(.horizontal, 10).padding(.vertical, 6)
                         .background(.black.opacity(0.5), in: Capsule())
@@ -188,7 +203,7 @@ struct PlayerView: View {
                     .padding(.bottom, subBottomPad)
             }
             HStack(spacing: 10) {
-                if !isLive {
+                if !isLive && !placeholder {
                     let step = session.pref("seekStep", 10)
                     SeekButton(icon: "gobackward", label: "\(step)") { epTouched = true; seek(ms: max(0, posMs - step * 1000)) }
                     SeekButton(icon: "goforward", label: "\(step)") { epTouched = true; seek(ms: posMs + step * 1000) }
@@ -271,8 +286,24 @@ struct PlayerView: View {
         return nil
     }
 
+    /// "Getting this ready…" strip while the placeholder clip loops (Android placeholder branch).
+    private var placeholderBanner: some View {
+        VStack {
+            Spacer()
+            HStack(spacing: 8) {
+                ProgressView().tint(.white)
+                Text("Getting this ready — playback starts automatically when it lands.")
+                    .font(.caption).foregroundStyle(.white)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 8)
+            .background(.black.opacity(0.7), in: Capsule())
+            .padding(.bottom, 96)
+        }
+    }
+
     @ViewBuilder private var skipButton: some View {
-        if let st = skipState {
+        if placeholder { EmptyView() }
+        else if let st = skipState {
             SkipPill(text: st.0) {
                 epTouched = true
                 if st.0 == "Skip Recap" { recapHandled = true }
@@ -417,9 +448,12 @@ struct PlayerView: View {
             if let sw = request.streamWindows, sw.hasWindows { windows.adopt(sw) }
         }
         player.allowsExternalPlayback = true   // native AirPlay — sends the real video to the TV
+        placeholder = request.placeholder
         let item = AVPlayerItem(url: request.url)
         player.replaceCurrentItem(with: item)
         observeItem(item)
+        if placeholder { startPlaceholderPoll() }
+        else if !isLive { Task { await probeMedia() } }
         // audio: the audioLang pref picks the default track (Android audioLang), English fallback
         Task {
             guard let group = try? await item.asset.loadMediaSelectionGroup(for: .audible) else { return }
@@ -437,8 +471,9 @@ struct PlayerView: View {
             await MainActor.run { audioGroup = group; audioOpts = opts }
         }
         // resume: local positions map first (synced), server pos as fallback — never in live mode
+        // or on a placeholder clip
         var resume = 0
-        if !isLive {
+        if !isLive && !placeholder {
             let local = ((session.pstate()["positions"] as? [String: Any])?[posKey()] as? String)?
                 .split(separator: "|").first.flatMap { Int($0) } ?? 0
             resume = max(local, windows.resumeMs)
@@ -501,10 +536,16 @@ struct PlayerView: View {
         if abs(ms - prev) > 3000 {
             if windows.introFrom > 0 && ms < windows.introFrom { introHandled = false }
             if windows.recapFrom > 0 && ms < windows.recapFrom { recapHandled = false }
+            // an embedded track streamed from `t` has nothing before it — re-stream on a big seek back
+            if subIndex >= 0, subIndex < subTracks.count, let idx = subTracks[subIndex]["embedded"] as? Int,
+               ms < subxFrom {
+                subCues = []
+                streamEmbedded(index: idx, track: subIndex, fromMs: max(0, ms - 30_000))
+            }
         }
         if windows.introTo > 0 && prev < windows.introTo && ms >= windows.introTo { introHandled = true }
         if windows.recapTo > 0 && prev < windows.recapTo && ms >= windows.recapTo { recapHandled = true }
-        if isLive { return }
+        if isLive || placeholder { return }
         heartbeat()
         stingerNudge()
         nextUpTick()
@@ -589,6 +630,7 @@ struct PlayerView: View {
         let kbps = Int((log?.observedBitrate ?? 0) / 1000)
         stats = String(format: "%.0f×%.0f  %.1f fps  dropped %d  %d kbps  ",
                        size.width, size.height, fps, dropped, kbps) + (remuxed ? "remux" : "direct")
+        if !probeInfo.isEmpty { stats += "\n" + probeInfo }
     }
 
     /// Save position ("pos|dur|ts") + keep the Continue Watching entry fresh (with the ts the
@@ -684,11 +726,7 @@ struct PlayerView: View {
 
     private func playRemux(fromMs: Int) {
         guard !API.serviceBase.isEmpty else { failed = true; return }
-        let b64 = request.url.absoluteString.data(using: .utf8)!
-            .base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
+        let b64 = API.b64url(playURL.absoluteString)
         guard let remux = URL(string: API.serviceBase + "/webplay?u=\(b64)&t=\(fromMs / 1000)") else { return }
         remuxed = true
         let item = AVPlayerItem(url: remux)
@@ -722,7 +760,7 @@ struct PlayerView: View {
     }
 
     private func loadSubtitles() async {
-        guard session.pref("subLang", "en") != "off" else { subIndex = -1; return }
+        guard session.pref("subLang", "en") != "off", !placeholder else { subIndex = -1; return }
         if subTracks.isEmpty, let base = session.addonBase(), !isLive {
             // the addon attaches ranked subtitle files to each stream response — refetch the
             // stream list for this item and take this stream's list
@@ -747,11 +785,108 @@ struct PlayerView: View {
         }
         let t = subTracks[i]
         flashLabel("Subtitles: \(t["lang"] as? String ?? t["name"] as? String ?? "on")")
+        subxTask?.cancel(); subxTask = nil
+        if let idx = t["embedded"] as? Int {
+            subCues = []
+            streamEmbedded(index: idx, track: i, fromMs: max(0, posMs - 30_000))
+            return
+        }
         Task {
             guard let surl = t["url"] as? String, let u = URL(string: surl),
                   let data = try? await URLSession.shared.data(from: u).0,
                   let text = String(data: data, encoding: .utf8) else { return }
             if subIndex == i { subCues = SubCue.parse(text) }
+        }
+    }
+
+    /// Embedded subtitle track via /webplay/subx (IOS_CONTRACTS §4): ffmpeg live-converts to
+    /// WebVTT on the file's absolute clock, streamed progressively — cues are appended as
+    /// blocks arrive so the first lines show within seconds.
+    private func streamEmbedded(index: Int, track: Int, fromMs: Int) {
+        guard !API.serviceBase.isEmpty,
+              let url = URL(string: API.serviceBase + "/webplay/subx?u=\(API.b64url(playURL.absoluteString))&i=\(index)&t=\(fromMs / 1000)")
+        else { return }
+        subxFrom = fromMs
+        subxTask = Task {
+            var req = URLRequest(url: url); req.timeoutInterval = 600
+            guard let res = try? await URLSession.shared.bytes(for: req) else { return }
+            let bytes = res.0
+            var block: [String] = []
+            do {
+                for try await line in bytes.lines {
+                    if Task.isCancelled { return }
+                    if line.isEmpty {
+                        let cues = SubCue.parse(block.joined(separator: "\n"))
+                        block = []
+                        if !cues.isEmpty { await MainActor.run { if subIndex == track { subCues += cues } } }
+                    } else { block.append(line) }
+                }
+            } catch { }
+            let tail = SubCue.parse(block.joined(separator: "\n"))
+            if !tail.isEmpty { await MainActor.run { if subIndex == track { subCues += tail } } }
+        }
+    }
+
+    /// GET /webplay/probe → duration / codecs / embedded text-subtitle streams (§4). Embedded
+    /// tracks join the addon's ranked list; the codec line feeds the stats overlay.
+    private func probeMedia() async {
+        guard !API.serviceBase.isEmpty,
+              let r = try? await API.json("/webplay/probe?u=\(API.b64url(playURL.absoluteString))"),
+              (r["duration"] as? Double ?? Double(r["duration"] as? Int ?? 0)) > 0 else { return }
+        let dur = r["duration"] as? Double ?? Double(r["duration"] as? Int ?? 0)
+        probeInfo = "\(r["vcodec"] as? String ?? "?") / \(r["acodec"] as? String ?? "?") · \(Int(dur / 60)) min"
+        var added: [[String: Any]] = []
+        for s in r["subs"] as? [[String: Any]] ?? [] {
+            guard let i = s["i"] as? Int else { continue }
+            let lang = s["lang"] as? String ?? "und"
+            var name = "Embedded · " + (s["title"] as? String ?? lang)
+            if s["forced"] as? Bool == true { name += " (forced)" }
+            if s["hi"] as? Bool == true { name += " (SDH)" }
+            added.append(["lang": lang, "name": name, "embedded": i])
+        }
+        guard !added.isEmpty else { return }
+        subTracks = Array(rankSubtitles(subTracks + added).prefix(12))
+        // nothing picked yet (no addon subs) → the best embedded track becomes the default
+        if subIndex < 0, session.pref("subLang", "en") != "off", !subTracks.isEmpty { pickSub(0) }
+    }
+
+    // MARK: placeholder hot-swap (IOS_CONTRACTS §5)
+
+    /// Re-request the stream list every ~18s while the clip loops; the first non-placeholder
+    /// stream is hot-swapped in and the normal UI comes back.
+    private func startPlaceholderPoll() {
+        placeholderPoll?.cancel()
+        placeholderPoll = Task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(18))
+                guard !Task.isCancelled, let base = session.addonBase(), !request.streamPath.isEmpty else { return }
+                let u = session.profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+                guard let r = try? await API.json(request.streamPath + "?u=\(u)", base: base),
+                      let list = r["streams"] as? [[String: Any]],
+                      let real = list.first(where: { !PlayRequest.isPlaceholder($0) && ($0["url"] as? String) != nil })
+                else { continue }
+                await MainActor.run { hotSwap(real) }
+                return
+            }
+        }
+    }
+
+    private func hotSwap(_ s: [String: Any]) {
+        guard let us = s["url"] as? String, let url = URL(string: us) else { return }
+        swapped = s
+        placeholder = false
+        firstFrame = false
+        let w = PlayerWindows(stream: s)
+        if w.hasWindows { windows.adopt(w) }
+        subTracks = rankSubtitles(s["subtitles"] as? [[String: Any]] ?? [])
+        let item = AVPlayerItem(url: url)
+        player.replaceCurrentItem(with: item)
+        observeItem(item)
+        player.play()
+        flashLabel("Now playing the full file")
+        Task {
+            await probeMedia()
+            if subIndex < 0, !subTracks.isEmpty, session.pref("subLang", "en") != "off" { pickSub(0) }
         }
     }
 
@@ -802,6 +937,7 @@ struct PlayerView: View {
     }
 
     private func onEnded() {
+        if placeholder { seek(ms: 0); player.play(); return }   // loop the clip until the real file lands
         finishEpisode()
         guard !isLive, session.pref("autoplayNext", true), request.season != nil,
               let ep = nextEp else { dismiss(); return }
@@ -824,7 +960,7 @@ struct PlayerView: View {
         let pos = max(Int(player.currentTime().seconds * 1000), posMs)
         posMs = pos
         if let d = player.currentItem?.duration.seconds, d.isFinite, d > 0 { durMs = Int(d * 1000) }
-        if !isLive && !finishedHandled {
+        if !isLive && !placeholder && !finishedHandled {
             if qualifiesWatched {
                 finishEpisode()
             } else if pos > 5000 {
@@ -834,6 +970,8 @@ struct PlayerView: View {
                                        episode: request.episode, pos: pos, dur: durMs)
             }
         }
+        placeholderPoll?.cancel(); placeholderPoll = nil
+        subxTask?.cancel(); subxTask = nil
         if let t = timeObserver { player.removeTimeObserver(t) }
         timeObserver = nil
         for o in observers { NotificationCenter.default.removeObserver(o) }

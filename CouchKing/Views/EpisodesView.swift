@@ -318,6 +318,9 @@ struct StreamList: View {
         req.episodes = episodes
         req.streamWindows = PlayerWindows(stream: s)
         req.subtitles = s["subtitles"] as? [[String: Any]] ?? []
+        req.placeholder = PlayRequest.isPlaceholder(s)
+        let sid = season != nil ? "\(meta.id):\(season!):\(episode!)" : meta.id
+        req.streamPath = "/stream/\(season != nil ? "series" : (meta.type == "tv" ? "tv" : "movie"))/\(sid).json"
         if meta.type == "tv" {
             // Live TV: gate probe first (429/503/403 → reason modal, never a spinning player)
             Task {
@@ -408,4 +411,15 @@ struct PlayRequest: Identifiable {
     var episodes: [Episode] = []             // real episode list → season-crossing next
     var streamWindows: PlayerWindows? = nil  // chapter windows riding on the stream object
     var subtitles: [[String: Any]] = []      // the addon's ranked subtitle files for this stream
+    var placeholder = false                  // "not yet available" clip → loop + re-probe + hot-swap
+    var streamPath = ""                      // "/stream/<type>/<sid>.json" to re-request the list
+
+    /// IOS_CONTRACTS §5: a stream is still a placeholder when its url is the /unavailable clip
+    /// (or _downloading.mp4), its name is the ⏳ progress label, or behaviorHints.notWebReady.
+    static func isPlaceholder(_ s: [String: Any]) -> Bool {
+        let url = (s["url"] as? String ?? "").lowercased()
+        if url.contains("/unavailable") || url.contains("_downloading.mp4") { return true }
+        if (s["name"] as? String ?? "").hasPrefix("⏳") { return true }
+        return ((s["behaviorHints"] as? [String: Any])?["notWebReady"] as? Bool) ?? false
+    }
 }
