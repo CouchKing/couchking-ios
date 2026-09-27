@@ -36,12 +36,17 @@ jobs:
           xcrun simctl launch "$UDID" app.couchking.ios
           sleep 12
           xcrun simctl io "$UDID" screenshot shot-home.png
-      - name: Unsigned device build (AltStore-installable IPA)
+      - name: Unsigned device build (Sideloadly/AltStore-installable IPA)
         run: |
+          # RELEASE config — a debug build splits into a stub + .debug.dylib + preview dylib that
+          # Sideloadly rejects ("Invalid file / Guru Meditation"). Release = one clean binary.
           xcodebuild -project CouchKing.xcodeproj -scheme CouchKing \
+            -configuration Release \
             -destination 'generic/platform=iOS' \
-            -derivedDataPath dd-ios CODE_SIGNING_ALLOWED=NO build | tail -5
+            -derivedDataPath dd-ios CODE_SIGNING_ALLOWED=NO \
+            ENABLE_DEBUG_DYLIB=NO build | tail -5
           APP=$(find dd-ios/Build/Products -name "CouchKing.app" | head -1)
+          echo "app contents:"; ls "$APP"
           mkdir Payload && cp -r "$APP" Payload/
           zip -qr CouchKing-unsigned.ipa Payload
       - name: Package simulator app (drag onto Simulator on any Mac)
