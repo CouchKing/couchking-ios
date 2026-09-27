@@ -72,7 +72,7 @@ Android references are file + function/rough line so the implementer can read th
 - 🟡 Movie streams: iOS = "Play" button → sheet. Android = streams auto-load inline on the page (Stremio behavior), expired banner inline, retry copy — ~L4452-4477
 - ✅ Stream list rows (name + title/description)
 - 🟡 Android stream extras: `ckExpired` marker → expiry banner instead of empty list; `ckNotice` flag; ONE quiet retry (900ms) so a dropped request never reads "no streams"; no-streams telemetry — `Addons.streams/debugNoStreams` (Addons.kt L140-178)
-- ❌ Auto-poll when no streams: page polls until the background download/warm lands instead of dead-ending — ~L4873, L5332
+- ✅ Auto-poll when no streams: page polls until the background download/warm lands instead of dead-ending — ~L4873, L5332
 - ✅ Season picker + episode list with thumbs, air dates
 - 🟡 Episode rows Android extras: unaired 📅 badge with real air date, per-episode progress bars refreshed live (`refreshEpisodeBars`), current-episode highlight, episode Download button (full flavor) — `buildEpisodes`/`epCard`/`epRowV` (~L4539-4805)
 - ✅ Per-episode watched eye toggle with scoped `wt:` tombstones

@@ -115,6 +115,7 @@ struct StreamSheet: View {
     var episode: Int? = nil
     @State private var streams: [[String: Any]] = []
     @State private var loading = true
+    @State private var warming = false
     @State private var play: PlayRequest?
 
     var body: some View {
@@ -134,6 +135,10 @@ struct StreamSheet: View {
                     .listRowBackground(Color.clear)
                 }
                 else if loading { ProgressView() }
+                else if warming && streams.isEmpty {
+                    HStack { ProgressView(); Text("Getting this ready… streams appear automatically.") }
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 else if streams.isEmpty { Text("No streams right now — try again in a minute.") }
                 ForEach(Array(streams.prefix(10).enumerated()), id: \.offset) { _, s in
                     Button {
@@ -157,15 +162,24 @@ struct StreamSheet: View {
     }
 
     private func load() async {
-        defer { loading = false }
-        guard !session.isExpired, let addon = session.addons.first else { return }
+        guard !session.isExpired, let addon = session.addons.first else { loading = false; return }
         let u = session.profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         let sid = season != nil ? "\(meta.id):\(season!):\(episode!)" : meta.id
         // Live TV channels come through as type "tv" with a cklive:<id> — /stream/tv/<id>.json
         let type = season != nil ? "series" : (meta.type == "tv" ? "tv" : "movie")
-        if let r = try? await API.json("/stream/\(type)/\(sid).json?u=\(u)", base: addon.url) {
-            streams = r["streams"] as? [[String: Any]] ?? []
+        // AUTO-POLL when nothing's cached yet (Android "press Play, then again shortly"): the
+        // background warm/download lands within a minute — keep re-fetching so the list fills
+        // itself instead of dead-ending. Live channels don't warm, so they poll only once.
+        let tries = type == "tv" ? 1 : 8
+        for attempt in 0..<tries {
+            if let r = try? await API.json("/stream/\(type)/\(sid).json?u=\(u)", base: addon.url),
+               let s = r["streams"] as? [[String: Any]], !s.isEmpty {
+                streams = s; loading = false; warming = false; return
+            }
+            loading = false
+            if attempt < tries - 1 { warming = true; try? await Task.sleep(for: .seconds(12)) }
         }
+        warming = false
     }
 }
 
