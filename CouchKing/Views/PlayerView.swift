@@ -68,6 +68,9 @@ struct PlayerView: View {
                         .background(.black.opacity(0.5), in: Capsule())
                 }
                 Spacer()
+                AirPlayButton()
+                    .frame(width: 44, height: 44)
+                    .background(.black.opacity(0.5), in: Circle())
                 if audioOpts.count > 1 {
                     Menu {
                         ForEach(audioOpts.indices, id: \.self) { i in
@@ -167,6 +170,7 @@ struct PlayerView: View {
         UIApplication.shared.isIdleTimerDisabled = true
         windows = await PlayerWindows.fetch(session: session, id: request.meta.id,
                                             season: request.season, episode: request.episode)
+        player.allowsExternalPlayback = true   // native AirPlay — sends the real video to the TV
         let item = AVPlayerItem(url: request.url)
         player.replaceCurrentItem(with: item)
         // auto-pick ENGLISH audio + expose a picker (the app-side of the web "not English" fix):
@@ -431,6 +435,19 @@ struct SkipPill: View {
                 .foregroundStyle(.black)
         }
     }
+}
+
+// Native AirPlay route button — casts the actual video to an Apple TV / AirPlay device (reliable,
+// unlike the web transcode). Also lists other output routes.
+struct AirPlayButton: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let v = AVRoutePickerView()
+        v.tintColor = .white
+        v.activeTintColor = UIColor(Theme.accent)
+        v.prioritizesVideoDevices = true
+        return v
+    }
+    func updateUIView(_ v: AVRoutePickerView, context: Context) {}
 }
 
 // Minimal SRT/VTT cue parser — covers the addon's ranked subtitle files.
