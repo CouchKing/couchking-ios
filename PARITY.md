@@ -18,7 +18,7 @@ Android references are file + function/rough line so the implementer can read th
 - ❌ Content-owner guard: signing into a DIFFERENT email wipes the previous owner's local library first (nothing commits until credentials are accepted — the auth order matters) — `Sync.auth` + `Store.contentOwner` (Sync.kt L27-60, Store.kt L53)
 - ❌ Forgot password flow — `showForgotPassword` (MainActivity ~L575)
 - ❌ Delete account (server-side delete — Apple requires this for apps with account creation) — `Sync.deleteAccount` (Sync.kt L95), Settings row (MainActivity ~L5637)
-- ❌ Onboarding + Terms/Privacy acceptance gate before first use (guest mode starts only after accepting; full legal text in-app) — `showOnboarding`/`gate`/`termsLinksRow`/`Legal.kt` (MainActivity ~L511-548)
+- ✅ Onboarding + Terms/Privacy acceptance gate before first use (guest mode starts only after accepting; full legal text in-app) — `showOnboarding`/`gate`/`termsLinksRow`/`Legal.kt` (MainActivity ~L511-548)
 - 🟡 Access/expiry status: Android caches `expires`/`daysLeft` from `/tvapp/access`, shows "Access through … · N days left" / "⛔ expired" on the Settings account card, and an expiry banner **in the stream list** at play time (browse never blocked). iOS calls `/tvapp/access` only for addon auto-assign. — `Addons.access` (Addons.kt L32), `isExpired`/`expiryBanner` (MainActivity ~L413-431), Settings card (~L5590)
 - ✅ Addon auto-assign after sign-in (service hands the addon URL; nobody pastes) — `checkAccessThen` (MainActivity ~L5944), iOS `Session.checkAccess`
 - ❌ Silent re-check on every foreground/Settings open: addon assigned AFTER sign-in appears on next app open without visiting Settings — `onResume` (MainActivity ~L259-321)

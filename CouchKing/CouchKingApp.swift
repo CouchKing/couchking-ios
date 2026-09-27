@@ -25,12 +25,53 @@ struct CouchKingApp: App {
 
 struct RootView: View {
     @EnvironmentObject var session: Session
+    @AppStorage("onboarded") private var onboarded = false
     var body: some View {
-        if session.needsProfilePick {
+        if !onboarded {
+            OnboardingView { onboarded = true }
+        } else if session.needsProfilePick {
             ProfilePickerView()
         } else {
             MainTabs()
         }
+    }
+}
+
+// First-launch welcome + Terms/Privacy acceptance (Apple requires a clear terms gate; guest mode
+// starts only after accepting) — Android showOnboarding/gate parity.
+struct OnboardingView: View {
+    let done: () -> Void
+    var body: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            Text("👑").font(.system(size: 64))
+            Text("CouchKing").font(.largeTitle.bold())
+            Text("Movies, shows, and live TV — synced across your devices.")
+                .font(.callout).foregroundStyle(.secondary)
+                .multilineTextAlignment(.center).padding(.horizontal, 32)
+            Spacer()
+            VStack(spacing: 12) {
+                Button {
+                    UserDefaults.standard.set(true, forKey: "onboarded")
+                    done()
+                } label: {
+                    Text("Get Started").font(.headline).frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(Theme.accent, in: RoundedRectangle(cornerRadius: 14))
+                        .foregroundStyle(.white)
+                }
+                Text("By continuing you agree to our")
+                    .font(.caption2).foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Link("Terms", destination: URL(string: "https://couchking.app/terms")!)
+                    Text("·").foregroundStyle(.secondary)
+                    Link("Privacy Policy", destination: URL(string: "https://couchking.app/privacy")!)
+                }.font(.caption2)
+            }
+            .padding(.horizontal, 28).padding(.bottom, 40)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg)
     }
 }
 
