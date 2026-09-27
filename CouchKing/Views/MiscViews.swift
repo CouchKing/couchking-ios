@@ -36,17 +36,28 @@ struct SearchView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
-                    if !shows.isEmpty { PosterRow(title: "Shows", metas: shows) }
-                    if !movies.isEmpty { PosterRow(title: "Movies", metas: movies) }
+            Group {
+                // empty query = Browse/Discover (Android's Discover surface); typing = results
+                if q.trimmingCharacters(in: .whitespaces).isEmpty && movies.isEmpty && shows.isEmpty {
+                    BrowseView()
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 18) {
+                            if !shows.isEmpty { PosterRow(title: "Shows", metas: shows) }
+                            if !movies.isEmpty { PosterRow(title: "Movies", metas: movies) }
+                            if !q.isEmpty && movies.isEmpty && shows.isEmpty {
+                                Text("No matches for “\(q)”.").foregroundStyle(.secondary).padding(24)
+                            }
+                        }
+                        .padding(.vertical, 8)
+                    }
                 }
-                .padding(.vertical, 8)
             }
             .background(Theme.bg)
             .navigationTitle("Search")
             .searchable(text: $q, prompt: "Movies, shows, people…")
             .onSubmit(of: .search) { Task { await run() } }
+            .onChange(of: q) { v in if v.trimmingCharacters(in: .whitespaces).isEmpty { movies = []; shows = [] } }
         }
     }
 
