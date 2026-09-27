@@ -59,7 +59,7 @@ Android references are file + function/rough line so the implementer can read th
 - ❌ People search: person cards strip → person page (filmography via `Discovery.searchPeople`/`showPerson`) — MainActivity ~L2779, L5456-5530
 - 🟡 (skipped - no person endpoint) Cast/director chips anywhere → person page (iOS cast chips are inert text)
 - ❌ Search state restore: backing out of a result restores query + results, no keyboard grab — `buildSearch` restoring branch (~L2751)
-- ❌ Live TV search integration: Android's Live TV tab search also finds shows airing in the next 96h ("channel + when") — `renderSearch` (buildLiveTvBody ~L1710)
+- ✅ Live TV search integration: Android's Live TV tab search also finds shows airing in the next 96h ("channel + when") — `renderSearch` (buildLiveTvBody ~L1710)
 
 ## 5. Details & Episodes
 

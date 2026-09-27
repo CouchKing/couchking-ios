@@ -100,33 +100,58 @@ struct LibraryView: View {
 struct LiveTVView: View {
     @EnvironmentObject var session: Session
     @State private var channels: [Meta] = []
+    @State private var results: [Meta] = []
+    @State private var catId = ""
+    @State private var q = ""
     @State private var tune: Meta?
+    private let cols = [GridItem(.adaptive(minimum: 108), spacing: 12)]
+    private var searching: Bool { !q.trimmingCharacters(in: .whitespaces).isEmpty }
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 108))], spacing: 12) {
-                    ForEach(channels) { c in
+                LazyVGrid(columns: cols, spacing: 12) {
+                    ForEach(searching ? results : channels) { c in
                         Button { tune = c } label: { PosterCard(meta: c) }
                             .buttonStyle(.plain)
                     }
                 }
                 .padding(14)
+                if searching && results.isEmpty {
+                    Text("No channels or shows match.").foregroundStyle(.secondary).padding(24)
+                }
             }
             .background(Theme.bg)
             .navigationTitle("Live TV")
+            .searchable(text: $q, prompt: "Channels & shows airing soon")
+            .onSubmit(of: .search) { Task { await runSearch() } }
+            .onChange(of: q) { v in if v.trimmingCharacters(in: .whitespaces).isEmpty { results = [] } }
             .sheet(item: $tune) { c in
                 StreamSheet(meta: c).presentationDetents([.medium, .large])
             }
-            .task {
-                guard let addon = session.addons.first else { return }
-                if let m = try? await API.json("/manifest.json", base: addon.url),
-                   let cats = m["catalogs"] as? [[String: Any]],
-                   let tv = cats.first(where: { $0["type"] as? String == "tv" }),
-                   let cid = tv["id"] as? String,
-                   let r = try? await API.json("/catalog/tv/\(cid).json", base: addon.url) {
-                    channels = (r["metas"] as? [[String: Any]] ?? []).compactMap { Meta($0, type: "tv") }
-                }
-            }
+            .task { await load() }
+        }
+    }
+
+    private func load() async {
+        guard let addon = session.addons.first else { return }
+        guard let m = try? await API.json("/manifest.json", base: addon.url),
+              let cats = m["catalogs"] as? [[String: Any]],
+              let tv = cats.first(where: { $0["type"] as? String == "tv" }),
+              let cid = tv["id"] as? String else { return }
+        catId = cid
+        if let r = try? await API.json("/catalog/tv/\(cid).json", base: addon.url) {
+            channels = (r["metas"] as? [[String: Any]] ?? []).compactMap { Meta($0, type: "tv") }
+        }
+    }
+
+    // Android Live TV search: channels + shows airing in the next ~96h ("channel + when").
+    private func runSearch() async {
+        let query = q.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty, !catId.isEmpty, let addon = session.addons.first else { return }
+        let enc = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed)?.replacingOccurrences(of: "+", with: "%20") ?? ""
+        let r = (try? await API.json("/catalog/tv/\(catId)/search=\(enc).json", base: addon.url)) ?? [:]
+        if q.trimmingCharacters(in: .whitespaces) == query {   // ignore stale response
+            results = (r["metas"] as? [[String: Any]] ?? []).compactMap { Meta($0, type: "tv") }
         }
     }
 }
