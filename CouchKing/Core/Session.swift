@@ -380,6 +380,44 @@ extension Session {
     }
 }
 
+// A Continue Watching tile: the title + how far through it is (0…1) for the progress bar.
+struct CWItem: Identifiable {
+    let meta: Meta
+    let progress: Double
+    var id: String { meta.id }
+}
+
+extension Session {
+    /// The active profile's Continue Watching list (Android Home CW row): entries the player
+    /// stamped, newest first, each with its resume % from `positions`. Fully-finished titles the
+    /// player cleared won't have a live position, so they fall to 0 and can be filtered by the UI.
+    func continueWatching() -> [CWItem] {
+        let ps = pstate()
+        let cw = ps["continue"] as? [[String: Any]] ?? []
+        let positions = ps["positions"] as? [String: Any] ?? [:]
+        let cwlast = ps["cwlast"] as? [String: Any] ?? [:]
+        let watched = ps["watched"] as? [String: Any] ?? [:]
+        var out: [CWItem] = []
+        for e in cw {
+            guard let id = e["id"] as? String,
+                  let meta = Meta(e, type: e["type"] as? String ?? "movie") else { continue }
+            // series resume-target is the last-watched episode's posKey; movies key on the id
+            let key = (cwlast[id] as? String) ?? id
+            var prog = 0.0
+            if let s = positions[key] as? String {
+                let p = s.split(separator: "|")
+                if p.count >= 2, let pos = Double(p[0]), let dur = Double(p[1]), dur > 0 {
+                    prog = min(1.0, pos / dur)
+                }
+            }
+            // drop a movie that's marked fully watched (a finished show stays — next episode)
+            if meta.type == "movie" && watched[id] != nil { continue }
+            out.append(CWItem(meta: meta, progress: prog))
+        }
+        return out
+    }
+}
+
 // Skip windows + resume from the addon (same endpoint the Android player uses).
 struct PlayerWindows {
     var introFrom = 0, introTo = 0, recapFrom = 0, recapTo = 0, credits = 0

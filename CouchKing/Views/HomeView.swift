@@ -12,6 +12,10 @@ struct HomeView: View {
                     if !session.signedIn {
                         GuestBanner()
                     }
+                    let cw = session.continueWatching()
+                    if !cw.isEmpty {
+                        ContinueRow(items: cw)
+                    }
                     ForEach(rows, id: \.0) { row in
                         PosterRow(title: row.0, metas: row.1)
                     }
@@ -79,6 +83,50 @@ struct PosterCard: View {
                 Text(meta.name).font(.caption2).lineLimit(1).frame(width: 108)
                     .foregroundStyle(.primary)
             }
+        }
+    }
+}
+
+// Continue Watching — Android Home CW row: newest-first tiles with a resume progress bar.
+struct ContinueRow: View {
+    let items: [CWItem]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Continue Watching").font(.headline).padding(.horizontal, 14)
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 10) {
+                    ForEach(items) { item in
+                        NavigationLink(value: item.meta) { CWCard(item: item) }
+                    }
+                }
+                .padding(.horizontal, 14)
+            }
+        }
+        .navigationDestination(for: Meta.self) { DetailView(meta: $0) }
+    }
+}
+
+struct CWCard: View {
+    let item: CWItem
+    var body: some View {
+        VStack(spacing: 4) {
+            ZStack(alignment: .bottom) {
+                AsyncImage(url: URL(string: item.meta.poster ?? "")) { img in
+                    img.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Theme.card.overlay(Image(systemName: "film").foregroundStyle(.secondary))
+                }
+                .frame(width: 108, height: 162)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                if item.progress > 0.01 {
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(.white.opacity(0.3)).frame(width: 96, height: 4)
+                        Capsule().fill(Theme.accent).frame(width: 96 * item.progress, height: 4)
+                    }
+                    .padding(.bottom, 5)
+                }
+            }
+            Text(item.meta.name).font(.caption2).lineLimit(1).frame(width: 108)
         }
     }
 }
