@@ -139,7 +139,7 @@ Android references are file + function/rough line so the implementer can read th
 - ✅ New-episode badges in Library grids — `paintGrids(counts)` (~L2853)
 - ✅ CW ordering + resume semantics (see §3: `cwOrder`, `cwLast`, progress %, Clear Progress = leave CW with server tombstone `syncClear`) — Store.kt L649-786, MainActivity ~L4525
 - ✅ Scoped tombstones: iOS stamps `wl:`/`wt:` on add/remove, `cw:` on continue add/clear/finish, and CW entries carry the `ts` stamp the server sorts by (`savePos`) — Store.kt `noteAdded/noteRemoved/tombstonedIn` (L586-611)
-- ❌ Union merge on pull: Android merges remote+local (`importMerge`/`blobUnion` — ts-union per key, tombstone dead-checks, nothing ever lost); iOS `apply()` REPLACES local state with the server blob — offline changes since last push are dropped — Store.kt L273-489
+- ✅ Union merge on pull: Android merges remote+local (`importMerge`/`blobUnion` — ts-union per key, tombstone dead-checks, nothing ever lost); iOS `StateMerge.merge` is the port and `Session.apply()` merges then pushes the union back — Store.kt L273-489
 
 ## 9. Settings & Prefs Sync
 
