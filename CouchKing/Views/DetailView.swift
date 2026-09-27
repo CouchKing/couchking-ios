@@ -67,9 +67,10 @@ struct DetailView: View {
                     trailerURL = URL(string: "https://www.youtube.com/watch?v=\(yt)")
                 }
             }
-            ActionCircle(icon: "plus.circle", active: inList, label: inList ? "In Library" : "Library") { toggleList() }
+            ActionCircle(icon: "plus.circle", active: session.inLibrary(meta.id),
+                         label: session.inLibrary(meta.id) ? "In Library" : "Library") { session.toggleLibrary(meta) }
             if meta.type == "movie" {
-                ActionCircle(icon: "eye", active: isWatched, label: "Watched") { toggleWatched() }
+                ActionCircle(icon: "eye", active: session.isWatched(meta.id), label: "Watched") { session.toggleWatched(meta) }
             }
             ActionCircle(icon: "hand.thumbsup", active: session.rating(meta.id) == 1, label: "Like") {
                 session.setRating(meta.id, 1)
@@ -100,45 +101,6 @@ struct DetailView: View {
         if let t = (full["trailers"] as? [[String: Any]])?.first?["source"] as? String { return t }
         return (full["trailerStreams"] as? [[String: Any]])?.first?["ytId"] as? String
     }
-    private var inList: Bool {
-        ((session.pstate()["watchlist"] as? [[String: Any]]) ?? []).contains { $0["id"] as? String == meta.id }
-    }
-    private var isWatched: Bool {
-        ((session.pstate()["watchedIds"] as? [String]) ?? []).contains(meta.id)
-    }
-
-    private func stampKey(_ ps: inout [String: Any], _ ledger: String, _ key: String) {
-        var m = ps[ledger] as? [String: Any] ?? [:]
-        m[key] = Int(Date().timeIntervalSince1970 * 1000)
-        ps[ledger] = m
-    }
-    private func toggleList() {
-        var ps = session.pstate()
-        var wl = ps["watchlist"] as? [[String: Any]] ?? []
-        if inList { wl.removeAll { $0["id"] as? String == meta.id }; stampKey(&ps, "removedTs", "wl:" + meta.id) }
-        else {
-            wl.insert(["id": meta.id, "type": meta.type, "name": meta.name, "poster": meta.poster ?? ""], at: 0)
-            stampKey(&ps, "addedTs", "wl:" + meta.id)
-        }
-        ps["watchlist"] = wl
-        session.setPstate(ps)
-    }
-    private func toggleWatched() {
-        var ps = session.pstate()
-        var ids = ps["watchedIds"] as? [String] ?? []
-        var wt = ps["watchedTitles"] as? [[String: Any]] ?? []
-        if isWatched {
-            ids.removeAll { $0 == meta.id }; wt.removeAll { $0["id"] as? String == meta.id }
-            stampKey(&ps, "removedTs", "wt:" + meta.id)
-        } else {
-            ids.append(meta.id)
-            wt.insert(["id": meta.id, "type": meta.type, "name": meta.name, "poster": meta.poster ?? ""], at: 0)
-            stampKey(&ps, "addedTs", "wt:" + meta.id)
-        }
-        ps["watchedIds"] = ids; ps["watchedTitles"] = wt
-        session.setPstate(ps)
-    }
-
     private func load() async {
         // addon meta first (has videos for episodes); Cinemeta as guest fallback
         if let addon = session.addons.first,

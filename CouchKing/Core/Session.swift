@@ -396,7 +396,7 @@ extension Session {
         let cw = ps["continue"] as? [[String: Any]] ?? []
         let positions = ps["positions"] as? [String: Any] ?? [:]
         let cwlast = ps["cwlast"] as? [String: Any] ?? [:]
-        let watched = ps["watched"] as? [String: Any] ?? [:]
+        let watchedIds = Set(ps["watchedIds"] as? [String] ?? [])
         var out: [CWItem] = []
         for e in cw {
             guard let id = e["id"] as? String,
@@ -411,7 +411,7 @@ extension Session {
                 }
             }
             // drop a movie that's marked fully watched (a finished show stays — next episode)
-            if meta.type == "movie" && watched[id] != nil { continue }
+            if meta.type == "movie" && watchedIds.contains(id) { continue }
             out.append(CWItem(meta: meta, progress: prog))
         }
         return out
@@ -428,7 +428,7 @@ extension Session {
         (pstate()["watchlist"] as? [[String: Any]] ?? []).contains { $0["id"] as? String == id }
     }
     func isWatched(_ id: String) -> Bool {
-        (pstate()["watched"] as? [String: Any])?[id] != nil
+        (pstate()["watchedIds"] as? [String] ?? []).contains(id)
     }
 
     func toggleLibrary(_ meta: Meta) {
@@ -448,16 +448,16 @@ extension Session {
 
     func toggleWatched(_ meta: Meta) {
         var ps = pstate()
-        var watched = ps["watched"] as? [String: Any] ?? [:]
+        var ids = ps["watchedIds"] as? [String] ?? []      // server merges this as a set union
         var wt = ps["watchedTitles"] as? [[String: Any]] ?? []
         var added = ps["addedTs"] as? [String: Any] ?? [:]
         var removed = ps["removedTs"] as? [String: Any] ?? [:]
         let now = nowMs()
-        if watched[meta.id] != nil {
-            watched[meta.id] = nil; wt.removeAll { $0["id"] as? String == meta.id }
+        if ids.contains(meta.id) {
+            ids.removeAll { $0 == meta.id }; wt.removeAll { $0["id"] as? String == meta.id }
             removed["wt:" + meta.id] = now; added["wt:" + meta.id] = nil
         } else {
-            watched[meta.id] = now
+            ids.append(meta.id)
             if !wt.contains(where: { $0["id"] as? String == meta.id }) { wt.insert(meta.dict, at: 0) }
             added["wt:" + meta.id] = now; removed["wt:" + meta.id] = nil
             // finished → leaves Continue Watching
@@ -465,7 +465,7 @@ extension Session {
             cw.removeAll { $0["id"] as? String == meta.id }
             ps["continue"] = cw
         }
-        ps["watched"] = watched; ps["watchedTitles"] = wt
+        ps["watchedIds"] = ids; ps["watchedTitles"] = wt
         ps["addedTs"] = added; ps["removedTs"] = removed
         setPstate(ps)
     }
