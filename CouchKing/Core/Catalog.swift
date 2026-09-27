@@ -1,5 +1,18 @@
 import Foundation
 
+// Deterministic seeded RNG so a category row's order is stable ALL DAY for a given profile but
+// differs per person and per day (Android profileMix parity).
+struct SeededGen: RandomNumberGenerator {
+    var s: UInt64
+    init(_ seed: UInt64) { s = seed == 0 ? 0x9E3779B97F4A7C15 : seed }
+    mutating func next() -> UInt64 { s ^= s << 13; s ^= s >> 7; s ^= s << 17; return s }
+}
+private func fnv(_ str: String) -> UInt64 {
+    var h: UInt64 = 0xcbf29ce484222325
+    for b in str.utf8 { h = (h ^ UInt64(b)) &* 0x100000001b3 }
+    return h
+}
+
 // Addon catalog fetches — the same rows as Android's Home, in the same order.
 struct Meta: Identifiable, Hashable {
     let id: String, type: String, name: String, poster: String?
@@ -42,7 +55,15 @@ struct Catalog {
             }
             var tmp: [(Int, String, [Meta])] = []
             for await x in group { tmp.append(x) }
-            rows = tmp.sorted { $0.0 < $1.0 }.filter { !$0.2.isEmpty }.map { ($0.1, $0.2) }
+            // per-profile, per-day shuffle of each category row (Android profileMix): stable all day,
+            // fresh tomorrow, and different per person. "For You" rows keep their ranked order.
+            let day = Int(Date().timeIntervalSince1970 / 86400)
+            let who = session.currentProfile.isEmpty ? "guest" : session.currentProfile
+            rows = tmp.sorted { $0.0 < $1.0 }.filter { !$0.2.isEmpty }.map { row in
+                if row.1.contains("For You") { return (row.1, row.2) }
+                var gen = SeededGen(fnv("\(who)|\(day)|\(row.1)"))
+                return (row.1, row.2.shuffled(using: &gen))
+            }
         }
         return rows
     }

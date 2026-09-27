@@ -33,7 +33,7 @@ Android references are file + function/rough line so the implementer can read th
 - ✅ Per-profile state blob (`states[pid]`), per-profile prefs (2.0.93 `activeProfile` guard on push) — Store.kt profile scoping, iOS `Session.pstate/setPstate`
 - 🟡 Profile identity on every addon call: Android swaps `userName: "AJ #b9e1"` INTO the addon URL's config segment (`Addons.withUser`, Addons.kt L84-99) so For You/clicks/streams attribute per person. iOS appends `?u=` as a query param instead — verify the server honors the query form for catalog/stream/foryou, or switch to config-segment rewriting to match Android exactly.
 - ❌ Switching profile clears per-profile content in memory + repaints instantly (mt-stamp picker repaint when another device edits profiles; 60s pull refreshes picker if changed) — `switchProfile`/`clearProfileContent` (Store.kt L149-166), `refreshPickerIfChanged` (MainActivity ~L364)
-- ❌ Per-profile daily shuffle of category rows (`profileMix` — same category ≠ same order every day, differs per person) — MainActivity ~L942
+- ✅ Per-profile daily shuffle of category rows (`profileMix` — same category ≠ same order every day, differs per person) — MainActivity ~L942
 
 ## 3. Home & For You
 
