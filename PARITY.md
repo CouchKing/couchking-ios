@@ -14,14 +14,14 @@ Android references are file + function/rough line so the implementer can read th
 
 - ✅ Sign in / sign up via `POST /tvapp/auth` (email+password, create w/ name, token stored) — `Sync.auth` (Sync.kt L27), iOS `Session.signIn`
 - ✅ Sign out (clears email/token) — `showSettings` sign-out row (MainActivity ~L5615)
-- 🟡 Sign-out semantics: Android **stashes** the whole account locally (profiles, addons, every profile's library) and restores it on re-sign-in, clears addons + content + Live TV + http cache so a guest starts clean. iOS just clears email/token — addons/state/liveTvOn survive sign-out. — `Store.stashAccount/unstashAccount/clearContentState` (Store.kt L73-96)
-- ❌ Content-owner guard: signing into a DIFFERENT email wipes the previous owner's local library first (nothing commits until credentials are accepted — the auth order matters) — `Sync.auth` + `Store.contentOwner` (Sync.kt L27-60, Store.kt L53)
-- ❌ Forgot password flow — `showForgotPassword` (MainActivity ~L575)
-- ❌ Delete account (server-side delete — Apple requires this for apps with account creation) — `Sync.deleteAccount` (Sync.kt L95), Settings row (MainActivity ~L5637)
+- ✅ Sign-out semantics: Android **stashes** the whole account locally (profiles, addons, every profile's library) and restores it on re-sign-in, clears addons + content + Live TV + http cache so a guest starts clean. iOS just clears email/token — addons/state/liveTvOn survive sign-out. — `Store.stashAccount/unstashAccount/clearContentState` (Store.kt L73-96)
+- ✅ Content-owner guard: signing into a DIFFERENT email wipes the previous owner's local library first (nothing commits until credentials are accepted — the auth order matters) — `Sync.auth` + `Store.contentOwner` (Sync.kt L27-60, Store.kt L53)
+- ✅ Forgot password flow — `showForgotPassword` (MainActivity ~L575)
+- ✅ Delete account (server-side delete — Apple requires this for apps with account creation) — `Sync.deleteAccount` (Sync.kt L95), Settings row (MainActivity ~L5637)
 - ✅ Onboarding + Terms/Privacy acceptance gate before first use (guest mode starts only after accepting; full legal text in-app) — `showOnboarding`/`gate`/`termsLinksRow`/`Legal.kt` (MainActivity ~L511-548)
-- 🟡 Access/expiry status: Android caches `expires`/`daysLeft` from `/tvapp/access`, shows "Access through … · N days left" / "⛔ expired" on the Settings account card, and an expiry banner **in the stream list** at play time (browse never blocked). iOS calls `/tvapp/access` only for addon auto-assign. — `Addons.access` (Addons.kt L32), `isExpired`/`expiryBanner` (MainActivity ~L413-431), Settings card (~L5590)
+- ✅ Access/expiry status: Android caches `expires`/`daysLeft` from `/tvapp/access`, shows "Access through … · N days left" / "⛔ expired" on the Settings account card, and an expiry banner **in the stream list** at play time (browse never blocked). iOS calls `/tvapp/access` only for addon auto-assign. — `Addons.access` (Addons.kt L32), `isExpired`/`expiryBanner` (MainActivity ~L413-431), Settings card (~L5590)
 - ✅ Addon auto-assign after sign-in (service hands the addon URL; nobody pastes) — `checkAccessThen` (MainActivity ~L5944), iOS `Session.checkAccess`
-- ❌ Silent re-check on every foreground/Settings open: addon assigned AFTER sign-in appears on next app open without visiting Settings — `onResume` (MainActivity ~L259-321)
+- ✅ Silent re-check on every foreground/Settings open: addon assigned AFTER sign-in appears on next app open without visiting Settings — `onResume` (MainActivity ~L259-321)
 - ❌ Device-cap / capacity gating messages (429/503/403 from stream gate → centered CouchKing modal with reason: "already watching on another device", "full capacity", "not on your plan") — `liveTune` gate + `showTopBanner` (MainActivity ~L2427-2500)
 
 ## 2. Profiles
@@ -87,13 +87,13 @@ Android references are file + function/rough line so the implementer can read th
 - ✅ Skip Intro / Skip Recap pills from `/player/resume` windows
 - 🟡 Skip behavior details missing on iOS: recap-before-intro precedence with `*Handled` latches (don't re-show after skipping/crossing), 2s tail exclusion, animated slide-in, auto-focus with re-grab guard, and seek-discontinuity detection (`pendingIntroFrom`) — ticker (~L694-740), `onPositionDiscontinuity` (~L542)
 - 🟡 After-credits: iOS shows a jump pill gated on `credits`. Android computes a floor = max(finishPoint, stinger−90s, prev stinger end), supports MULTIPLE stingers with "(1/2)" sequential labels, stateless re-offer by position, and a one-time "🎬 This movie has a scene during/after the credits" toast ~4min out — ticker (~L700-712), stinger nudge (~L778-785)
-- ❌ Credits/finish point learned from subtitles: last SRT cue + 2s = credits start (`lastSrtCueMs` → `currentLeadMs`/`finishPointMs`) — drives next-up timing and mark-watched — ~L586-592, L825-841
+- ✅ Credits/finish point learned from subtitles: last SRT cue + 2s = credits start (`lastSrtCueMs` → `currentLeadMs`/`finishPointMs`) — drives next-up timing and mark-watched — ~L586-592, L825-841
 - ✅ Autoplay next episode (pref-gated)
 - 🟡 Next episode resolution: iOS re-fetches `/stream/series/<id:s:e+1>` and takes streams[0]. Android resolves via `Ck.resolveEpisode` with a **prefetch** starting 5min before the end (instant advance), season-crossing `nextEpisode()` from the real episode list (not e+1 guessing — breaks at season ends), and manual-next handling — `prefetchNext`/`playEpisode`/`nextEpisode` (~L906-1015)
 - ❌ Next-Up card at credits time: thumbnail (blurred if unwatched + pref), title, Play/Dismiss, auto-focused, never interrupts; shown by time-remaining OR crossed-credits-point — `showNextUpCard`/`hideNextUp` (~L1062-1096, L1230)
-- ❌ **"Are you still watching?"** (just shipped on ALL other surfaces — required): after 2 consecutive fully-input-less auto-advanced episodes, crown + "Are you still watching?" modal (Keep watching / I'm done), BACK = Next-Up card + chain reset, no answer in 5 min = stop playback and exit. `epTouched`/`idleEps` chain: any user input during an episode resets the chain. — `onEnded`/`showStillWatching` (PlayerActivity ~L1115-1229)
-- ❌ Mark-watched on finish (position ≥ finishPoint at exit/end → episode/title watched, resume cleared; force-mark exempts only real resume ≥2min start — the false-watched@4% fix), `Ck.clearResume` on ended — `markWatchedIfDone` (~L842-873), `onEnded`
-- ❌ Progress heartbeat to server: instant start-stamp (the moment playback starts, stamp + push so other devices resume-target immediately), report at 20s then every 30s, account push every 90s, **zombie guard** (frozen position = no beat/no push), `Ck.reportServer` — ticker (~L745-777). iOS saves position + CW entry only on dismiss — loses everything on crash/kill, no cross-device mid-episode pickup.
+- ✅ **"Are you still watching?"** (just shipped on ALL other surfaces — required): after 2 consecutive fully-input-less auto-advanced episodes, crown + "Are you still watching?" modal (Keep watching / I'm done), BACK = Next-Up card + chain reset, no answer in 5 min = stop playback and exit. `epTouched`/`idleEps` chain: any user input during an episode resets the chain. — `onEnded`/`showStillWatching` (PlayerActivity ~L1115-1229)
+- ✅ Mark-watched on finish (position ≥ finishPoint at exit/end → episode/title watched, resume cleared; force-mark exempts only real resume ≥2min start — the false-watched@4% fix), `Ck.clearResume` on ended — `markWatchedIfDone` (~L842-873), `onEnded`
+- ✅ Progress heartbeat to server: instant start-stamp (the moment playback starts, stamp + push so other devices resume-target immediately), report at 20s then every 30s, account push every 90s, **zombie guard** (frozen position = no beat/no push), `Ck.reportServer` — ticker (~L745-777). iOS saves position + CW entry only on dismiss — loses everything on crash/kill, no cross-device mid-episode pickup.
 
 - 🟡 Subtitles: iOS = one auto-picked track rendered as overlay. Android: ranked multi-track list (addon `subtitles` json, English-best-first, up to 12), embedded-subs via `/webplay/subx`, side panel that STAYS OPEN with live-apply (size incl. Tiny, background, outline, position raised/high), off toggle, `flashLabel` pill on change — `subtitleOptions`/`showSubtitleSidePanel`/`applySubtitle`/`applySubScale` (~L1250-1367)
 - ✅ Audio track picker (language pref default, `audioLang`) — `showAudioPicker` (~L1368)
@@ -105,7 +105,7 @@ Android references are file + function/rough line so the implementer can read th
 - ❌ Stats overlay (resolution/fps/refresh/dropped frames) — `updateStats` (~L800)
 - ❌ Branded loading screen (channel/show logo pulse before first frame) — `buildLoadingScreen` (~L301)
 - ❌ Placeholder/unaired handling: stream that lands on the "not yet available" clip loops it, hides Ends/skip UI, re-probes every 20s and hot-swaps to the real file when it lands — `maybeDetectPlaceholder` + placeholder branches (~L1097, ticker)
-- ❌ Keep-screen-on (iOS: `UIApplication.shared.isIdleTimerDisabled` while playing) — Android window FLAG_KEEP_SCREEN_ON fix (Sep 18)
+- ✅ Keep-screen-on (iOS: `UIApplication.shared.isIdleTimerDisabled` while playing) — Android window FLAG_KEEP_SCREEN_ON fix (Sep 18)
 - 🟡 `/webplay` remux fallback exists on iOS (4s failed-status probe, carries `t=` offset) — but no mid-play stall fallback, only on initial open.
 - ❌ Player error handling → retry/failover messaging — `onPlayerError` (~L538)
 - ❌ Live mode: no Ends/resume/heartbeat, logo loading screen, live-window seeking semantics — `liveMode` branches throughout PlayerActivity
@@ -113,7 +113,7 @@ Android references are file + function/rough line so the implementer can read th
 
 ## 7. Live TV
 
-- 🟡 Tab gating: iOS detects a `tv` catalog in the manifest (same as Android `detectLiveTv`), but Android re-detects on every resume/sign-out (tab appears/disappears live, instantly on addon-add) — MainActivity ~L99-125
+- ✅ Tab gating: iOS detects a `tv` catalog in the manifest (same as Android `detectLiveTv`), but Android re-detects on every resume/sign-out (tab appears/disappears live, instantly on addon-add) — MainActivity ~L99-125
 - 🟡 **Playback wiring**: tap channel -> StreamSheet -> HLS play DONE (tuning screen + access-gate modal + guide re-align still TODO): tap channel → tuning screen (logo + "Tuning ESPN… / Now: <program>") → `/stream/tv/<id>.json` → pick HLS vs `ckTs` hub feed (hub .ts ONLY for `24-7-*` loop channels; HLS first for everything else) → **access gate probe** (429 device-cap / 503 capacity / 403 no-access → centered modal with reason, never a spinning player) → play; on back: guide re-align to NOW + cursor back on that channel — `liveTune` (MainActivity ~L2383-2452)
 - ❌ Locked-plan state: catalog returning single `cklive:upgrade` meta → full-screen 🔒 "Live TV — Locked / not part of your plan" banner, nothing clickable — `buildLiveTv` (~L1610-1637)
 - ❌ Guide grid: per-channel horizontal timelines (4px/min), pinned channel column, pinned header with date + scroll-synced time ticks, **red now-line**, half-hour-aligned start, Today scrolls 72h continuous, chunked lazy row fill (`vFill`/`vSweep`/`pump`) — `liveRenderGuide` (~L1878-2245)
