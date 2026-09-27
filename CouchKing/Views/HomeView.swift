@@ -1,60 +1,164 @@
 import SwiftUI
 
+// Home (Android buildShelvesInto): Hero → Continue Watching → Top 10 Today → For You
+// Movies/Shows → the person's shelf lineup in THEIR order, rows filling top-down one after
+// another (2.0.82 loading style — no skeletons). Guests get Cinemeta discovery rows.
 struct HomeView: View {
     @EnvironmentObject var session: Session
     @State private var rows: [(String, [Meta])] = []
     @State private var top10: [Meta] = []
+    @State private var hero: [Meta] = []
+    @State private var cw: [CWItem] = []
     @State private var loading = true
+    @State private var loadGen = 0
+    @State private var resume: CWItem?
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 18) {
-                    if !session.signedIn {
-                        GuestBanner()
-                    }
-                    let cw = session.continueWatching()
+                    if !session.signedIn { GuestBanner() }
+                    if !hero.isEmpty { HeroPager(metas: hero) }
                     if !cw.isEmpty {
-                        ContinueRow(items: cw)
+                        ContinueRow(items: cw) { item in
+                            session.dismissNewEpsBadge(item.meta.id, latestAir: item.latestAir)
+                            resume = item
+                        }
                     }
-                    if !top10.isEmpty {
-                        Top10Row(metas: top10)
-                    }
+                    if !top10.isEmpty { Top10Row(metas: top10) }
                     ForEach(rows, id: \.0) { row in
                         PosterRow(title: row.0, metas: row.1)
                     }
-                    if loading { ProgressView().frame(maxWidth: .infinity).padding(.top, 60) }
+                    if loading { ProgressView().frame(maxWidth: .infinity).padding(.top, 40) }
+                    if !loading && rows.isEmpty && hero.isEmpty {
+                        Text(session.hasAddon ? "Nothing to show yet — pull to refresh."
+                             : "Sign in with an enabled account for your rows, or browse Discover.")
+                            .font(.footnote).foregroundStyle(.secondary).padding(24)
+                    }
                 }
                 .padding(.vertical, 8)
             }
             .background(Theme.bg)
-            .navigationTitle("👑 CouchKing")
-            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                ToolbarItem(placement: .principal) { BrandTitle() }
                 if session.profiles.count > 1 {
                     ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            session.currentProfile = ""
-                            UserDefaults.standard.set("", forKey: "curProfile")
-                        } label: {
-                            Text(session.profiles.first { $0.id == session.currentProfile }?.avatar ?? "🍿")
+                        Button { session.switchProfile("") } label: {
+                            ProfileAvatar(profile: session.profiles.first { $0.id == session.currentProfile }, size: 30)
                         }
                     }
                 }
             }
-            .task(id: session.currentProfile) {
-                loading = true
-                async let r = Catalog.homeRows(session: session)
-                async let t = Catalog.top10(session: session)
-                rows = await r; top10 = await t
-                loading = false
+            .navigationBarTitleDisplayMode(.inline)
+            .navigationDestination(for: Meta.self) { DetailView(meta: $0) }
+            // a profile switch or the player exiting → content leaves memory and refills
+            .task(id: "\(session.currentProfile)|\(session.homeStale)|\(session.addons.first?.url ?? "")") {
+                rows = []; top10 = []; hero = []
+                await load()
             }
-            .refreshable {
-                async let r = Catalog.homeRows(session: session)
-                async let t = Catalog.top10(session: session)
-                rows = await r; top10 = await t
+            // the 60s pull / any state change repaints the Continue row IN PLACE (no page rebuild)
+            .onReceive(session.objectWillChange) { _ in
+                Task { cw = await session.continueWatchingOrdered() }
+            }
+            .refreshable { await load() }
+            .sheet(item: $resume) { item in
+                let p = item.resumeKey.split(separator: ":")
+                let s = p.count >= 3 ? Int(p[p.count - 2]) : nil
+                let e = p.count >= 3 ? Int(p[p.count - 1]) : nil
+                StreamSheet(meta: item.meta, season: s, episode: e, autoplay: true)
+                    .presentationDetents([.medium, .large])
             }
         }
+    }
+
+    /// Fill top-down, sequentially, in lineup order (Android 2.0.82 loading style).
+    private func load() async {
+        loadGen += 1
+        let gen = loadGen
+        loading = true
+        cw = await session.continueWatchingOrdered()
+        let (tm, ts) = await Catalog.trending(session: session)
+        guard gen == loadGen else { return }
+        top10 = Catalog.interleave(tm, ts)
+        hero = Array(Catalog.interleave(tm, ts, count: 14).filter { $0.background != nil || $0.poster != nil }.prefix(7))
+        var fresh: [(String, [Meta])] = []
+        if session.hasAddon {
+            for (title, cat) in Catalog.homeLineup(session: session) {
+                var metas = await Catalog.fetch(session: session, type: cat.type, cid: cat.cid)
+                guard gen == loadGen else { return }
+                if metas.isEmpty { continue }
+                // For You rows keep their ranked order; curated `ids` rows are NEVER shuffled
+                if !cat.isForYou && !cat.isOrdered { metas = Catalog.mix(metas, session: session, salt: cat.id) }
+                fresh.append((title, metas))
+                rows = fresh
+            }
+        } else {
+            for (title, type, path) in Catalog.guestRows {
+                let metas = await Catalog.guestRow(type, path)
+                guard gen == loadGen else { return }
+                if metas.isEmpty { continue }
+                fresh.append((title, Catalog.mix(metas, session: session, salt: title)))
+                rows = fresh
+            }
+        }
+        rows = fresh
+        loading = false
+    }
+}
+
+// Rotating trending carousel (Android buildHeroPager): 7 items, swipe, auto-advance every 9s.
+struct HeroPager: View {
+    let metas: [Meta]
+    @State private var page = 0
+    @State private var paused = false
+    var body: some View {
+        TabView(selection: $page) {
+            ForEach(Array(metas.enumerated()), id: \.element.id) { i, m in
+                NavigationLink(value: m) { HeroCard(meta: m) }.buttonStyle(.plain).tag(i)
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .automatic))
+        .frame(height: 230)
+        .padding(.horizontal, 14)
+        .simultaneousGesture(DragGesture().onChanged { _ in paused = true }.onEnded { _ in paused = false })
+        .task {
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(9))
+                if !paused, metas.count > 1 { withAnimation { page = (page + 1) % metas.count } }
+            }
+        }
+    }
+}
+
+struct HeroCard: View {
+    let meta: Meta
+    var body: some View {
+        ZStack(alignment: .bottomLeading) {
+            AsyncImage(url: URL(string: meta.background ?? meta.poster ?? "")) { img in
+                img.resizable().aspectRatio(contentMode: .fill)
+            } placeholder: { Theme.card }
+            .frame(height: 230).frame(maxWidth: .infinity).clipped()
+            LinearGradient(colors: [.clear, .black.opacity(0.85)], startPoint: .center, endPoint: .bottom)
+            VStack(alignment: .leading, spacing: 4) {
+                if let logo = meta.logo, let u = URL(string: logo) {
+                    AsyncImage(url: u) { img in
+                        img.resizable().aspectRatio(contentMode: .fit).frame(maxHeight: 44)
+                    } placeholder: { Text(meta.name).font(.title3.bold()) }
+                    .frame(maxWidth: 200, alignment: .leading)
+                } else {
+                    Text(meta.name).font(.title3.bold()).lineLimit(1)
+                }
+                HStack(spacing: 6) {
+                    Text(meta.type == "movie" ? "Movie" : "Show")
+                    if let y = meta.releaseInfo { Text("· \(y)") }
+                    if let r = meta.imdbRating { Text("· ⭐ \(r)") }
+                }
+                .font(.caption).foregroundStyle(.white.opacity(0.8))
+            }
+            .padding(14)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .titleMenu(meta)
     }
 }
 
@@ -67,30 +171,62 @@ struct PosterRow: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 10) {
                     ForEach(metas) { m in
-                        NavigationLink(value: m) { PosterCard(meta: m) }
+                        NavigationLink(value: m) { PosterCard(meta: m) }.buttonStyle(.plain)
                     }
                 }
                 .padding(.horizontal, 14)
             }
         }
-        .navigationDestination(for: Meta.self) { DetailView(meta: $0) }
     }
 }
 
+/// Poster tile (Android `poster`): watchlist ✓ badge, watched "done" badge, optional progress
+/// bar + "+N" new-episodes badge, long-press context menu. Cached art via URLCache.
 struct PosterCard: View {
+    @EnvironmentObject var session: Session
     let meta: Meta
-    @AppStorage("showTitles") private var showTitles = true   // per-profile default ON
+    var progress: Double = 0
+    var newEps: Int = 0
+    var width: CGFloat = 108
     var body: some View {
+        let inLib = session.inLibrary(meta.id)
+        let done = session.isWatched(meta.id)
         VStack(spacing: 4) {
-            AsyncImage(url: URL(string: meta.poster ?? "")) { img in
-                img.resizable().aspectRatio(contentMode: .fill)
-            } placeholder: {
-                Theme.card.overlay(Image(systemName: "film").foregroundStyle(.secondary))
+            ZStack(alignment: .bottom) {
+                AsyncImage(url: URL(string: meta.poster ?? "")) { img in
+                    img.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Theme.card.overlay(Image(systemName: "film").foregroundStyle(.secondary))
+                }
+                .frame(width: width, height: width * 1.5)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                if progress > 0.01 {
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(.white.opacity(0.3)).frame(width: width - 12, height: 4)
+                        Capsule().fill(Theme.accent).frame(width: (width - 12) * progress, height: 4)
+                    }
+                    .padding(.bottom, 5)
+                }
             }
-            .frame(width: 108, height: 162)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            if showTitles {
-                Text(meta.name).font(.caption2).lineLimit(1).frame(width: 108)
+            .overlay(alignment: .topTrailing) {
+                HStack(spacing: 3) {
+                    if newEps > 0 {
+                        Text("+\(newEps)").font(.caption2.bold())
+                            .padding(.horizontal, 5).padding(.vertical, 2)
+                            .background(Theme.accent, in: Capsule()).foregroundStyle(.white)
+                    }
+                    if done {
+                        Image(systemName: "checkmark.circle.fill").font(.caption)
+                            .foregroundStyle(.white, .green)
+                    } else if inLib {
+                        Image(systemName: "checkmark.circle.fill").font(.caption)
+                            .foregroundStyle(.white, Theme.accent)
+                    }
+                }
+                .padding(5)
+            }
+            if session.pref("showTitles", true) {
+                Text(meta.name).font(.caption2).lineLimit(1).frame(width: width)
                     .foregroundStyle(.primary)
             }
         }
@@ -98,13 +234,14 @@ struct PosterCard: View {
     }
 }
 
-// Long-press title menu (Android titleMenu): Add/Remove Library · Mark watched/unwatched ·
-// Clear progress — all mutate the synced state in place (tap the poster for Details).
+// Long-press title menu (Android titleMenu): Details · Add/Remove Library · Mark watched/unwatched ·
+// Clear progress — all mutate the synced state in place (tiles repaint, no page rebuild).
 struct TitleContextMenu: ViewModifier {
     @EnvironmentObject var session: Session
     let meta: Meta
     func body(content: Content) -> some View {
         content.contextMenu {
+            NavigationLink(value: meta) { Label("Details", systemImage: "info.circle") }
             Button(session.inLibrary(meta.id) ? "Remove from Library" : "Add to Library",
                    systemImage: session.inLibrary(meta.id) ? "minus.circle" : "plus.circle") {
                 session.toggleLibrary(meta)
@@ -121,48 +258,26 @@ struct TitleContextMenu: ViewModifier {
 }
 extension View { func titleMenu(_ meta: Meta) -> some View { modifier(TitleContextMenu(meta: meta)) } }
 
-// Continue Watching — Android Home CW row: newest-first tiles with a resume progress bar.
+// Continue Watching — Android Home CW row: cwOrder-sorted tiles with a resume progress bar and
+// the "+N new episodes" badge; TAP RESUMES the right episode directly (resumeFromCw).
 struct ContinueRow: View {
     let items: [CWItem]
+    let onResume: (CWItem) -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Continue Watching").font(.headline).padding(.horizontal, 14)
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 10) {
                     ForEach(items) { item in
-                        NavigationLink(value: item.meta) { CWCard(item: item) }
+                        Button { onResume(item) } label: {
+                            PosterCard(meta: item.meta, progress: item.progress, newEps: item.newEps)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(.horizontal, 14)
             }
         }
-        .navigationDestination(for: Meta.self) { DetailView(meta: $0) }
-    }
-}
-
-struct CWCard: View {
-    let item: CWItem
-    var body: some View {
-        VStack(spacing: 4) {
-            ZStack(alignment: .bottom) {
-                AsyncImage(url: URL(string: item.meta.poster ?? "")) { img in
-                    img.resizable().aspectRatio(contentMode: .fill)
-                } placeholder: {
-                    Theme.card.overlay(Image(systemName: "film").foregroundStyle(.secondary))
-                }
-                .frame(width: 108, height: 162)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                if item.progress > 0.01 {
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(.white.opacity(0.3)).frame(width: 96, height: 4)
-                        Capsule().fill(Theme.accent).frame(width: 96 * item.progress, height: 4)
-                    }
-                    .padding(.bottom, 5)
-                }
-            }
-            Text(item.meta.name).font(.caption2).lineLimit(1).frame(width: 108)
-        }
-        .titleMenu(item.meta)
     }
 }
 
@@ -175,13 +290,12 @@ struct Top10Row: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 2) {
                     ForEach(Array(metas.enumerated()), id: \.element.id) { idx, m in
-                        NavigationLink(value: m) { RankedCard(rank: idx + 1, meta: m) }
+                        NavigationLink(value: m) { RankedCard(rank: idx + 1, meta: m) }.buttonStyle(.plain)
                     }
                 }
                 .padding(.horizontal, 14)
             }
         }
-        .navigationDestination(for: Meta.self) { DetailView(meta: $0) }
     }
 }
 
@@ -203,6 +317,17 @@ struct RankedCard: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .titleMenu(meta)
+    }
+}
+
+/// Avatar tile tinted by the profile's color (Android profileHue drives the tile everywhere).
+struct ProfileAvatar: View {
+    let profile: Profile?
+    var size: CGFloat = 84
+    var body: some View {
+        Text(profile?.avatar ?? "🍿").font(.system(size: size * 0.52))
+            .frame(width: size, height: size)
+            .background(Profile.tint(profile?.color ?? ""), in: RoundedRectangle(cornerRadius: size * 0.22))
     }
 }
 
