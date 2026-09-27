@@ -96,7 +96,7 @@ Android references are file + function/rough line so the implementer can read th
 - ❌ Progress heartbeat to server: instant start-stamp (the moment playback starts, stamp + push so other devices resume-target immediately), report at 20s then every 30s, account push every 90s, **zombie guard** (frozen position = no beat/no push), `Ck.reportServer` — ticker (~L745-777). iOS saves position + CW entry only on dismiss — loses everything on crash/kill, no cross-device mid-episode pickup.
 
 - 🟡 Subtitles: iOS = one auto-picked track rendered as overlay. Android: ranked multi-track list (addon `subtitles` json, English-best-first, up to 12), embedded-subs via `/webplay/subx`, side panel that STAYS OPEN with live-apply (size incl. Tiny, background, outline, position raised/high), off toggle, `flashLabel` pill on change — `subtitleOptions`/`showSubtitleSidePanel`/`applySubtitle`/`applySubScale` (~L1250-1367)
-- ❌ Audio track picker (language pref default, `audioLang`) — `showAudioPicker` (~L1368)
+- ✅ Audio track picker (language pref default, `audioLang`) — `showAudioPicker` (~L1368)
 - ✅ Playback speed picker (ends-at time recomputed by speed) — `showSpeedPicker` (~L1395)
 - ❌ Aspect/scale cycle (fit/fill/zoom, `scaleMode` persisted) — `applyScale`/`cycleScale` (~L1411-1431)
 - ❌ Seek step pref applied to seek controls/gestures (5/10/15/30s) — `Store.seekStepSec`, init (~L483)

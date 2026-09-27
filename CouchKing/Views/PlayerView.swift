@@ -29,6 +29,8 @@ struct PlayerView: View {
     @State private var timeObserver: Any?
     @State private var endObserver: NSObjectProtocol?
     @State private var rate: Float = 1.0      // playback speed (Android speed picker)
+    @State private var audioGroup: AVMediaSelectionGroup?
+    @State private var audioOpts: [AVMediaSelectionOption] = []   // multi-audio picker (defaults to English)
 
     init(request: PlayRequest) { self.request = request }
     // legacy call sites (movie stream list) still hand us a bare url
@@ -66,6 +68,18 @@ struct PlayerView: View {
                         .background(.black.opacity(0.5), in: Capsule())
                 }
                 Spacer()
+                if audioOpts.count > 1 {
+                    Menu {
+                        ForEach(audioOpts.indices, id: \.self) { i in
+                            Button(audioOpts[i].displayName) {
+                                if let g = audioGroup { player.currentItem?.select(audioOpts[i], in: g) }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "waveform").padding(10)
+                            .background(.black.opacity(0.5), in: Circle())
+                    }
+                }
                 Menu {
                     ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { r in
                         Button { setRate(Float(r)) } label: {
@@ -155,6 +169,16 @@ struct PlayerView: View {
                                             season: request.season, episode: request.episode)
         let item = AVPlayerItem(url: request.url)
         player.replaceCurrentItem(with: item)
+        // auto-pick ENGLISH audio + expose a picker (the app-side of the web "not English" fix):
+        // multi-audio files that list a foreign track first default to English here.
+        Task {
+            guard let group = try? await item.asset.loadMediaSelectionGroup(for: .audible) else { return }
+            let opts = group.options
+            let eng = opts.first { ($0.locale?.language.languageCode?.identifier ?? "").hasPrefix("en") }
+                ?? opts.first { $0.displayName.lowercased().contains("english") }
+            if let eng { item.select(eng, in: group) }
+            await MainActor.run { audioGroup = group; audioOpts = opts }
+        }
         // resume: local positions map first (synced), server pos as fallback
         let local = ((session.pstate()["positions"] as? [String: Any])?[posKey()] as? String)?
             .split(separator: "|").first.flatMap { Int($0) } ?? 0
