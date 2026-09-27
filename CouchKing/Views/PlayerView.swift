@@ -459,7 +459,7 @@ struct PlayerView: View {
         subTracks = rankSubtitles(request.subtitles)
         await loadSubtitles()
         // next episode from the REAL episode list (season-crossing, no e+1 guessing)
-        nextEp = nextEpisode()
+        nextEp = computeNextEpisode()
     }
 
     private func observeItem(_ item: AVPlayerItem) {
@@ -758,7 +758,7 @@ struct PlayerView: View {
     // MARK: next episode
 
     /// The episode after this one from the REAL list — crosses seasons (Android nextEpisode()).
-    private func nextEpisode() -> Episode? {
+    private func computeNextEpisode() -> Episode? {
         guard let s = request.season, let e = request.episode else { return nil }
         let list = request.episodes.filter { $0.season > 0 }
             .sorted { ($0.season, $0.episode) < ($1.season, $1.episode) }

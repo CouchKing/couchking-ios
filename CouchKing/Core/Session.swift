@@ -332,6 +332,9 @@ final class Session: ObservableObject {
                   let js = String(data: out, encoding: .utf8) else { continue }
             var allowed = CharacterSet.urlPathAllowed
             allowed.remove(charactersIn: "/:{}\"")
+            for j in parts.indices where j != i {   // every segment must be percent-encoded
+                parts[j] = parts[j].addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? parts[j]
+            }
             parts[i] = js.addingPercentEncoding(withAllowedCharacters: allowed) ?? parts[i]
             comps.percentEncodedPath = parts.joined(separator: "/")
             return comps.string ?? url
