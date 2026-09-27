@@ -100,16 +100,23 @@ struct LibraryView: View {
 struct LiveTVView: View {
     @EnvironmentObject var session: Session
     @State private var channels: [Meta] = []
+    @State private var tune: Meta?
     var body: some View {
         NavigationStack {
             ScrollView {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 108))], spacing: 12) {
-                    ForEach(channels) { c in PosterCard(meta: c) }
+                    ForEach(channels) { c in
+                        Button { tune = c } label: { PosterCard(meta: c) }
+                            .buttonStyle(.plain)
+                    }
                 }
                 .padding(14)
             }
             .background(Theme.bg)
             .navigationTitle("Live TV")
+            .sheet(item: $tune) { c in
+                StreamSheet(meta: c).presentationDetents([.medium, .large])
+            }
             .task {
                 guard let addon = session.addons.first else { return }
                 if let m = try? await API.json("/manifest.json", base: addon.url),

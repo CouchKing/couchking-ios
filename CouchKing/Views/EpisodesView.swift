@@ -161,7 +161,8 @@ struct StreamSheet: View {
         guard !session.isExpired, let addon = session.addons.first else { return }
         let u = session.profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         let sid = season != nil ? "\(meta.id):\(season!):\(episode!)" : meta.id
-        let type = season != nil ? "series" : "movie"
+        // Live TV channels come through as type "tv" with a cklive:<id> — /stream/tv/<id>.json
+        let type = season != nil ? "series" : (meta.type == "tv" ? "tv" : "movie")
         if let r = try? await API.json("/stream/\(type)/\(sid).json?u=\(u)", base: addon.url) {
             streams = r["streams"] as? [[String: Any]] ?? []
         }
