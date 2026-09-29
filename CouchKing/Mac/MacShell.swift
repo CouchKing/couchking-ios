@@ -62,7 +62,7 @@ struct MacShell: View {
         .padding(.vertical, 16).padding(.horizontal, 8.8)
         .frame(width: open ? Desk.railOpen : Desk.rail, alignment: .leading)
         .frame(maxHeight: .infinity)
-        .background(open ? Desk.railOpen : Color.clear)
+        .background(open ? Desk.railBg : Color.clear)
         .clipped()
         .animation(.easeInOut(duration: 0.18), value: open)
         .onHover { open = $0 }

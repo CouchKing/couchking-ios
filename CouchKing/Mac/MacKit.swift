@@ -23,7 +23,7 @@ enum Desk {
     static let ghostHover = hex(0x2E2850)
     static let border = hex(0x37315C)      // inputs / panels
     static let menuHover = hex(0x332D55)   // menu hover + selected rail pill
-    static let railOpen = hex(0x0D0B18, 0xEE / 255.0)
+    static let railBg = hex(0x0D0B18, 0xEE / 255.0)   // expanded rail
     static let text2 = hex(0xD8D5EA)       // hero sub, poster title, desc
     static let epDesc = hex(0xB9B4D4)
     static let gold = hex(0xF5C518)        // watched badge

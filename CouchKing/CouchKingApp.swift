@@ -105,18 +105,7 @@ struct MainTabs: View {
         #if os(macOS)
         MacShell()   // the desktop app's hover rail (reference/desktop)
         #elseif os(tvOS)
-        // Firestick / Android TV top navigation: Home first, then Search · Discover · Library ·
-        // [Live TV] · Settings — the remote lands on Home.
-        TabView(selection: $tab) {
-            HomeView().tabItem { Label("Home", systemImage: "house.fill") }.tag(1)
-            SearchView().tabItem { Label("Search", systemImage: "magnifyingglass") }.tag(0)
-            DiscoverTab().tabItem { Label("Discover", systemImage: "square.grid.2x2.fill") }.tag(2)
-            LibraryView().tabItem { Label("Library", systemImage: "books.vertical.fill") }.tag(3)
-            if session.liveTvOn {
-                LiveTVView().tabItem { Label("Live TV", systemImage: "dot.radiowaves.left.and.right") }.tag(4)
-            }
-            SettingsView().tabItem { Label("Settings", systemImage: "gearshape.fill") }.tag(5)
-        }
+        TVShell()   // the Firestick leanback rail + board (reference/android-tv)
         #else
         phoneTabs
         #endif

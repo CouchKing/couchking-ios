@@ -15,8 +15,16 @@ struct SettingsView: View {
     @State private var addonMsg = ""
     @State private var probing = false
 
+    /// Apple TV hosts Settings in the shell's own navigation stack (so the Menu button knows
+    /// when it's at the root); everywhere else it brings its own.
+    var embedded = false
+    init(embedded: Bool = false) { self.embedded = embedded }
+
     var body: some View {
-        NavigationStack {
+        if embedded { content } else { NavigationStack { content } }
+    }
+
+    private var content: some View {
             Form {
                 accountSection
                 if session.signedIn { profilesSection }
@@ -45,7 +53,6 @@ struct SettingsView: View {
                 }
             }
         }
-    }
 
     /// Account card status line — Android Settings card parity: lifetime / expired /
     /// "Access through … · N days left" / plain signed-in.
