@@ -78,6 +78,12 @@ jobs:
       TEAM_ID: "9DQ4PK94U6"
     steps:
       - uses: actions/checkout@v4
+      - name: Select newest Xcode (App Store now requires the iOS 26 SDK / Xcode 26)
+        run: |
+          echo "installed Xcodes:"; ls -d /Applications/Xcode*.app 2>/dev/null
+          NEW=$(ls -d /Applications/Xcode_2*.app 2>/dev/null | sort -V | tail -1)
+          [ -n "$NEW" ] && sudo xcode-select -s "$NEW" || echo "no Xcode 2x found — using default"
+          xcodebuild -version
       - name: Skip if no signing secrets
         id: gate
         run: |
@@ -132,16 +138,19 @@ jobs:
             -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8 \
             -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER_ID" \
             2>&1 | tee export.log | tail -20
-      - name: Validate binary (surfaces missing-icon / bad-plist BEFORE upload)
+      - name: Validate binary (surfaces missing-icon / bad-plist / SDK issues BEFORE upload)
         if: steps.gate.outputs.go == 'yes'
+        continue-on-error: true   # informational — don't block the real upload, but DO show the result
         run: |
+          set -o pipefail
           IPA=$(find build/export -name '*.ipa' | head -1)
           echo "validating: $IPA"
           xcrun altool --validate-app -f "$IPA" --type ios \
-            --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" 2>&1 | tee validate.log | tail -40 || echo "VALIDATION reported issues (see validate.log)"
+            --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" 2>&1 | tee validate.log | tail -40
       - name: Upload to TestFlight
         if: steps.gate.outputs.go == 'yes'
         run: |
+          set -o pipefail   # without this, tail's exit 0 masks an altool failure (false "success")
           IPA=$(find build/export -name '*.ipa' | head -1)
           echo "uploading: $IPA"
           xcrun altool --upload-app -f "$IPA" --type ios \
