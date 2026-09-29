@@ -86,19 +86,33 @@ sandbox entitlement for the macOS target.
   is iOS/tvOS only; `Color(UIColor…)` → `Color(nsColor…)` on macOS; `onTapGesture` vs focus.
 - Commit in small batches, push, watch CI go green for the new targets before moving on.
 
-### 3. tvOS is the real work — the focus engine
-tvOS has **no touch and no cursor**; everything is remote/focus-driven. Standard SwiftUI controls
-(Button, List, TabView) get focus for free, but the custom poster **grids/rows** need
-`.focusable()`, `@FocusState`, and `.focusSection()` so the Siri Remote can move between rows and
-the selected tile scales/highlights (tvOS "shelf" feel). The player overlay (skip-intro/recap/
-after-credits pills, subtitle toggles) must be reachable with the remote's play/pause + swipe.
-Mirror the Android TV app's navigation model (`/data/couchking-tv` MainActivity) for row order and
-focus behavior. This is the bulk of the effort — budget most of the tvOS time here.
+### 3. tvOS — make it feel like the Firestick (Android TV) app
+**Owner's directive: the Apple TV app should look and behave like the Firestick app.** Mirror the
+Android TV app's UX directly: same home-row order, the leanback "shelf" grid, big focused poster
+that scales/highlights, the in-player mini-guide + favorites for Live TV, the same detail/episodes
+layout. Reference implementation: `/data/couchking-tv` (MainActivity.kt row order + navigation,
+PlayerActivity.kt overlay). tvOS has **no touch/cursor** — everything is remote/focus-driven:
+standard SwiftUI controls (Button/List/TabView) focus for free, but the custom poster grids/rows
+need `.focusable()`, `@FocusState`, `.focusSection()` so the Siri Remote moves between rows and the
+selected tile highlights. The player overlay (skip-intro/recap/after-credits pills, subtitle
+toggles) must be reachable with the remote's play/pause + swipe. This is the bulk of the effort —
+budget most tvOS time here.
 
-### 4. macOS polish
-Native window, resizable grid, hover states, keyboard shortcuts (space = play/pause, arrows).
-Menu bar minimal. Note: a separate Electron desktop app exists for Mac already — this native
-build is additive; keep it simple and parity-focused, don't rebuild desktop-only features.
+### 4. macOS — make it feel like the desktop (Electron) app
+**Owner's directive: the Mac app should be like the desktop version.** Match the Electron desktop
+app's layout and feel (`/data/couchking-desktop` renderer for reference): resizable window, poster
+grid with hover states, inline detail/stream flow, keyboard shortcuts (space = play/pause, arrows
+to navigate). Same rows, same browse/play/settings/sync behavior as desktop.
+
+### ⚠️ App Store safety — NO downloads, and keep it review-clean
+- **NO offline downloads on either platform.** On Android, offline downloads are sideload-only and
+  were deliberately kept out of the Play/App-Store builds (Apple/Play review flags "download the
+  movie" flows). Do **not** add any download/save-to-device feature — streaming only.
+- No rent/buy deep-links into other apps as a purchase path; "where to watch" provider links are
+  informational only (and hidden on tvOS which has no browser). Keep parity with the store-safe
+  Android flavor, not the sideload flavor.
+- No Apple capabilities/entitlements the app doesn't use (see Gotchas).
+- Everything else — full streaming, Live TV, profiles, sync, ratings, For You — stays.
 
 ### 5. CI — add compile jobs (signing comes later, separately)
 Add `compile-tvos` and `compile-macos` jobs mirroring the iOS `compile` job:
