@@ -254,6 +254,7 @@ struct LibraryRow: View {
 struct LiveTuneView: View {
     @EnvironmentObject var session: Session
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.ckClose) private var ckClose
     let channel: Meta
     var body: some View {
         NavigationStack {
@@ -273,7 +274,7 @@ struct LiveTuneView: View {
                 .padding(16)
             }
             .background(Theme.bg)
-            .toolbar { ToolbarItem(placement: .ckLeading) { Button("Back") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .ckLeading) { Button("Back") { if let ckClose { ckClose() } else { dismiss() } } } }
         }
     }
 }

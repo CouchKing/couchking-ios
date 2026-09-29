@@ -15,78 +15,86 @@ import AppKit
 // credits-from-subtitles, "Are you still watching?".
 struct PlayerView: View {
     @EnvironmentObject var session: Session
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismiss) var dismiss
+    @Environment(\.ckClose) var ckClose
+    /// Leave the player: the Mac's in-window overlay closes through its host; elsewhere the
+    /// system cover dismisses.
+    func close() { if let ckClose { ckClose() } else { dismiss() } }
     let request: PlayRequest
-    @State private var player = AVPlayer()
-    @State private var windows = PlayerWindows()
-    @State private var posMs = 0
-    @State private var durMs = 0
-    @State private var subCues: [SubCue] = []
-    @State private var currentCue = ""
-    @State private var nextEpisode: PlayRequest?
+    @State var player = AVPlayer()
+    @State var windows = PlayerWindows()
+    @State var posMs = 0
+    @State var durMs = 0
+    @State var subCues: [SubCue] = []
+    @State var currentCue = ""
+    @State var nextEpisode: PlayRequest?
     // ---- watched tracking + account heartbeat (Android PlayerActivity ticker) ----
-    @State private var sessionStartMs = 0     // where this sit-down began (resume point)
-    @State private var beatCount = 0
-    @State private var lastBeatPos = -1       // zombie guard: only a MOVING position beats
-    @State private var startStamped = false
-    @State private var firstReported = false
-    @State private var finishedHandled = false
+    @State var sessionStartMs = 0     // where this sit-down began (resume point)
+    @State var beatCount = 0
+    @State var lastBeatPos = -1       // zombie guard: only a MOVING position beats
+    @State var startStamped = false
+    @State var firstReported = false
+    @State var finishedHandled = false
     // ---- "Are you still watching?" — 2 input-less auto-advances arm the modal ----
-    @State private var epTouched = false
-    @State private var showStillWatching = false
-    @State private var timeObserver: Any?
-    @State private var observers: [NSObjectProtocol] = []
-    @State private var rate: Float = 1.0      // playback speed (Android speed picker)
-    @State private var audioGroup: AVMediaSelectionGroup?
-    @State private var audioOpts: [AVMediaSelectionOption] = []   // multi-audio picker
+    @State var epTouched = false
+    @State var showStillWatching = false
+    @State var timeObserver: Any?
+    @State var observers: [NSObjectProtocol] = []
+    @State var rate: Float = 1.0      // playback speed (Android speed picker)
+    @State var audioGroup: AVMediaSelectionGroup?
+    @State var audioOpts: [AVMediaSelectionOption] = []   // multi-audio picker
     // ---- skip latches (Android *Handled): never re-show after skipping / crossing ----
-    @State private var introHandled = false
-    @State private var recapHandled = false
-    @State private var lastTickPos = 0        // seek-discontinuity detection
+    @State var introHandled = false
+    @State var recapHandled = false
+    @State var lastTickPos = 0        // seek-discontinuity detection
     // ---- after-credits ----
-    @State private var stingerToastShown = false
-    @State private var toast = ""
+    @State var stingerToastShown = false
+    @State var toast = ""
     // ---- next-up ----
-    @State private var nextReq: PlayRequest?  // prefetched (5 min before the end)
-    @State private var nextEp: Episode?
-    @State private var showNextUp = false
-    @State private var nextUpDismissed = false
+    @State var nextReq: PlayRequest?  // prefetched (5 min before the end)
+    @State var nextEp: Episode?
+    @State var showNextUp = false
+    @State var nextUpDismissed = false
     // ---- subtitles ----
-    @State private var subTracks: [[String: Any]] = []
-    @State private var subIndex = -1          // -1 = off
-    @State private var showSubPanel = false
-    @State private var flash = ""
+    @State var subTracks: [[String: Any]] = []
+    @State var subIndex = -1          // -1 = off
+    @State var showSubPanel = false
+    @State var flash = ""
     // ---- misc UI ----
-    @State private var scaleMode = "fit"
-    @State private var showStats = false
-    @State private var stats = ""
-    @State private var showEpisodes = false
-    @State private var firstFrame = false
-    @State private var failed = false
-    @State private var remuxed = false
-    @State private var serverAhead = 0        // mid-play reconcile: another device's position
+    @State var scaleMode = "fit"
+    @State var showStats = false
+    @State var stats = ""
+    @State var showEpisodes = false
+    @State var firstFrame = false
+    @State var failed = false
+    @State var remuxed = false
+    @State var serverAhead = 0        // mid-play reconcile: another device's position
     // ---- placeholder / "not yet available" clip (IOS_CONTRACTS §5) ----
-    @State private var placeholder = false
-    @State private var placeholderPoll: Task<Void, Never>?
-    @State private var swapped: [String: Any]?   // the real stream once it lands
+    @State var placeholder = false
+    @State var placeholderPoll: Task<Void, Never>?
+    @State var swapped: [String: Any]?   // the real stream once it lands
     // ---- /webplay/probe (IOS_CONTRACTS §4) ----
-    @State private var probeInfo = ""
-    @State private var subxTask: Task<Void, Never>?
-    @State private var subxFrom = 0
+    @State var probeInfo = ""
+    @State var subxTask: Task<Void, Never>?
+    @State var subxFrom = 0
     // ---- Picture-in-Picture + our own transport (the AVPlayerLayer surface has no native controls) ----
-    @StateObject private var pip = PiPModel()
-    @State private var playing = false
-    @State private var controlsVisible = true
-    @State private var hideTask: Task<Void, Never>?
-    @State private var scrubbing = false
-    @State private var scrubMs: Double = 0
+    @StateObject var pip = PiPModel()
+    @State var playing = false
+    @State var controlsVisible = true
+    @State var hideTask: Task<Void, Never>?
+    @State var scrubbing = false
+    @State var scrubMs: Double = 0
+    @State var volume: Double = 1          // desktop volume slider
+    @State var speedMenu = false           // desktop / TV speed picker
+    @State var audioMenu = false           // TV audio sheet
+    @State var liveFav = false             // Live TV: ★ this channel
     // remote / keyboard focus (Apple TV: the Firestick-style "controls hidden → arrows seek")
-    enum PFocus: Hashable { case picture, skip, play }
-    @FocusState private var pfocus: PFocus?
+    enum PFocus: Hashable { case picture, skip, play, seek, ctrl(String), upNext, upDismiss, keep }
+    @FocusState var pfocus: PFocus?
 
-    private var isLive: Bool { request.meta.type == "tv" }
+    var isLive: Bool { request.meta.type == "tv" }
     /// The url actually playing (the real file after a placeholder hot-swap).
-    private var playURL: URL {
+    var playURL: URL {
         if let u = swapped?["url"] as? String, let url = URL(string: u) { return url }
         return request.url
     }
@@ -105,11 +113,25 @@ struct PlayerView: View {
             // On Apple TV this layer is the remote's landing spot while the controls are hidden:
             // select shows them, left/right seek by the seek step, up/down show the controls.
             pictureCatcher
+            #if os(tvOS)
+            if !firstFrame && !failed { tvLoading }
+            tvOverlay
+            if placeholder { placeholderBanner }
+            if showNextUp, let ep = nextEp { tvNextUp(ep) }
+            if showStillWatching { tvStillWatching }
+            #elseif os(macOS)
+            if !firstFrame && !failed { loadingScreen }
+            deskOverlay
+            if placeholder { placeholderBanner }
+            if showNextUp, let ep = nextEp { deskNextUp(ep) }
+            if showStillWatching { deskStillWatching }
+            #else
             if !firstFrame && !failed { loadingScreen }
             overlay
             if placeholder { placeholderBanner }
             if showNextUp, let ep = nextEp { nextUpCard(ep) }
             if showStillWatching { stillWatchingCard }
+            #endif
             if failed { errorCard }
         }
         .background(.black)
@@ -117,14 +139,11 @@ struct PlayerView: View {
         .simultaneousGesture(TapGesture().onEnded { epTouched = true })
         #if os(tvOS)
         .onPlayPauseCommand { togglePlay() }
-        .onExitCommand {   // Menu: first hide the controls, then leave the player
-            if controlsVisible && playing { hideTask?.cancel(); controlsVisible = false; pfocus = .picture }
-            else { dismiss() }
-        }
+        .onExitCommand { tvBack() }   // Menu peels one layer: panels → next-up → controls → exit
         .onChange(of: skipKey) { k in if !k.isEmpty { pfocus = .skip } }   // skip pill takes focus
         #endif
         #if os(macOS)
-        .background { keyboardShortcuts }
+        .background { deskKeys }
         .onContinuousHover { phase in
             if case .active = phase { if !controlsVisible { controlsVisible = true }; scheduleHide() }
         }
@@ -132,6 +151,7 @@ struct PlayerView: View {
         .onAppear { Task { await start() } }
         .onDisappear { stop() }
         .ckFullScreenCover(item: $nextEpisode) { req in PlayerView(request: req) }
+        #if os(iOS)
         .sheet(isPresented: $showSubPanel) {
             SubtitlePanel(tracks: subTracks, index: $subIndex, onPick: { pickSub($0) })
                 .ckDetents()
@@ -145,9 +165,10 @@ struct PlayerView: View {
             }
             .ckDetents()
         }
+        #endif
     }
 
-    private var gravity: AVLayerVideoGravity {
+    var gravity: AVLayerVideoGravity {
         switch scaleMode {
         case "fill": return .resize
         case "zoom": return .resizeAspectFill
@@ -159,7 +180,7 @@ struct PlayerView: View {
 
     /// Branded loading screen (Android buildLoadingScreen): show/channel art pulsing until
     /// the first frame lands.
-    private var loadingScreen: some View {
+    var loadingScreen: some View {
         VStack(spacing: 12) {
             AsyncImage(url: URL(string: request.meta.logo ?? request.meta.poster ?? "")) { img in
                 img.resizable().aspectRatio(contentMode: .fit)
@@ -176,7 +197,7 @@ struct PlayerView: View {
         .background(.black)
     }
 
-    @ViewBuilder private var overlay: some View {
+    @ViewBuilder var overlay: some View {
         VStack {
             if controlsVisible { topBar.transition(.opacity) }
             if showStats {
@@ -231,9 +252,9 @@ struct PlayerView: View {
     }
 
     /// Close · Ends · PiP · AirPlay · more (subtitles / audio / speed / aspect / episodes / stats).
-    private var topBar: some View {
+    var topBar: some View {
         HStack(spacing: 8) {
-            Button { dismiss() } label: {
+            Button { close() } label: {
                 Image(systemName: "xmark").padding(10)
                     .background(.black.opacity(0.5), in: Circle())
             }
@@ -271,7 +292,7 @@ struct PlayerView: View {
 
     /// Play/pause + scrubber with elapsed / remaining — replaces the native AVPlayerViewController
     /// controls the layer surface doesn't have. Live mode: play/pause + LIVE badge, no scrubber.
-    private var transportBar: some View {
+    var transportBar: some View {
         HStack(spacing: 10) {
             Button { togglePlay() } label: {
                 Image(systemName: playing ? "pause.fill" : "play.fill")
@@ -325,20 +346,23 @@ struct PlayerView: View {
     /// The picture itself: tap (phone/Mac) toggles the controls. On Apple TV it is focusable while
     /// the controls are hidden — select shows them, left/right seek (Firestick remote), up/down
     /// bring the controls back.
-    @ViewBuilder private var pictureCatcher: some View {
+    @ViewBuilder var pictureCatcher: some View {
         #if os(tvOS)
+        // Firestick: hidden controller → OK = play/pause, any arrow shows the controller
         Color.clear
             .ignoresSafeArea()
             .focusable(!controlsVisible)
             .focused($pfocus, equals: .picture)
-            .onTapGesture { toggleControls() }
-            .onMoveCommand { dir in
-                epTouched = true
-                switch dir {
-                case .left: remoteSeek(-1)
-                case .right: remoteSeek(1)
-                default: showControls()
-                }
+            .onTapGesture { epTouched = true; togglePlay(); showControls() }
+            .onMoveCommand { _ in epTouched = true; showControls() }
+        #elseif os(macOS)
+        // desktop: click the video = play/pause (and close any open menu)
+        Color.clear.contentShape(Rectangle())
+            .ignoresSafeArea()
+            .onTapGesture {
+                if speedMenu || showSubPanel || showStats { speedMenu = false; showSubPanel = false; showStats = false }
+                else { togglePlay() }
+                controlsVisible = true; scheduleHide()
             }
         #else
         Color.clear.contentShape(Rectangle())
@@ -347,43 +371,22 @@ struct PlayerView: View {
         #endif
     }
 
-    private func remoteSeek(_ dir: Int) {
+    func remoteSeek(_ dir: Int) {
         guard !isLive, !placeholder else { showControls(); return }
         let step = session.pref("seekStep", 10) * 1000
         seek(ms: max(0, posMs + dir * step))
         flashLabel(dir < 0 ? "⟲ \(step / 1000)s" : "⟳ \(step / 1000)s")
     }
 
-    private func showControls() {
+    func showControls() {
         controlsVisible = true
         #if os(tvOS)
-        pfocus = .play
+        pfocus = (isLive || placeholder) ? .play : .seek   // Firestick focuses the time bar
         #endif
         scheduleHide()
     }
 
-    #if os(macOS)
-    /// Desktop keyboard: space = play/pause, ←/→ = seek step, ↑/↓ = volume, F = full screen,
-    /// M = mute, Esc = close. Invisible buttons keep the shortcuts live even with the controls hidden.
-    private var keyboardShortcuts: some View {
-        ZStack {
-            Button("") { togglePlay() }.keyboardShortcut(.space, modifiers: [])
-            Button("") { remoteSeek(-1) }.keyboardShortcut(.leftArrow, modifiers: [])
-            Button("") { remoteSeek(1) }.keyboardShortcut(.rightArrow, modifiers: [])
-            Button("") { player.volume = min(1, player.volume + 0.1); flashLabel("Volume \(Int(player.volume * 100))%") }
-                .keyboardShortcut(.upArrow, modifiers: [])
-            Button("") { player.volume = max(0, player.volume - 0.1); flashLabel("Volume \(Int(player.volume * 100))%") }
-                .keyboardShortcut(.downArrow, modifiers: [])
-            Button("") { player.isMuted.toggle(); flashLabel(player.isMuted ? "Muted" : "Sound on") }
-                .keyboardShortcut("m", modifiers: [])
-            Button("") { NSApp.keyWindow?.toggleFullScreen(nil) }.keyboardShortcut("f", modifiers: [])
-            Button("") { dismiss() }.keyboardShortcut(.cancelAction)   // Esc closes the player sheet
-        }
-        .opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
-    }
-    #endif
-
-    private func togglePlay() {
+    func togglePlay() {
         epTouched = true
         if player.timeControlStatus == .paused {
             player.play()          // resumes at defaultRate, so the chosen speed sticks
@@ -396,7 +399,7 @@ struct PlayerView: View {
     }
 
     /// Tap the picture: show the controls (and re-arm the auto-hide), or hide them.
-    private func toggleControls() {
+    func toggleControls() {
         epTouched = true
         if controlsVisible {
             hideTask?.cancel(); controlsVisible = false
@@ -408,12 +411,18 @@ struct PlayerView: View {
 
     /// Controls fade out 4s after the last interaction while playing; they stay while paused
     /// or scrubbing.
-    private func scheduleHide() {
+    func scheduleHide() {
         hideTask?.cancel()
         hideTask = Task {
+            #if os(tvOS)
+            try? await Task.sleep(for: .seconds(5))      // Firestick controller timeout
+            #elseif os(macOS)
+            try? await Task.sleep(for: .seconds(3))      // desktop mouse-idle
+            #else
             try? await Task.sleep(for: .seconds(4))
+            #endif
             guard !Task.isCancelled else { return }
-            if playing && !scrubbing && !showSubPanel && !showEpisodes {
+            if playing && !scrubbing && !showSubPanel && !showEpisodes && !speedMenu && !audioMenu {
                 controlsVisible = false
                 #if os(tvOS)
                 if pfocus != .skip { pfocus = .picture }
@@ -423,7 +432,7 @@ struct PlayerView: View {
     }
 
     /// Subtitle position pref: normal / raised / high (Android applySubtitle position).
-    private var subBottomPad: CGFloat {
+    var subBottomPad: CGFloat {
         switch session.pref("subPos", "normal") {
         case "high": return 90
         case "raised": return 48
@@ -431,7 +440,7 @@ struct PlayerView: View {
         }
     }
 
-    @ViewBuilder private var menuItems: some View {
+    @ViewBuilder var menuItems: some View {
         if !subTracks.isEmpty {
             Button { showSubPanel = true } label: { Label("Subtitles", systemImage: "captions.bubble") }
         }
@@ -460,14 +469,14 @@ struct PlayerView: View {
     }
 
     /// The pill currently offered (drives the slide-in animation).
-    private var skipKey: String {
+    var skipKey: String {
         if let s = skipState { return s.0 }
         return ""
     }
 
     /// Recap before intro (precedence), handled latches, 2s tail exclusion, then after-credits
     /// stingers with the floor rule and "(1/2)" sequential labels (Android ticker ~L694-740).
-    private var skipState: (String, Int)? {
+    var skipState: (String, Int)? {
         let tail = 2000
         if windows.recapFrom > 0, !recapHandled, posMs >= windows.recapFrom, posMs < windows.recapTo - tail {
             return ("Skip Recap", windows.recapTo)
@@ -491,7 +500,7 @@ struct PlayerView: View {
     }
 
     /// "Getting this ready…" strip while the placeholder clip loops (Android placeholder branch).
-    private var placeholderBanner: some View {
+    var placeholderBanner: some View {
         VStack {
             Spacer()
             HStack(spacing: 8) {
@@ -505,7 +514,7 @@ struct PlayerView: View {
         }
     }
 
-    @ViewBuilder private var skipButton: some View {
+    @ViewBuilder var skipButton: some View {
         if placeholder { EmptyView() }
         else if let st = skipState {
             SkipPill(text: st.0, focus: $pfocus) {
@@ -519,7 +528,7 @@ struct PlayerView: View {
 
     /// Next-Up card (Android showNextUpCard): thumbnail (blurred if unwatched + pref), title,
     /// Play / Dismiss. Shown by time-remaining OR crossed credits point; never interrupts.
-    private func nextUpCard(_ ep: Episode) -> some View {
+    func nextUpCard(_ ep: Episode) -> some View {
         let blur = !session.isWatched(ep.id) && session.pref("blurUnwatched", false)
         return VStack {
             Spacer()
@@ -558,20 +567,20 @@ struct PlayerView: View {
 
     /// Crown + Keep watching / I'm done. BACK-out = dismiss; no answer for 5 minutes =
     /// playback stops and the player exits (Android showStillWatching).
-    private var stillWatchingCard: some View {
+    var stillWatchingCard: some View {
         VStack(spacing: 14) {
             Text("👑").font(.system(size: 40))
             Text("Are you still watching?").font(.title3.bold())
             Button {
                 showStillWatching = false
-                if let ep = nextEp { Task { await playEpisode(ep, idle: 0) } } else { dismiss() }
+                if let ep = nextEp { Task { await playEpisode(ep, idle: 0) } } else { close() }
             } label: {
                 Text("Keep watching").font(.headline)
                     .padding(.horizontal, 22).padding(.vertical, 10)
                     .background(Theme.accent, in: Capsule())
                     .foregroundStyle(.white)
             }
-            Button("I'm done") { dismiss() }
+            Button("I'm done") { close() }
                 .foregroundStyle(.secondary)
         }
         .padding(28)
@@ -581,7 +590,7 @@ struct PlayerView: View {
     }
 
     /// Player error handling (Android onPlayerError): remux once, then Retry / Close.
-    private var errorCard: some View {
+    var errorCard: some View {
         VStack(spacing: 14) {
             Text("⚠️").font(.system(size: 36))
             Text("Playback failed").font(.title3.bold())
@@ -591,7 +600,7 @@ struct PlayerView: View {
                 Button("Retry") { failed = false; remuxed = false; firstFrame = false; playRemux(fromMs: posMs) }
                     .font(.headline).padding(.horizontal, 22).padding(.vertical, 10)
                     .background(Theme.accent, in: Capsule()).foregroundStyle(.white)
-                Button("Close") { dismiss() }.foregroundStyle(.secondary)
+                Button("Close") { close() }.foregroundStyle(.secondary)
             }
         }
         .padding(28)
@@ -601,19 +610,19 @@ struct PlayerView: View {
     }
 
     // "Ends" clock — remaining runtime (÷ speed) added to now (Android ends-at readout).
-    private var endsText: String {
+    var endsText: String {
         let remain = Double(max(0, durMs - posMs)) / 1000.0 / Double(max(0.1, rate))
         let f = DateFormatter(); f.timeStyle = .short
         return "Ends \(f.string(from: Date().addingTimeInterval(remain)))"
     }
 
-    private func clock(_ ms: Int) -> String {
+    func clock(_ ms: Int) -> String {
         let s = ms / 1000
         return s >= 3600 ? String(format: "%d:%02d:%02d", s / 3600, (s / 60) % 60, s % 60)
                          : String(format: "%d:%02d", s / 60, s % 60)
     }
 
-    private func flashLabel(_ text: String) {
+    func flashLabel(_ text: String) {
         withAnimation { flash = text }
         Task {
             try? await Task.sleep(for: .seconds(1.6))
@@ -622,7 +631,7 @@ struct PlayerView: View {
     }
 
     /// Playback speed (Android showSpeedPicker) — defaultRate keeps it across pause/play (iOS 16+).
-    private func setRate(_ r: Float) {
+    func setRate(_ r: Float) {
         rate = r
         player.defaultRate = r
         if player.timeControlStatus == .playing { player.rate = r }
@@ -630,7 +639,7 @@ struct PlayerView: View {
     }
 
     /// Aspect cycle fit → fill → zoom, persisted per profile (Android cycleScale / scaleMode).
-    private func cycleScale() {
+    func cycleScale() {
         let order = ["fit", "fill", "zoom"]
         let i = order.firstIndex(of: scaleMode) ?? 0
         scaleMode = order[(i + 1) % order.count]
@@ -640,7 +649,7 @@ struct PlayerView: View {
 
     // MARK: lifecycle
 
-    private func start() async {
+    func start() async {
         // keep-screen-on while playing (Android FLAG_KEEP_SCREEN_ON fix, Sep 18)
         Platform.keepAwake(true)
         PlaybackAudio.activate()   // .playback: sound on silent, in background, in the PiP window
@@ -702,7 +711,7 @@ struct PlayerView: View {
         nextEp = computeNextEpisode()
     }
 
-    private func observeItem(_ item: AVPlayerItem) {
+    func observeItem(_ item: AVPlayerItem) {
         for o in observers { NotificationCenter.default.removeObserver(o) }
         observers = []
         observers.append(NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime,
@@ -720,17 +729,17 @@ struct PlayerView: View {
         })
     }
 
-    private func onError() {
+    func onError() {
         if !remuxed { playRemux(fromMs: posMs) } else { failed = true }
     }
 
-    private func posKey() -> String {
+    func posKey() -> String {
         request.season != nil ? "\(request.meta.id):\(request.season!):\(request.episode!)" : request.meta.id
     }
 
     // MARK: ticker
 
-    private func tick(_ ms: Int) {
+    func tick(_ ms: Int) {
         let prev = lastTickPos
         let nowPlaying = player.timeControlStatus != .paused
         if nowPlaying != playing {
@@ -764,7 +773,7 @@ struct PlayerView: View {
 
     /// One-time "🎬 This movie has a scene during/after the credits" ~4 min before the first
     /// stinger (Android stinger nudge ~L778-785).
-    private func stingerNudge() {
+    func stingerNudge() {
         guard !stingerToastShown, request.season == nil,
               let first = windows.afterCredits.compactMap({ $0.first }).min(), first > 0,
               posMs >= first - 240_000, posMs < first - 200_000 else { return }
@@ -778,7 +787,7 @@ struct PlayerView: View {
 
     /// Prefetch the next episode's stream 5 min out (instant advance) and show the Next-Up
     /// card by time-remaining or once the credits point is crossed.
-    private func nextUpTick() {
+    func nextUpTick() {
         guard durMs > 0, request.season != nil, let ep = nextEp else { return }
         let remain = durMs - posMs
         if nextReq == nil && remain <= 300_000 { Task { await prefetchNext(ep) } }
@@ -792,7 +801,7 @@ struct PlayerView: View {
     /// so other devices resume-target immediately), first report ~20s in then every 30s,
     /// local resume bar every 30s, account blob every 90s — all gated on a MOVING position
     /// (the zombie guard: a stick frozen "playing" for 26h must never pin CW everywhere).
-    private func heartbeat() {
+    func heartbeat() {
         if let d = player.currentItem?.duration.seconds, d.isFinite, d > 0 { durMs = Int(d * 1000) }
         beatCount += 1
         guard player.rate > 0, durMs > 0, !finishedHandled else { return }
@@ -821,14 +830,14 @@ struct PlayerView: View {
 
     /// Mid-play resume conflict (Android start() server-state block): if another device is
     /// >60s AHEAD on this same episode, offer the jump instead of silently overwriting it.
-    private func reconcileServer() async {
+    func reconcileServer() async {
         let w = await PlayerWindows.fetch(session: session, id: request.meta.id,
                                           season: request.season, episode: request.episode)
         if w.resumeMs > posMs + 60_000, w.resumeMs < durMs { serverAhead = w.resumeMs }
     }
 
     /// Stats overlay (Android updateStats): resolution / fps / dropped frames / bitrate.
-    private func updateStats() {
+    func updateStats() {
         guard let item = player.currentItem else { return }
         let size = item.presentationSize
         var fps = 0.0
@@ -845,7 +854,7 @@ struct PlayerView: View {
 
     /// Save position ("pos|dur|ts") + keep the Continue Watching entry fresh (with the ts the
     /// server sorts by) and the scoped cw: add stamp so removals merge across devices.
-    private func savePos(_ pos: Int, _ dur: Int, push: Bool) {
+    func savePos(_ pos: Int, _ dur: Int, push: Bool) {
         let now = Int(Date().timeIntervalSince1970 * 1000)
         var ps = session.pstate()
         var positions = ps["positions"] as? [String: Any] ?? [:]
@@ -875,7 +884,7 @@ struct PlayerView: View {
     /// Position where the episode is "basically over" (credits rolling): last subtitle cue
     /// + 2s when plausible (15s–5min lead) → learned credits from /player/resume → 90s
     /// default, floored at 80% of the runtime (Android finishPointMs/currentLeadMs).
-    private func finishPointMs(_ dur: Int) -> Int {
+    func finishPointMs(_ dur: Int) -> Int {
         let lastCue = subCues.map(\.to).max() ?? 0
         let subsLead = lastCue > 0 ? dur - lastCue - 2000 : -1
         let lead: Int
@@ -891,7 +900,7 @@ struct PlayerView: View {
     /// NOT watched if you barely played it: starting near the top + <2 min played is never
     /// a finish (the false-watched@4% fix) — the only legit short sit-down is a real
     /// resume near the end (sessionStart ≥ 2min).
-    private var qualifiesWatched: Bool {
+    var qualifiesWatched: Bool {
         durMs > 0 && posMs >= finishPointMs(durMs) &&
         (posMs - sessionStartMs >= 120_000 || sessionStartMs >= 120_000)
     }
@@ -899,7 +908,7 @@ struct PlayerView: View {
     /// Mark watched + clear resume (with pos: tombstone so the clear survives the union
     /// merge). Movies also leave Continue Watching — shows stay ("watched E5" still means
     /// "resume the series").
-    private func finishEpisode() {
+    func finishEpisode() {
         guard !finishedHandled, qualifiesWatched else { return }
         finishedHandled = true
         let now = Int(Date().timeIntervalSince1970 * 1000)
@@ -961,7 +970,7 @@ struct PlayerView: View {
                                episode: request.episode, pos: posMs, dur: durMs)
     }
 
-    private func playRemux(fromMs: Int) {
+    func playRemux(fromMs: Int) {
         guard !API.serviceBase.isEmpty else { failed = true; return }
         let b64 = API.b64url(playURL.absoluteString)
         guard let remux = URL(string: API.serviceBase + "/webplay?u=\(b64)&t=\(fromMs / 1000)") else { return }
@@ -976,14 +985,14 @@ struct PlayerView: View {
         }
     }
 
-    private func seek(ms: Int) {
+    func seek(ms: Int) {
         player.seek(to: CMTime(seconds: Double(ms) / 1000, preferredTimescale: 1000))
     }
 
     // MARK: subtitles
 
     /// Ranked track list (Android subtitleOptions): English-best-first, up to 12.
-    private func rankSubtitles(_ subs: [[String: Any]]) -> [[String: Any]] {
+    func rankSubtitles(_ subs: [[String: Any]]) -> [[String: Any]] {
         func score(_ s: [String: Any]) -> Int {
             let lang = (s["lang"] as? String ?? "").lowercased()
             let name = (s["name"] as? String ?? s["id"] as? String ?? "").lowercased()
@@ -996,7 +1005,7 @@ struct PlayerView: View {
         return Array(subs.sorted { score($0) > score($1) }.prefix(12))
     }
 
-    private func loadSubtitles() async {
+    func loadSubtitles() async {
         guard session.pref("subLang", "en") != "off", !placeholder else { subIndex = -1; return }
         if subTracks.isEmpty, let base = session.addonBase(), !isLive {
             // the addon attaches ranked subtitle files to each stream response — refetch the
@@ -1015,7 +1024,7 @@ struct PlayerView: View {
     }
 
     /// Apply a track live (Android applySubtitle): -1 = off; flashes the label.
-    private func pickSub(_ i: Int) {
+    func pickSub(_ i: Int) {
         subIndex = i
         guard i >= 0, i < subTracks.count else {
             subCues = []; currentCue = ""; flashLabel("Subtitles off"); return
@@ -1039,7 +1048,7 @@ struct PlayerView: View {
     /// Embedded subtitle track via /webplay/subx (IOS_CONTRACTS §4): ffmpeg live-converts to
     /// WebVTT on the file's absolute clock, streamed progressively — cues are appended as
     /// blocks arrive so the first lines show within seconds.
-    private func streamEmbedded(index: Int, track: Int, fromMs: Int) {
+    func streamEmbedded(index: Int, track: Int, fromMs: Int) {
         guard !API.serviceBase.isEmpty,
               let url = URL(string: API.serviceBase + "/webplay/subx?u=\(API.b64url(playURL.absoluteString))&i=\(index)&t=\(fromMs / 1000)")
         else { return }
@@ -1066,7 +1075,7 @@ struct PlayerView: View {
 
     /// GET /webplay/probe → duration / codecs / embedded text-subtitle streams (§4). Embedded
     /// tracks join the addon's ranked list; the codec line feeds the stats overlay.
-    private func probeMedia() async {
+    func probeMedia() async {
         guard !API.serviceBase.isEmpty,
               let r = try? await API.json("/webplay/probe?u=\(API.b64url(playURL.absoluteString))"),
               (r["duration"] as? Double ?? Double(r["duration"] as? Int ?? 0)) > 0 else { return }
@@ -1091,7 +1100,7 @@ struct PlayerView: View {
 
     /// Re-request the stream list every ~18s while the clip loops; the first non-placeholder
     /// stream is hot-swapped in and the normal UI comes back.
-    private func startPlaceholderPoll() {
+    func startPlaceholderPoll() {
         placeholderPoll?.cancel()
         placeholderPoll = Task {
             while !Task.isCancelled {
@@ -1108,7 +1117,7 @@ struct PlayerView: View {
         }
     }
 
-    private func hotSwap(_ s: [String: Any]) {
+    func hotSwap(_ s: [String: Any]) {
         guard let us = s["url"] as? String, let url = URL(string: us) else { return }
         swapped = s
         placeholder = false
@@ -1130,7 +1139,7 @@ struct PlayerView: View {
     // MARK: next episode
 
     /// The episode after this one from the REAL list — crosses seasons (Android nextEpisode()).
-    private func computeNextEpisode() -> Episode? {
+    func computeNextEpisode() -> Episode? {
         guard let s = request.season, let e = request.episode else { return nil }
         let list = request.episodes.filter { $0.season > 0 }
             .sorted { ($0.season, $0.episode) < ($1.season, $1.episode) }
@@ -1146,7 +1155,7 @@ struct PlayerView: View {
         return nil
     }
 
-    private func resolveStream(_ ep: Episode) async -> PlayRequest? {
+    func resolveStream(_ ep: Episode) async -> PlayRequest? {
         guard let base = session.addonBase() else { return nil }
         let u = session.profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         guard let r = try? await API.json("/stream/series/\(ep.id).json?u=\(u)", base: base),
@@ -1160,20 +1169,20 @@ struct PlayerView: View {
     }
 
     /// Prefetch 5 min before the end (Android prefetchNext) so the advance is instant.
-    private func prefetchNext(_ ep: Episode) async {
+    func prefetchNext(_ ep: Episode) async {
         guard nextReq == nil else { return }
         nextReq = await resolveStream(ep)
     }
 
-    private func playEpisode(_ ep: Episode, idle: Int) async {
+    func playEpisode(_ ep: Episode, idle: Int) async {
         var req = (nextReq?.episode == ep.episode && nextReq?.season == ep.season) ? nextReq : nil
         if req == nil { req = await resolveStream(ep) }
-        guard var r = req else { dismiss(); return }
+        guard var r = req else { close(); return }
         r.idleEps = idle
         nextEpisode = r
     }
 
-    private func onEnded() {
+    func onEnded() {
         if placeholder { seek(ms: 0); player.play(); return }   // loop the clip until the real file lands
         finishEpisode()
         // Popped out: the next episode opens as a new player screen, which can't re-enter PiP
@@ -1184,7 +1193,7 @@ struct PlayerView: View {
             return
         }
         guard !isLive, session.pref("autoplayNext", true), request.season != nil,
-              let ep = nextEp else { dismiss(); return }
+              let ep = nextEp else { close(); return }
         // 2 consecutive fully-input-less auto-advances → ask before rolling a third
         let idle = epTouched ? 0 : request.idleEps + 1
         if idle >= 2 {
@@ -1192,14 +1201,14 @@ struct PlayerView: View {
             showStillWatching = true
             Task {   // no answer in 5 minutes = stop playback and exit
                 try? await Task.sleep(for: .seconds(300))
-                if showStillWatching { dismiss() }
+                if showStillWatching { close() }
             }
         } else {
             Task { await playEpisode(ep, idle: idle) }
         }
     }
 
-    private func stop() {
+    func stop() {
         Platform.keepAwake(false)
         let pos = max(Int(player.currentTime().seconds * 1000), posMs)
         posMs = pos

@@ -52,6 +52,53 @@ enum Platform {
     }
 }
 
+/// Closes the presentation a view lives in when it isn't a system sheet/cover (the Mac's in-window
+/// player overlay). Views call `ckClose ?? dismiss`.
+private struct CKCloseKey: EnvironmentKey { static let defaultValue: (() -> Void)? = nil }
+extension EnvironmentValues {
+    var ckClose: (() -> Void)? {
+        get { self[CKCloseKey.self] }
+        set { self[CKCloseKey.self] = newValue }
+    }
+}
+
+#if os(macOS)
+/// Window-level overlay host (the desktop's `#web-player { position:fixed; inset:0 }`): shown
+/// above the rail + content by MacShell. Presenting while something is up replaces it and chains
+/// the close handlers so every presenter's binding resets when the stack finally closes.
+@MainActor
+final class MacOverlayHost: ObservableObject {
+    static let shared = MacOverlayHost()
+    @Published var content: AnyView?
+    private var onClose: (() -> Void)?
+    func present(_ v: AnyView, onClose: @escaping () -> Void) {
+        let prev = self.onClose
+        self.onClose = { onClose(); prev?() }
+        content = v
+    }
+    func close() {
+        let c = onClose
+        onClose = nil
+        content = nil
+        c?()
+    }
+}
+
+struct MacOverlayPresenter<Item: Identifiable, C: View>: ViewModifier {
+    @Binding var item: Item?
+    let onDismiss: (() -> Void)?
+    let content: (Item) -> C
+    func body(content view: Content) -> some View {
+        view.onChange(of: item?.id) { id in
+            guard id != nil, let i = item else { return }
+            let host = MacOverlayHost.shared
+            host.present(AnyView(content(i).environment(\.ckClose, { host.close() })),
+                         onClose: { item = nil; onDismiss?() })
+        }
+    }
+}
+#endif
+
 extension ToolbarItemPlacement {
     /// Top-right on iPhone; the platform default elsewhere.
     static var ckTrailing: ToolbarItemPlacement {
@@ -124,9 +171,8 @@ extension View {
         item: Binding<Item?>, onDismiss: (() -> Void)? = nil,
         @ViewBuilder content: @escaping (Item) -> Content) -> some View {
         #if os(macOS)
-        return self.sheet(item: item, onDismiss: onDismiss) { i in
-            content(i).frame(minWidth: 960, idealWidth: 1280, minHeight: 540, idealHeight: 720)
-        }
+        // the desktop app plays in-window: a full overlay above the rail + content
+        return self.modifier(MacOverlayPresenter(item: item, onDismiss: onDismiss, content: content))
         #else
         return self.fullScreenCover(item: item, onDismiss: onDismiss, content: content)
         #endif

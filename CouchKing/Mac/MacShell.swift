@@ -23,13 +23,20 @@ struct MacShell: View {
     }
     @State private var nav: Nav = .home
     @State private var open = false
+    @ObservedObject private var overlayHost = MacOverlayHost.shared
 
     var body: some View {
-        HStack(spacing: 0) {
-            rail
-            ZStack {
-                Desk.bg.ignoresSafeArea()
-                page
+        ZStack {
+            HStack(spacing: 0) {
+                rail
+                ZStack {
+                    Desk.bg.ignoresSafeArea()
+                    page
+                }
+            }
+            // `#web-player`: the in-window player covers the rail + content
+            if let v = overlayHost.content {
+                v.transition(.opacity).zIndex(100)
             }
         }
         .background(Desk.bg)
