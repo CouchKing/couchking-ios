@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CouchKing</title>
+<link rel="stylesheet" href="style.css?v=0922m">
+</head>
+<body>
+<div id="app">
+
+  <!-- SIGN IN -->
+  <section id="view-auth" class="view">
+    <div class="auth-card">
+      <img class="auth-logo" src="logo.png" alt="CouchKing">
+      <h1><span class="c1">Couch</span><span class="c2">King</span></h1>
+      <p class="muted">One account, every device — your watchlist and history sync.</p>
+      <input id="auth-email" type="email" placeholder="Email" autocomplete="username">
+      <input id="auth-pass" type="password" placeholder="Password" autocomplete="current-password">
+      <div id="auth-error" class="err"></div>
+      <button id="auth-signin" class="primary">Sign in</button>
+      <button id="auth-signup" class="ghost">Create account</button>
+      <button id="auth-guest" class="ghost">Continue as guest</button>
+      <p class="auth-terms">By continuing you agree to the
+        <a href="#" data-ext="https://couchking.app/terms">Terms of Service</a> and
+        <a href="#" data-ext="https://couchking.app/privacy">Privacy Policy</a>.</p>
+    </div>
+  </section>
+
+  <!-- SHELL: rail + content (Firestick layout, mouse-hover expand) -->
+  <div id="shell" class="hidden">
+    <nav id="rail">
+      <div class="rail-brand"><img src="logo.png" onerror="this.style.display='none'"><span class="rail-label"><span class="c1">Couch</span><span class="c2">King</span></span></div>
+      <div id="rail-profile" class="rail-item"><span class="ricon" id="prof-avatar">👤</span><span class="rail-label" id="prof-name">Profile</span></div>
+      <div class="rail-item nav" data-nav="search"><span class="ricon">🔍</span><span class="rail-label">Search</span></div>
+      <div class="rail-item nav" data-nav="home"><span class="ricon">🏠</span><span class="rail-label">Home</span></div>
+      <div class="rail-item nav" data-nav="discover"><span class="ricon">🧭</span><span class="rail-label">Discover</span></div>
+      <div class="rail-item nav" data-nav="library"><span class="ricon">📚</span><span class="rail-label">Library</span></div>
+      <!-- desktop only — the web shim hides it (browsers can't hold GBs) -->
+      <div class="rail-item nav hidden" data-nav="downloads" id="rail-downloads"><span class="ricon">⬇️</span><span class="rail-label">Downloads</span></div>
+      <!-- only appears when the installed addon serves a live-tv catalog (neutral shell) -->
+      <div class="rail-item nav hidden" data-nav="livetv" id="rail-livetv"><span class="ricon">📺</span><span class="rail-label">Live TV</span></div>
+      <div class="rail-item nav" data-nav="settings"><span class="ricon">⚙️</span><span class="rail-label">Settings</span></div>
+    </nav>
+
+    <div id="content">
+      <section id="view-home" class="page">
+        <div id="hero" class="hidden"></div>
+        <main class="rows"></main>
+      </section>
+
+      <section id="view-search" class="page hidden">
+        <div class="page-pad">
+          <input id="search" type="search" placeholder="Search movies & shows…" autofocus>
+          <main class="rows" id="search-rows"></main>
+        </div>
+      </section>
+
+      <!-- person page (actor/director from search) -->
+      <section id="view-person" class="page hidden"><div class="page-pad" id="person-body"></div></section>
+
+      <section id="view-discover" class="page hidden">
+        <div class="pickers" id="discover-pickers"></div>
+        <main class="rows" id="discover-rows"></main>
+      </section>
+
+      <section id="view-library" class="page hidden"><div class="page-pad" id="library-body"></div></section>
+
+      <section id="view-downloads" class="page hidden"><div class="page-pad" id="downloads-body"></div></section>
+
+      <section id="view-livetv" class="page hidden"><div class="page-pad">
+        <div class="lv-head"><h2>Live TV</h2>
+          <select id="lv-region" title="Region">
+            <option value="">🇺🇸 USA</option><option value="UK">🇬🇧 UK</option><option value="CA">🇨🇦 Canada</option>
+          </select></div>
+        <div id="livetv-banner"></div>
+        <div id="livetv-chips" class="lv-chips"></div><div id="livetv-grid" class="lv-grid"></div>
+      </div></section>
+      <section id="view-settings" class="page hidden"><div class="page-pad" id="settings-body"></div></section>
+
+      <section id="view-detail" class="page detail-page hidden">
+        <div id="detail-backdrop"></div>
+        <button id="back" class="ghost small">‹ Back</button>
+        <div id="detail-body"></div>
+      </section>
+
+      <!-- Stremio-style episode page: logo / facts / description / streams -->
+      <section id="view-episode" class="page detail-page hidden">
+        <div id="episode-backdrop"></div>
+        <button id="ep-back" class="ghost small">‹ Back</button>
+        <div id="episode-body"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- NOW PLAYING banner (desktop/mpv only) -->
+  <div id="playing" class="hidden">
+    <span id="playing-title"></span>
+    <span id="playing-pos" class="muted"></span>
+    <button id="playing-stop" class="ghost small">Stop</button>
+  </div>
+
+</div>
+<script src="ck-web.js"></script>
+<script src="catalog.js"></script>
+<script src="app.js?v=0917c"></script>
+</body>
+</html>

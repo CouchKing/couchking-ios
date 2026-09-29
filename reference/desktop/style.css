@@ -1,0 +1,459 @@
+:root { --bg:#0C0B14; --card:#1B1830; --card2:#241F3D; --accent:#7B5BF5; --fg:#fff; --muted:#A9A5C0;
+        --rail:64px; --rail-open:200px; }
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:var(--bg); color:var(--fg); font-family:-apple-system,'Segoe UI',Roboto,sans-serif; overflow:hidden; }
+.hidden { display:none !important; }
+.muted { color:var(--muted); }
+.err { color:#ff7a7a; font-size:.9rem; min-height:1.2em; }
+.c1 { color:#a855f7; } .c2 { color:#f0f0f5; }
+a { color:var(--accent); text-decoration:none; }
+a:hover { text-decoration:underline; }
+button { cursor:pointer; border:0; border-radius:10px; font-weight:700; color:#fff; font-size:.95rem; }
+button.primary { background:var(--accent); padding:.8rem 1.4rem; }
+button.primary:hover { background:#8d70ff; }
+button.ghost { background:var(--card2); padding:.8rem 1.4rem; }
+button.ghost:hover { background:#2e2850; }
+button.small { padding:.45rem .9rem; font-size:.85rem; }
+input { background:var(--card); border:1px solid #37315C; border-radius:10px; color:#fff; padding:.75rem 1rem; font-size:1rem; outline:none; width:100%; max-width:480px; }
+input:focus { border-color:var(--accent); }
+select { background:var(--card); border:1px solid #37315C; border-radius:10px; color:#fff; padding:.6rem .9rem;
+         font-size:.95rem; font-weight:700; outline:none; cursor:pointer; }
+select:focus, select:hover { border-color:var(--accent); }
+
+/* auth */
+#view-auth { min-height:100vh; display:flex; align-items:center; justify-content:center; }
+.auth-card { width:360px; display:flex; flex-direction:column; gap:.8rem; text-align:center; }
+.auth-card h1 { font-size:2.4rem; font-weight:900; }
+.auth-logo { width:96px; height:96px; object-fit:contain; margin:0 auto .4rem; }
+.auth-terms { font-size:.78rem; color:var(--muted); margin-top:.4rem; line-height:1.5; }
+
+/* ---- shell: Firestick-style rail, mouse-hover expands (icons stay, words slide in) ---- */
+#shell { display:flex; height:100vh; }
+#rail { width:var(--rail); min-width:var(--rail); background:transparent; display:flex; flex-direction:column;
+        padding:1rem .55rem; gap:.35rem; transition:width .18s ease, min-width .18s ease, background .18s ease;
+        overflow:hidden; z-index:20; }
+#rail:hover { width:var(--rail-open); min-width:var(--rail-open); background:#0D0B18EE; }
+.rail-brand { display:flex; align-items:center; gap:.6rem; padding:.4rem .5rem 1rem; font-weight:900; font-size:1.15rem; white-space:nowrap; }
+.rail-brand img { width:30px; height:30px; }
+.rail-item { display:flex; align-items:center; gap:.8rem; padding:.68rem .7rem; border-radius:12px;
+             cursor:pointer; white-space:nowrap; color:var(--muted); font-weight:700; }
+.rail-item .ricon { font-size:1.15rem; width:24px; text-align:center; filter:grayscale(30%); }
+.rail-item:hover { background:#33FFFFFF22; color:var(--fg); }
+.rail-item.on { color:var(--fg); }
+#rail:hover .rail-item.on { background:#332D55; }
+.rail-label { opacity:0; transform:translateX(-6px); transition:opacity .15s ease .05s, transform .15s ease .05s; }
+#rail:hover .rail-label { opacity:1; transform:none; }
+
+#content { flex:1; overflow-y:auto; overflow-x:hidden; }
+.page { padding:1.1rem 1.9rem 2rem; }
+.page-pad { padding-top:.4rem; }
+
+/* ---- hero (Netflix-style banner from your Continue Watching / trending) ---- */
+#hero { position:relative; border-radius:16px; overflow:hidden; min-height:290px; margin-bottom:.6rem;
+        display:flex; align-items:flex-end; background:var(--card); cursor:pointer; }
+#hero .hero-bg { position:absolute; inset:0; background-size:cover; background-position:center 20%; }
+#hero .hero-fade { position:absolute; inset:0; background:linear-gradient(180deg,#0C0B1400 20%,#0C0B14EE 92%),linear-gradient(90deg,#0C0B14CC 0,#0C0B1400 45%); }
+#hero .hero-body { position:relative; padding:1.4rem 1.6rem; max-width:560px; }
+#hero h2 { font-size:2rem; font-weight:900; text-shadow:0 2px 12px #000A; }
+#hero .hero-sub { color:#d8d5ea; margin:.35rem 0 .8rem; font-weight:700; }
+#hero .hero-btns { display:flex; gap:.6rem; }
+
+.row-label { font-size:1.1rem; font-weight:800; margin:1.1rem 0 .55rem; }
+/* overflow-x:auto forces the cross-axis to clip too, so a hover-scaled poster (and its
+   outline/shadow) got cut off by the strip's invisible edge — pad enough on all sides that
+   the enlarged tile stays inside the scroll padding box and isn't clipped (AJ Sep 27). */
+.strip { display:flex; gap:.75rem; overflow-x:auto; padding:.7rem .6rem 1rem; scrollbar-width:thin; }
+
+/* ---- poster cards: EXACT Firestick tile — white progress bar on a dark track flush at
+       the poster's bottom edge, single-line centered title below ---- */
+.poster { flex:0 0 146px; cursor:pointer; transition:transform .16s ease; }
+.poster:hover { transform:scale(1.055); z-index:2; }
+.poster .pwrap { position:relative; }
+.poster img { width:146px; height:219px; object-fit:cover; border-radius:10px; background:var(--card); display:block;
+              box-shadow:0 3px 14px #0006; }
+.poster:hover img { outline:2px solid var(--accent); box-shadow:0 6px 22px #0009; }
+/* single line, centered, ELLIPSIZED — a long title can never push the next tile or wrap
+   the grid (AJ Sep 11); width locked to the poster no matter the container */
+.poster .pt { font-size:.8rem; color:#d8d5ea; font-weight:600; margin-top:.3rem; text-align:center;
+              white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:146px; max-width:146px; }
+.poster .bar { position:absolute; left:9px; right:9px; bottom:9px; height:4px; background:#00000059; border-radius:2px; }
+.poster .bar > div { height:100%; background:#fff; border-radius:2px; min-width:6px; }
+.poster .ep-chip { position:absolute; bottom:18px; left:9px; background:#0C0B14D9; color:#fff; font-size:.72rem;
+                   font-weight:800; padding:.18rem .5rem; border-radius:99px; border:1px solid #FFFFFF2A; }
+.poster .badge-list { position:absolute; top:.4rem; right:.4rem; width:24px; height:24px; border-radius:50%;
+                      background:var(--accent); color:#fff; font-size:.75rem; font-weight:900;
+                      display:flex; align-items:center; justify-content:center; box-shadow:0 1px 6px #0008; }
+.poster .badge-done { position:absolute; top:.4rem; left:.4rem; width:24px; height:24px; border-radius:50%;
+                      background:#f5c518; color:#0C0B14; font-weight:900; font-size:.75rem; display:flex; align-items:center; justify-content:center; box-shadow:0 1px 6px #0008; }
+/* "+N": new episodes aired since they last watched this show (synced newEpsSeen) */
+.poster .badge-new { position:absolute; bottom:.9rem; left:.4rem; background:var(--accent); color:#fff;
+                     font-size:.72rem; font-weight:900; padding:.14rem .45rem; border-radius:99px;
+                     box-shadow:0 1px 6px #0008; }
+.poster .cw-x { position:absolute; top:.4rem; right:.4rem; width:26px; height:26px; border-radius:50%;
+                background:#0C0B14D9; color:#fff; font-size:.8rem; display:none; align-items:center; justify-content:center; }
+.poster:hover .cw-x { display:flex; }
+.poster .cw-x:hover { background:#c0392b; }
+
+/* ---- discover pickers: real dropdown menus like the apps ---- */
+.pickers { display:flex; gap:.7rem; align-items:center; margin:.3rem 0 .6rem; flex-wrap:wrap; }
+.pickers label { color:var(--muted); font-size:.85rem; font-weight:700; margin-right:-.25rem; }
+
+/* ---- detail + episode pages: backdrop banner + poster + actions ---- */
+.detail-page { position:relative; }
+#detail-backdrop, #episode-backdrop { position:absolute; top:0; left:0; right:0; height:380px; background-size:cover;
+                   background-position:center 25%; opacity:.35;
+                   -webkit-mask-image:linear-gradient(180deg,#000 40%,transparent 100%);
+                   mask-image:linear-gradient(180deg,#000 40%,transparent 100%); pointer-events:none; }
+.detail-page > button#back, .detail-page > button#ep-back { position:relative; z-index:2; }
+#detail-body, #episode-body { position:relative; z-index:1; }
+/* episode page (Stremio-style): logo, facts line, resume %, description, streams */
+#episode-body { padding-top:.8rem; max-width:900px; }
+#episode-body .ep-logo { max-height:72px; max-width:380px; object-fit:contain; display:block; margin-bottom:.4rem; }
+#episode-body .ep-facts { color:var(--muted); font-weight:700; font-size:.92rem; margin:.3rem 0; }
+#episode-body .ep-resume { color:var(--accent); font-weight:700; font-size:.9rem; margin:.2rem 0; }
+#episode-body #ep-streams .stream { max-width:760px; }
+.d-head { display:flex; gap:1.5rem; margin:1rem 0; }
+.d-head img.d-poster { width:210px; height:315px; object-fit:cover; border-radius:14px; box-shadow:0 8px 30px #000A; }
+.d-head h2 { font-size:2rem; margin-bottom:.4rem; text-shadow:0 2px 10px #0008; }
+.d-meta { color:var(--muted); margin-bottom:.7rem; font-weight:700; }
+.d-desc { max-width:660px; line-height:1.55; color:#d8d5ea; }
+.d-btns { display:flex; gap:.6rem; margin-top:1rem; flex-wrap:wrap; }
+
+.season-row { display:flex; align-items:center; gap:.8rem; margin:1.2rem 0 .7rem; }
+.season-row .row-label { margin:0; }
+
+/* episode cards: thumb + progress + watched ✓ + spoiler blur */
+.ep { display:flex; gap:1rem; align-items:center; background:var(--card); border-radius:12px; padding:.65rem .85rem; margin-bottom:.5rem; cursor:pointer; }
+.ep:hover { background:var(--card2); }
+.ep .ep-thumb { position:relative; flex:0 0 150px; }
+.ep .ep-thumb img { width:150px; height:84px; object-fit:cover; border-radius:8px; background:#000; display:block; }
+.ep .ep-thumb img.blur { filter:blur(13px) saturate(.85); }
+.ep .ep-thumb .seen { position:absolute; top:.3rem; right:.3rem; background:#0C0B14D9; border-radius:50%;
+                      width:24px; height:24px; display:flex; align-items:center; justify-content:center; font-size:.8rem; color:#7CFC9A; }
+.ep .ep-thumb .ebar { position:absolute; left:0; right:0; bottom:0; height:4px; background:#0009; border-radius:0 0 8px 8px; overflow:hidden; }
+.ep .ep-thumb .ebar > div { height:100%; background:var(--accent); }
+/* the title column must absorb the slack (flex:1 + min-width:0) so the ⬇ / 👁 buttons
+   always sit flush at the right edge instead of drifting with the episode-title length (AJ Sep 27) */
+.ep .et { flex:1 1 auto; min-width:0; }
+.ep .et b { display:block; margin-bottom:.15rem; }
+.ep .et span { color:var(--muted); font-size:.85rem; }
+.ep .et .ep-desc { color:#b9b4d4; font-size:.83rem; margin-top:.25rem; max-height:2.6em; overflow:hidden; }
+
+.streams { margin-top:1rem; }
+.stream { background:var(--card); border-radius:10px; padding:.7rem 1rem; margin-bottom:.45rem; cursor:pointer; }
+.stream:hover { background:var(--card2); }
+/* ckNotice (AJ Sep 16): "hasn't aired yet" info banner — reads as a message, not a button */
+.stream.ck-notice { cursor:default; background:transparent; border:1px dashed var(--card2); }
+.stream.ck-notice:hover { background:transparent; }
+.stream.ck-notice b { color:var(--muted); }
+.stream.ck-notice .stream-title { color:var(--fg); font-size:1rem; }
+.stream b { color:var(--accent); margin-right:.6rem; }
+
+/* ---- settings: EXACT app layout — user card, tappable rows, section headers ---- */
+#view-settings h2 { margin:.4rem 0 .6rem; }
+.user-card { background:var(--card); border-radius:14px; padding:.9rem 1rem; margin:.6rem 0; display:flex;
+             align-items:center; gap:.9rem; max-width:560px; }
+.uc-avatar { width:52px; height:52px; border-radius:50%; background:var(--accent); color:#fff; font-weight:800;
+             font-size:1.35rem; display:flex; align-items:center; justify-content:center; flex:0 0 auto; }
+.uc-email { font-weight:800; font-size:1.05rem; }
+.uc-sub { font-size:.85rem; }
+.ssection { color:var(--muted); font-size:.78rem; font-weight:800; letter-spacing:.08em; margin:1.1rem 0 .3rem; }
+.srow { background:var(--card); border-radius:12px; padding:.85rem 1rem; margin:.45rem 0; display:flex;
+        align-items:center; gap:.8rem; max-width:560px; cursor:pointer; }
+.srow:hover { background:var(--card2); }
+.srow.static { cursor:default; }
+.srow.static:hover { background:var(--card); }
+.srow-label { font-weight:700; flex:1; }
+.srow-value { color:var(--muted); font-size:.9rem; font-weight:700; }
+.srow-chev { color:var(--muted); font-weight:900; }
+.srow.static .srow-chev { visibility:hidden; }
+.sub-sample { background:#000; border-radius:10px; height:110px; max-width:560px; display:flex;
+              align-items:flex-end; justify-content:center; margin:.4rem 0 .6rem; color:#fff; }
+/* pill chips: library filters + shelf picker (flip in place, no rebuild) */
+.chip { background:#2C2649; color:var(--muted); font-weight:700; border-radius:16px; padding:.5rem 1rem;
+        margin:0 .5rem .5rem 0; font-size:.9rem; }
+.chip.on { background:var(--accent); color:#fff; }
+.chip.sort { color:#fff; }
+.chip-grid { display:flex; flex-wrap:wrap; max-width:720px; }
+.chip.shelf { flex:0 1 calc(50% - .6rem); text-align:center; white-space:nowrap; overflow:hidden;
+              text-overflow:ellipsis; background:#241F3D; }
+.chip.shelf.on { background:var(--accent); }
+.lib-controls { display:flex; flex-wrap:wrap; align-items:center; margin:.7rem 0 .2rem; }
+
+/* ---- Top 10 shelf: giant ghost rank numeral tucked behind each poster ---- */
+.strip.top10 { overflow:visible; overflow-x:auto; padding-top:.5rem; }
+.top10-cell { position:relative; flex:0 0 auto; display:flex; align-items:flex-end; padding-left:52px; }
+.top10-cell.wide { padding-left:88px; }
+.top10-num { position:absolute; left:0; bottom:16px; font-size:118px; line-height:.78; font-weight:900;
+             letter-spacing:-.08em; color:#FFFFFF26; text-shadow:0 0 2px #FFFFFFB3; pointer-events:none;
+             font-family:-apple-system,'Segoe UI',Roboto,sans-serif; z-index:0; }
+.top10-cell .poster { position:relative; z-index:1; }
+
+/* ---- people (search + person page) ---- */
+.person-card { flex:0 0 110px; cursor:pointer; text-align:center; }
+.person-card .person-photo { width:96px; height:96px; border-radius:50%; overflow:hidden; background:var(--card);
+                             margin:0 auto .35rem; display:flex; align-items:center; justify-content:center; font-size:2rem; }
+.person-card .person-photo img { width:100%; height:100%; object-fit:cover; }
+.person-card .pt { width:110px; max-width:110px; }
+.person-card .person-role { color:var(--muted); font-size:.72rem; font-weight:700; }
+.person-card:hover .person-photo { outline:2px solid var(--accent); }
+.person-head { display:flex; align-items:center; gap:1.1rem; margin:1rem 0; }
+.person-head img { width:88px; height:88px; border-radius:50%; object-fit:cover; }
+
+/* toast */
+#toast { position:fixed; bottom:26px; left:50%; transform:translateX(-50%); background:#241F3DF2; color:#fff;
+         font-weight:700; padding:.6rem 1.2rem; border-radius:99px; z-index:200; box-shadow:0 4px 18px #000A; }
+
+/* now playing (desktop/mpv) */
+#playing { position:fixed; bottom:0; left:0; right:0; background:var(--card2); padding:.7rem 1.4rem;
+           display:flex; align-items:center; gap:1rem; border-top:1px solid #37315C; z-index:30; }
+
+/* ---- web player overlay: custom controls styled like the TV player ---- */
+#web-player { position:fixed; inset:0; background:#000; z-index:100; }
+#web-player video { position:absolute; inset:0; width:100%; height:100%; background:#000; }
+#web-player .wp-ui { position:absolute; inset:0; display:flex; flex-direction:column; justify-content:space-between;
+                     transition:opacity .25s ease; pointer-events:none; }
+#web-player .wp-ui.idle { opacity:0; }
+/* faded-out controls must not eat taps — an invisible Favorite/Guide button firing on a
+   blind tap is worse than no controls at all (mobile live TV, AJ Sep 24) */
+#web-player .wp-ui.idle > * { pointer-events:none; }
+#web-player .wp-ui > * { pointer-events:auto; }
+#web-player .wp-top { display:flex; align-items:center; gap:1rem; padding:1rem 1.2rem;
+                      background:linear-gradient(180deg,#000C, transparent); }
+#web-player .wp-title { color:#fff; font-weight:800; font-size:1.05rem; text-shadow:0 1px 6px #000;
+                        flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* clock + "Ends h:mm" — same top-right cluster as the TV player */
+#web-player .wp-right { display:flex; flex-direction:column; align-items:flex-end; gap:.1rem; }
+#web-player .wp-clock { color:#fff; font-weight:800; font-size:1rem; text-shadow:0 1px 6px #000; }
+#web-player .wp-ends { color:#d8d5ea; font-weight:700; font-size:.8rem; text-shadow:0 1px 6px #000; }
+/* custom subtitle block: CENTERED, readable width — never native full-screen-wide cues */
+#web-player .wp-cue { position:absolute; left:50%; transform:translateX(-50%); bottom:9vh; max-width:68%;
+                      color:#fff; font-weight:600; text-align:center; line-height:1.35; white-space:pre-line;
+                      padding:.15em .45em; border-radius:6px; z-index:5; pointer-events:none; display:none; }
+/* Skip intro — pill inside the learned window, bottom-left like the TV player */
+#web-player .wp-skip { position:absolute; left:2rem; bottom:170px; background:#241F3DE6; color:#fff;
+                       border:1px solid #FFFFFF3A; font-weight:800; padding:.7rem 1.3rem; border-radius:99px;
+                       font-size:1rem; box-shadow:0 3px 14px #000A; }
+#web-player .wp-skip:hover { background:var(--accent); }
+/* UP NEXT card — slides in at credits time, never interrupts */
+#web-player .wp-next { position:absolute; right:2rem; bottom:170px; background:#16132AF0; border:1px solid #37315C;
+                       border-radius:14px; padding:1rem 1.2rem; max-width:340px; box-shadow:0 6px 26px #000C; }
+#web-player .wp-next .wpn-tag { color:var(--muted); font-size:.72rem; font-weight:900; letter-spacing:.1em; }
+#web-player .wp-next .wpn-title { color:#fff; font-weight:800; margin:.3rem 0 .7rem; }
+#web-player .wp-next .wpn-btns { display:flex; gap:.5rem; }
+#web-player .wp-next .wpn-play { background:var(--accent); color:#fff; font-weight:800; padding:.55rem 1rem; border-radius:10px; }
+#web-player .wp-next .wpn-dismiss { background:#241F3D; color:#fff; font-weight:700; padding:.55rem 1rem; border-radius:10px; }
+/* Info panel */
+#web-player .wp-infobox { position:absolute; top:76px; right:1.2rem; background:#16132ADD; border:1px solid #37315C;
+                          border-radius:12px; padding:.8rem 1rem; color:#d8d5ea; font-size:.85rem; font-weight:700;
+                          white-space:pre-line; }
+#web-player .wp-bottom { padding:0 1.4rem 1rem; background:linear-gradient(0deg,#000D, transparent); }
+#web-player .wp-bar { position:relative; height:6px; background:#FFFFFF3A; border-radius:99px; cursor:pointer; margin-bottom:.4rem; }
+#web-player .wp-fill { height:100%; background:var(--accent); border-radius:99px; }
+#web-player .wp-dot { position:absolute; top:50%; width:14px; height:14px; background:#fff; border-radius:50%;
+                      transform:translate(-50%,-50%); box-shadow:0 0 6px #000A; }
+#web-player .wp-times { display:flex; justify-content:space-between; color:#d8d5ea; font-size:.85rem; font-weight:700; margin-bottom:.5rem; }
+#web-player .wp-controls { display:flex; gap:1.6rem; justify-content:center; align-items:flex-end; }
+/* label ABOVE each button — same layout as the TV player bar */
+#web-player .wp-cell { display:flex; flex-direction:column; align-items:center; gap:.3rem; }
+#web-player .wp-cell > span { color:var(--muted); font-size:.72rem; font-weight:700; }
+#web-player .wp-btn { background:#241F3DCC; color:#fff; font-size:1.25rem; padding:.55rem 1rem; border-radius:12px; }
+#web-player .wp-btn:hover { background:var(--accent); }
+#web-player .wp-vol { width:110px; accent-color:var(--accent); }
+#web-player .wp-hint { position:absolute; left:0; right:0; bottom:88px; text-align:center; color:#ff9a7a;
+                       font-size:.9rem; text-shadow:0 1px 4px #000; }
+#web-player .wp-btn.on { background:var(--accent); }
+/* CouchKing panel — matches the TV/phone app pickers (dark card, purple current + ✓) */
+#web-player .wp-menu { position:absolute; bottom:150px; left:50%; transform:translateX(-50%);
+                       background:var(--card); border:1px solid #37315C; border-radius:16px; padding:.7rem;
+                       display:flex; flex-direction:column; gap:.2rem; max-height:52vh; overflow-y:auto;
+                       min-width:230px; box-shadow:0 12px 40px #000C; }
+#web-player .wp-mtitle { color:var(--muted); font-size:.72rem; font-weight:800; text-transform:uppercase;
+                         letter-spacing:.08em; padding:.2rem .9rem .5rem; }
+#web-player .wp-menu button { background:transparent; padding:.55rem .9rem; text-align:left; border-radius:10px;
+                              font-size:.95rem; }
+#web-player .wp-menu button:hover { background:#332D55; }
+#web-player .wp-menu button.on { background:transparent; color:var(--accent); font-weight:800; }
+#web-player .wp-menu button.on:hover { background:#332D55; }
+
+/* CouchKing confirm card (downloads, deletes) — replaces the OS confirm() popup */
+.ck-ask { position:fixed; inset:0; background:#000A; z-index:400; display:flex;
+          align-items:center; justify-content:center; }
+.ck-ask-card { background:var(--card); border:1px solid #37315C; border-radius:16px;
+               padding:1.3rem 1.4rem 1rem; width:min(86vw, 400px); box-shadow:0 12px 40px #000C; }
+.ck-ask-card h3 { margin:0; font-size:1.1rem; }
+.ck-ask-card p { color:var(--muted); margin:.55rem 0 0; font-size:.95rem; }
+.ck-ask-btns { display:flex; justify-content:flex-end; gap:.6rem; margin-top:1.2rem; }
+.ck-ask-btns .ghost { background:transparent; color:var(--muted); padding:.55rem 1rem; }
+.ck-ask-btns .ghost:hover { background:#332D55; color:var(--fg); }
+.ck-ask-btns .primary { padding:.55rem 1.2rem; font-weight:800; }
+.ck-ask-btns .primary.danger { background:#E5484D; }
+
+/* where-to-watch providers (guest / no-service accounts — neutral tracker shell) */
+.wtw { margin-top:1.1rem; }
+.wtw .prov { display:inline-flex; align-items:center; gap:.5rem; background:var(--card); border-radius:10px;
+             padding:.5rem .8rem; margin:0 .5rem .5rem 0; font-weight:700; }
+.wtw .prov img { width:28px; height:28px; border-radius:6px; }
+.wtw .wtw-kind { color:var(--muted); font-size:.85rem; font-weight:800; margin:.6rem 0 .3rem; text-transform:uppercase; letter-spacing:.05em; }
+
+/* episode watched-toggle (eye) */
+.ep .ep-eye { margin-left:auto; background:#241F3D; border-radius:10px; padding:.5rem .7rem; font-size:1rem; flex:0 0 auto; }
+.ep .ep-eye:hover { background:var(--accent); }
+
+/* profile manager */
+.prof-card { background:var(--card); border-radius:16px; padding:1.4rem; display:flex; flex-direction:column; gap:.8rem; min-width:340px; }
+.prof-row { display:flex; align-items:center; gap:.6rem; }
+.prof-row .pr-name { flex:1; text-align:left; }
+.avatar-pick { display:flex; gap:.4rem; flex-wrap:wrap; max-width:340px; }
+.avatar-pick button { font-size:1.3rem; background:var(--card2); padding:.4rem .6rem; }
+.avatar-pick button.on { background:var(--accent); }
+.color-pick { display:flex; gap:.5rem; flex-wrap:wrap; max-width:340px; margin:.5rem 0; }
+.color-pick button { width:34px; height:34px; border-radius:50%; border:2px solid transparent; cursor:pointer; opacity:.6; }
+.color-pick button.on { border-color:#fff; opacity:1; }
+/* drag-to-reorder shelves */
+.reorder-list { display:flex; flex-direction:column; gap:.4rem; max-width:520px; }
+.reorder-row { display:flex; align-items:center; gap:.6rem; background:var(--card2); border-radius:10px; padding:.6rem .8rem; cursor:grab; touch-action:none; user-select:none; }
+.reorder-row.dragging { opacity:.6; cursor:grabbing; box-shadow:0 4px 14px #000a; }
+.reorder-row .grip { color:var(--muted); font-size:1.1rem; }
+.reorder-row .num { color:var(--muted); min-width:1.4rem; }
+.reorder-row .rl { flex:1; }
+.reorder-row .ro-btns { display:flex; gap:.3rem; }
+.reorder-row .ro-btns button { padding:.2rem .5rem; }
+
+/* sign-in prompt overlay (guest tries to play / save) */
+#gate { position:fixed; inset:0; background:#000B; display:flex; align-items:center; justify-content:center; z-index:90; }
+#gate .gate-card { background:var(--card); border-radius:16px; padding:1.6rem; width:340px; text-align:center; display:flex; flex-direction:column; gap:.8rem; }
+
+/* Sep 13: prettier stream rows + cast chips (AJ) */
+.stream-top { display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+.stream-title { color:#9aa; font-size:.85rem; margin-top:.2rem; }
+.stream-note { color:var(--accent); font-size:.85rem; margin-top:.15rem; }
+.chip { background:#2a2545; border-radius:999px; padding:.12rem .6rem; font-size:.78rem; }
+.chip-dub { background:rgba(245,197,24,.22); color:var(--accent); font-weight:700; }
+.chip-sub { background:rgba(120,160,255,.18); color:#9db7ff; font-weight:700; }
+.chip-1080p, .chip-720p, .chip-cam { font-weight:600; }
+.cast-row { display:flex; gap:.45rem; flex-wrap:wrap; margin:.5rem 0; }
+.chip-cast { cursor:pointer; }
+.chip-cast:hover { background:#3a3560; }
+
+/* ---- offline downloads (desktop only; the rail item stays hidden on web) ---- */
+.stream { position: relative; }
+.dl-btn { position: absolute; right: .6rem; top: .6rem; opacity: .55; }
+.stream:hover .dl-btn { opacity: 1; }
+.dl-opts { margin: .4rem 0 1.1rem; display: flex; align-items: center; flex-wrap: wrap; }
+.dl-row { display: flex; align-items: center; gap: .9rem; padding: .45rem .2rem; border-bottom: 1px solid rgba(255,255,255,.06); }
+.dl-row img { width: 46px; height: 69px; object-fit: cover; border-radius: 6px; }
+.dl-info { flex: 1; display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
+.dl-info b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dl-show { margin: .3rem 0; }
+.dl-show summary { cursor: pointer; padding: .5rem .2rem; }
+
+/* ---- Live TV (Sep 17) — addon-gated channel grid + live player chrome ---- */
+.lv-chips { display: flex; flex-wrap: wrap; gap: .4rem; margin: .6rem 0 1rem; }
+.lv-chip { background: #241f3d; color: #cfc9ea; border: 1px solid #3a3560; border-radius: 999px;
+  padding: .35rem .9rem; cursor: pointer; font-size: .85rem; }
+.lv-chip.on { background: #7b5bf5; color: #fff; border-color: #7b5bf5; }
+.lv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: .8rem; }
+.lv-tile { background: #1c1832; border: 1px solid rgba(255,255,255,.06); border-radius: 12px;
+  padding: .7rem; cursor: pointer; text-align: center; transition: transform .12s, border-color .12s; }
+.lv-tile:hover { transform: translateY(-2px); border-color: #7b5bf5; }
+.lv-tile.busy { opacity: .5; pointer-events: none; }
+.lv-logo { height: 64px; display: flex; align-items: center; justify-content: center; font-size: 2rem; }
+.lv-logo img { max-height: 64px; max-width: 90%; object-fit: contain; }
+.lv-name { font-size: .85rem; font-weight: 600; margin-top: .45rem; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; }
+.lv-now { font-size: .72rem; color: #9b93c0; margin-top: .15rem; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; min-height: .9rem; }
+.lv-loading { color: #9b93c0; padding: 2rem 0; grid-column: 1/-1; text-align: center; }
+.wp-live { color: #ff5b5b; font-weight: 700; margin-right: .8rem; }
+/* guide rows — real-TV listing look */
+#livetv-grid { display: block; }
+.lvg-chrow { display: grid; grid-template-columns: 200px 1fr 220px 44px; gap: .9rem; align-items: center;
+  background: #17132a; border: 1px solid rgba(255,255,255,.05); border-radius: 10px;
+  padding: .55rem .8rem; margin-bottom: .45rem; cursor: pointer; }
+.lvg-chrow:hover { border-color: #7b5bf5; }
+.lvg-chrow.busy { opacity: .5; pointer-events: none; }
+.lvg-ch { display: flex; align-items: center; gap: .6rem; min-width: 0; }
+.lvg-ch img { width: 44px; height: 34px; object-fit: contain; }
+.lvg-chname { font-weight: 600; font-size: .88rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lvg-prog { min-width: 0; }
+.lvg-title { font-size: .86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lvg-dim { color: #9b93c0; }
+.lvg-bar { height: 4px; background: #2b2547; border-radius: 3px; margin: .3rem 0 .2rem; }
+.lvg-fill { height: 100%; background: #e63946; border-radius: 3px; }
+.lvg-times { font-size: .7rem; color: #9b93c0; }
+.lvg-next { font-size: .76rem; color: #9b93c0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lvg-play { background: #7b5bf5; color: #fff; border: 0; border-radius: 8px; height: 34px; cursor: pointer; }
+/* in-player guide panel */
+.lv-guidepanel { position: absolute; right: 0; top: 0; bottom: 0; width: 340px; overflow-y: auto;
+  background: rgba(13,11,24,.96); border-left: 1px solid #3a3560; padding: .6rem; z-index: 30; }
+.lvg-row { padding: .5rem .6rem; border-radius: 8px; cursor: pointer; display: flex; flex-direction: column; gap: .15rem; }
+.lvg-row:hover { background: #241f3d; }
+.lvg-row.busy { opacity: .5; }
+.lvg-row .lvg-name { font-size: .85rem; font-weight: 600; }
+.lvg-row .lvg-now { font-size: .74rem; color: #9b93c0; }
+
+/* ==== CLASSIC EPG GUIDE (AJ Sep 17: "like im on a classic tv box") ==== */
+.lvcw { margin: 0 0 1rem; }
+.lvcw-t { font-size: .9rem; font-weight: 700; color: #cfc9ea; margin-bottom: .45rem; }
+.lvcw-row { display: flex; gap: .6rem; overflow-x: auto; padding-bottom: .3rem; }
+.lvcw-card { flex: 0 0 auto; display: flex; align-items: center; gap: .55rem; background: #241f3d;
+  border: 1px solid #3a3560; border-radius: 10px; padding: .5rem .7rem; cursor: pointer; min-width: 180px; max-width: 240px; }
+.lvcw-card:hover { border-color: #7b5bf5; }
+.lvcw-card.busy { opacity: .5; pointer-events: none; }
+.lvcw-card img { width: 34px; height: 34px; object-fit: contain; border-radius: 6px; background: #171232; }
+.lvcw-n { font-size: .82rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lvcw-p { font-size: .72rem; color: #9b93c0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px; }
+.epg { border: 1px solid #2c2749; border-radius: 12px; background: #14102a; overflow: hidden; }
+.epg-scroll { overflow: auto; max-height: calc(100vh - 260px); }
+.epg-hrow, .epg-row { display: flex; width: max-content; border-bottom: 1px solid #221d3e; }
+.epg-hrow { position: sticky; top: 0; z-index: 5; background: #171232; }
+.epg-ch { position: sticky; left: 0; z-index: 3; flex: 0 0 210px; width: 210px; display: flex; align-items: center;
+  gap: .45rem; padding: .45rem .55rem; background: #171232; border-right: 1px solid #2c2749; cursor: pointer; }
+.epg-corner { font-size: .74rem; color: #9b93c0; text-transform: uppercase; letter-spacing: .06em; }
+.epg-ch img { width: 30px; height: 30px; object-fit: contain; border-radius: 6px; background: #100d20; }
+.epg-cn { font-size: .8rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.epg-fav { color: #4a4470; cursor: pointer; font-size: 1rem; flex: 0 0 auto; transition: color .15s; }
+.epg-fav:hover { color: #cfc9ea; }
+.epg-fav.on { color: #f5c542; }
+.epg-lane { position: relative; height: 56px; flex: 0 0 auto; background:
+  repeating-linear-gradient(90deg, transparent 0, transparent 259px, #221d3e 259px, #221d3e 260px); }
+.epg-hrow .epg-lane { height: 30px; display: flex; background: none; }
+.epg-tick { flex: 0 0 auto; font-size: .72rem; color: #9b93c0; padding: .35rem 0 0 .5rem; border-left: 1px solid #221d3e; }
+.epg-block { position: absolute; top: 5px; bottom: 5px; background: #241f3d; border: 1px solid #322c55;
+  border-radius: 8px; padding: .3rem .5rem; overflow: hidden; cursor: pointer; }
+.epg-block:hover { border-color: #7b5bf5; }
+.epg-block.on { background: #33285f; border-color: #7b5bf5; }
+.epg-block.dim { opacity: .55; }
+.epg-bt { font-size: .76rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.epg-bs { font-size: .68rem; color: #9b93c0; }
+.epg-nowline { position: absolute; top: 0; bottom: 0; width: 2px; background: #e94b6a; z-index: 2; pointer-events: none; }
+.epg-row.busy { opacity: .5; pointer-events: none; }
+
+.lv-days { display:flex; gap:.4rem; margin:0 0 .7rem; }
+
+/* live-games banner + region head */
+.lv-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+#lv-region { background: #241f3d; color: #e8e4f8; border: 1px solid #3a3560; border-radius: 10px;
+  padding: .45rem .7rem; font-size: .9rem; cursor: pointer; }
+.lvb-strip { margin: .4rem 0 .9rem; }
+.lvb-h { font-size: .92rem; font-weight: 700; color: #e8e4f8; margin-bottom: .45rem; }
+.lvb-livehdr { color: #e94b6a; }
+.lvb-row { display: flex; gap: .6rem; overflow-x: auto; padding-bottom: .3rem; }
+.lvb-card { flex: 0 0 auto; min-width: 220px; max-width: 300px; background: #241f3d; border: 1px solid #3a3560;
+  border-radius: 10px; padding: .55rem .75rem; cursor: pointer; }
+.lvb-card:hover { border-color: #7b5bf5; }
+.lvb-card.live { border-color: #7d2540; background: #2c1830; }
+.lvb-card.busy { opacity: .5; pointer-events: none; }
+.lvb-t { font-size: .84rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lvb-m { font-size: .72rem; color: #9b93c0; margin-top: .2rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lvb-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #e94b6a;
+  margin-right: .35rem; animation: lvpulse 1.4s infinite; }
+@keyframes lvpulse { 50% { opacity: .35; } }
+.epg-sechdr { display: flex; width: max-content; background: #1b1636; border-bottom: 1px solid #221d3e; }
+.epg-sec { font-size: .78rem; font-weight: 700; color: #a08ef0; text-transform: uppercase; letter-spacing: .05em; padding: .35rem .55rem; }
+.epg-seclane { height: 28px; background: #1b1636; }
+.epg-more { padding: .7rem; text-align: center; }
+/* long channel/programme names stay INSIDE their card (AJ Sep 17 "flo thing running out of the box") */
+.lvcw-card > div { min-width: 0; max-width: 230px; }
+.lvcw-n, .lvcw-p { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

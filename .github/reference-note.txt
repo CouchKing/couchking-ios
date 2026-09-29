@@ -1,0 +1,2 @@
+reference/ holds the real Firestick + desktop app source for parity work. It is NOT in any Xcode
+target's sources (XcodeGen sources are limited to CouchKing/), so it never affects the build.

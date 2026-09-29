@@ -8,6 +8,11 @@ platforms alongside it.
 Standing order from the owner (AJ): every platform must match the Android app "to a T" —
 same features, same sync, same tracking. Treat every Android/iOS feature as a tvOS/macOS TODO.
 
+> ⚠️ **The real apps are now in `reference/` — read `reference/README.md` FIRST.** The first
+> tvOS/macOS pass was done blind (the actual Firestick + desktop apps weren't available), so their
+> look was guessed. `reference/android-tv/` = the real Firestick source (Kotlin), `reference/desktop/`
+> = the real Electron desktop source (JS/CSS). Rebuild the Apple TV / Mac UX to MATCH these exactly.
+
 ---
 
 ## Ground truth

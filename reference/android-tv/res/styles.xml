@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- player controller buttons (ported with the player from the standalone CouchKing Player) -->
+    <style name="CKButton">
+        <item name="android:layout_width">52dp</item>
+        <item name="android:layout_height">52dp</item>
+        <item name="android:layout_margin">6dp</item>
+        <item name="android:padding">4dp</item>
+        <item name="android:background">@drawable/ep_focus_bg</item>
+        <item name="android:scaleType">centerInside</item>
+        <item name="android:focusable">true</item>
+        <item name="android:tint">#FFFFFF</item>
+    </style>
+
+    <!-- TV bottom bar: icon + a small caption under it so every button says what it does -->
+    <style name="CKLabeled">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:gravity">center_horizontal</item>
+        <item name="android:layout_marginStart">4dp</item>
+    </style>
+    <style name="CKBtnLabel">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">#BBBBCC</item>
+        <item name="android:textSize">10sp</item>
+        <item name="android:layout_marginTop">-6dp</item>
+    </style>
+
+    <!-- center-screen transport buttons (play/pause + skip): bigger, NO caption -->
+    <style name="CKCenterBtn">
+        <item name="android:layout_width">72dp</item>
+        <item name="android:layout_height">72dp</item>
+        <item name="android:layout_marginStart">20dp</item>
+        <item name="android:layout_marginEnd">20dp</item>
+        <item name="android:padding">12dp</item>
+        <item name="android:background">@drawable/ep_focus_bg</item>
+        <item name="android:scaleType">centerInside</item>
+        <item name="android:focusable">true</item>
+        <item name="android:tint">#FFFFFF</item>
+    </style>
+
+    <!-- control cell: the WORD sits ABOVE the icon (AJ). vertical [caption, button] -->
+    <style name="CKCell">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:orientation">vertical</item>
+        <item name="android:gravity">center_horizontal</item>
+    </style>
+    <style name="CKCaption">
+        <item name="android:layout_width">wrap_content</item>
+        <item name="android:layout_height">wrap_content</item>
+        <item name="android:textColor">#FFFFFF</item>
+        <item name="android:textSize">10sp</item>
+        <item name="android:layout_marginBottom">-8dp</item>
+        <item name="android:shadowColor">#000000</item>
+        <item name="android:shadowRadius">4</item>
+    </style>
+</resources>

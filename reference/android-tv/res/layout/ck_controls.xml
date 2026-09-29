@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- CENTER transport (play/pause; ±10s on mobile) floats mid-screen like Netflix and shows
+     with the chrome. The bottom bar keeps the scrubber + the LABELED function buttons (words
+     above icons). No play/skip in the bottom bar (AJ). -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <!-- middle-of-screen transport. exo_rew/exo_play_pause/exo_ffwd are media3-managed (icons
+         swap + honor the 10s seek). NO captions on these. TV hides the two skip buttons. -->
+    <LinearLayout
+        android:id="@+id/center_transport"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:orientation="horizontal"
+        android:gravity="center">
+
+        <ImageButton android:id="@id/exo_rew" style="@style/CKCenterBtn"
+            android:src="@drawable/ic_rew" android:contentDescription="Skip back 10s" />
+        <ImageButton android:id="@id/exo_play_pause" style="@style/CKCenterBtn"
+            android:src="@drawable/ic_play" android:contentDescription="Play/Pause" />
+        <ImageButton android:id="@id/exo_ffwd" style="@style/CKCenterBtn"
+            android:src="@drawable/ic_ffwd" android:contentDescription="Skip forward 10s" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="vertical"
+        android:background="@drawable/bottom_scrim">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp">
+
+            <TextView
+                android:id="@id/exo_position"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp" />
+
+            <androidx.media3.ui.DefaultTimeBar
+                android:id="@id/exo_progress"
+                android:layout_width="0dp"
+                android:layout_weight="1"
+                android:layout_height="26dp"
+                android:layout_marginStart="8dp"
+                android:layout_marginEnd="8dp"
+                app:played_color="#7B5BF5"
+                app:scrubber_color="#7B5BF5"
+                app:buffered_color="#667B5BF5"
+                app:unplayed_color="#33FFFFFF" />
+
+            <TextView
+                android:id="@id/exo_duration"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textColor="#BBBBCC"
+                android:textSize="14sp" />
+        </LinearLayout>
+
+        <!-- Labeled function buttons (word above icon). No Play/skip here anymore. -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center"
+            android:paddingBottom="16dp">
+
+            <LinearLayout style="@style/CKCell">
+                <TextView style="@style/CKCaption" android:text="Next" />
+                <ImageButton android:id="@+id/btn_next" style="@style/CKButton"
+                    android:src="@drawable/ic_next" android:contentDescription="Next episode" />
+            </LinearLayout>
+
+            <LinearLayout style="@style/CKCell">
+                <TextView style="@style/CKCaption" android:text="Episodes" />
+                <ImageButton android:id="@+id/btn_episodes" style="@style/CKButton"
+                    android:src="@drawable/ic_list" android:contentDescription="Episodes" />
+            </LinearLayout>
+
+            <LinearLayout style="@style/CKCell">
+                <TextView style="@style/CKCaption" android:text="Subtitles" />
+                <ImageButton android:id="@+id/btn_subs" style="@style/CKButton"
+                    android:src="@drawable/ic_subs" android:contentDescription="Subtitles" />
+            </LinearLayout>
+
+            <LinearLayout style="@style/CKCell">
+                <TextView style="@style/CKCaption" android:text="Sub Size" />
+                <ImageButton android:id="@+id/btn_subsize" style="@style/CKButton"
+                    android:src="@drawable/ic_textsize" android:contentDescription="Subtitle size" />
+            </LinearLayout>
+
+            <LinearLayout style="@style/CKCell">
+                <TextView style="@style/CKCaption" android:text="Size" />
+                <ImageButton android:id="@+id/btn_scale" style="@style/CKButton"
+                    android:src="@drawable/ic_scale" android:contentDescription="Video size / aspect ratio" />
+            </LinearLayout>
+
+            <LinearLayout style="@style/CKCell">
+                <TextView style="@style/CKCaption" android:text="Audio" />
+                <ImageButton android:id="@+id/btn_audio" style="@style/CKButton"
+                    android:src="@drawable/ic_audio" android:contentDescription="Audio tracks" />
+            </LinearLayout>
+
+            <LinearLayout style="@style/CKCell">
+                <TextView style="@style/CKCaption" android:text="Speed" />
+                <ImageButton android:id="@+id/btn_speed" style="@style/CKButton"
+                    android:src="@drawable/ic_speed" android:contentDescription="Playback speed" />
+            </LinearLayout>
+
+            <LinearLayout style="@style/CKCell">
+                <TextView style="@style/CKCaption" android:text="Info" />
+                <ImageButton android:id="@+id/btn_info" style="@style/CKButton"
+                    android:src="@drawable/ic_info" android:contentDescription="Playback info" />
+            </LinearLayout>
+        </LinearLayout>
+
+    </LinearLayout>
+</FrameLayout>
