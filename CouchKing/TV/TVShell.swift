@@ -28,6 +28,7 @@ struct TVShell: View {
     @State private var cameFrom: Tab = .home
     @State private var paths: [Tab: NavigationPath] = [:]
     @FocusState private var railFocus: String?      // "profile" or a Tab rawValue
+    @State private var picker = false               // rail profile → "Who's watching?"
 
     private var expanded: Bool { railFocus != nil }
     private var tabs: [Tab] { Tab.allCases.filter { $0 != .live || session.liveTvOn } }
@@ -41,6 +42,9 @@ struct TVShell: View {
         }
         .onExitCommand(perform: interceptExit ? handleExit : nil)
         .onChange(of: session.liveTvOn) { on in if !on && tab == .live { select(.home) } }
+        .fullScreenCover(isPresented: $picker) {
+            TVWhoIsWatching(onDone: { picker = false }).environmentObject(session)
+        }
     }
 
     // MARK: pages
@@ -86,7 +90,7 @@ struct TVShell: View {
 
     private var profileEntry: some View {
         let p = session.profiles.first { $0.id == session.currentProfile }
-        return Button { session.switchProfile("") } label: {
+        return Button { picker = true } label: {
             HStack(spacing: TV.dp(11)) {
                 Text(p?.avatar ?? String((p?.name ?? "P").prefix(1))).font(.system(size: TV.sp(12)))
                     .frame(width: TV.dp(26), height: TV.dp(26))

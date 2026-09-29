@@ -57,7 +57,12 @@ struct MacShell: View {
             .padding(.horizontal, 8).padding(.top, 6.4).padding(.bottom, 16)
             // profile item: avatar circle in the profile colour (opens the "Who's watching?" gate)
             railItem(icon: AnyView(profileIcon), label: profileName, selected: false) {
-                if session.signedIn && session.profiles.count > 1 { session.switchProfile("") }
+                // desktop: the profile manager card over the window (switch / add / edit / delete)
+                if session.signedIn {
+                    let host = MacOverlayHost.shared
+                    host.present(AnyView(MacProfileManager(onClose: { host.close() }).environmentObject(session)),
+                                 onClose: {})
+                }
                 else { nav = .settings }
             }
             ForEach(items, id: \.self) { n in

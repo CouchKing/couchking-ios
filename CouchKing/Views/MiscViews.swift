@@ -3,6 +3,16 @@ import SwiftUI
 struct ProfilePickerView: View {
     @EnvironmentObject var session: Session
     var body: some View {
+        #if os(tvOS)
+        TVWhoIsWatching()          // Firestick "Who's watching?" (ProfilesTVMac.swift)
+        #elseif os(macOS)
+        MacProfileManager(gate: true)   // desktop profile manager card
+        #else
+        phonePicker
+        #endif
+    }
+
+    private var phonePicker: some View {
         VStack(spacing: 24) {
             BrandTitle()
             Text("Who's watching?").font(.title2.bold())
