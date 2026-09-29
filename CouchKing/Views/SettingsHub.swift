@@ -38,11 +38,11 @@ struct SettingsHub: View {
             HubSection(text: "SETTINGS")
             HubLink(label: "Shelves", value: "\(session.enabledShelves().count) shelves", route: .shelves)
             HubLink(label: "Reorder shelves", value: "Set the order they show on Home", route: .reorder)
-            HubRow(label: "Blur unwatched episode images", value: session.pref("blurUnwatched", false) ? "On" : "Off") {
-                session.setPref("blurUnwatched", !session.pref("blurUnwatched", false))
+            HubRow(label: "Blur unwatched episode images", value: blur ? "On" : "Off") {
+                session.setPref("blurUnwatched", !blur)
             }
-            HubRow(label: "Show titles under posters", value: session.pref("showTitles", true) ? "On" : "Off") {
-                session.setPref("showTitles", !session.pref("showTitles", true))
+            HubRow(label: "Show titles under posters", value: titles ? "On" : "Off") {
+                session.setPref("showTitles", !titles)
             }
             // Player settings only exist when there's something to play
             if session.hasAddon { HubLink(label: "Player", route: .player) }
@@ -75,6 +75,9 @@ struct SettingsHub: View {
             }
         }
     }
+
+    private var blur: Bool { session.pref("blurUnwatched", false) }
+    private var titles: Bool { session.pref("showTitles", true) }
 
     private var accessLine: String {
         if !session.signedIn { return "Tap to sign in" }
@@ -375,24 +378,28 @@ struct HubPlayer: View {
     @EnvironmentObject var session: Session
     private let sizes: [(String, Double)] = [("Small", 0.8), ("Normal", 1.0), ("Large", 1.3), ("Huge", 1.6)]
     var body: some View {
-        let scale = session.pref("subScale", 1.0)
-        let cur = sizes.firstIndex { abs($0.1 - scale) < 0.01 } ?? 1
+        let scale: Double = session.pref("subScale", 1.0)
+        let cur: Int = sizes.firstIndex { abs($0.1 - scale) < 0.01 } ?? 1
+        let subLang: String = session.pref("subLang", "en")
+        let subOff = subLang == "off"
+        let autoNext: Bool = session.pref("autoplayNext", true)
+        let seek: Int = session.pref("seekStep", 10)
         HubPage(title: "Player") {
             HubSection(text: "SUBTITLES")
             sample(scale)
             HubRow(label: "Subtitle size", value: sizes[cur].0) {
                 session.setPref("subScale", sizes[(cur + 1) % sizes.count].1)
             }
-            HubRow(label: "Subtitles", value: session.pref("subLang", "en") == "off" ? "Off" : "English") {
-                session.setPref("subLang", session.pref("subLang", "en") == "en" ? "off" : "en")
+            HubRow(label: "Subtitles", value: subOff ? "Off" : "English") {
+                session.setPref("subLang", subOff ? "en" : "off")
             }
             HubSection(text: "PLAYBACK")
-            HubRow(label: "Autoplay next episode", value: session.pref("autoplayNext", true) ? "On" : "Off") {
-                session.setPref("autoplayNext", !session.pref("autoplayNext", true))
+            HubRow(label: "Autoplay next episode", value: autoNext ? "On" : "Off") {
+                session.setPref("autoplayNext", !autoNext)
             }
-            HubRow(label: "Seek step", value: "\(session.pref("seekStep", 10))s") {
+            HubRow(label: "Seek step", value: "\(seek)s") {
                 let steps = [5, 10, 15, 30]
-                let i = steps.firstIndex(of: session.pref("seekStep", 10)) ?? 1
+                let i = steps.firstIndex(of: seek) ?? 1
                 session.setPref("seekStep", steps[(i + 1) % steps.count])
             }
         }
@@ -400,20 +407,26 @@ struct HubPlayer: View {
 
     /// The live sample: black r10, 110 tall, "This is what subtitles will look like" at 15 × scale.
     private func sample(_ scale: Double) -> some View {
-        let outline = session.pref("subOutline", true)
-        let pos = session.pref("subPos", "normal")
+        let outline: Bool = session.pref("subOutline", true)
+        let pos: String = session.pref("subPos", "normal")
+        let boxed: Bool = session.pref("subBg", false)
         let unit: CGFloat = Platform.isTV ? 2 : 1
+        let size: CGFloat = 15 * unit * CGFloat(scale)
+        var lift: CGFloat = 10
+        if pos == "raised" { lift = 26 } else if pos == "high" { lift = 46 }
+        let maxW: CGFloat = Platform.isMac ? 560 : .infinity
+        let shade: Double = outline ? 1 : 0
         return ZStack(alignment: .bottom) {
             Color.black
             Text("This is what subtitles will look like")
-                .font(.system(size: 15 * unit * scale)).foregroundStyle(.white)
-                .shadow(color: .black.opacity(outline ? 1 : 0), radius: 2.5)
-                .shadow(color: .black.opacity(outline ? 1 : 0), radius: 1, x: 1, y: 1)
+                .font(.system(size: size)).foregroundStyle(.white)
+                .shadow(color: Color.black.opacity(shade), radius: 2.5)
+                .shadow(color: Color.black.opacity(shade), radius: 1, x: 1, y: 1)
                 .padding(.horizontal, 8 * unit).padding(.vertical, 2 * unit)
-                .background(session.pref("subBg", false) ? Color.black.opacity(0.7) : .clear)
-                .padding(.bottom, (pos == "high" ? 46 : pos == "raised" ? 26 : 10) * unit)
+                .background(boxed ? Color.black.opacity(0.7) : Color.clear)
+                .padding(.bottom, lift * unit)
         }
-        .frame(maxWidth: Platform.isMac ? 560 : .infinity)
+        .frame(maxWidth: maxW)
         .frame(height: 110 * unit)
         .clipShape(RoundedRectangle(cornerRadius: 10 * unit))
         .padding(.vertical, 6 * unit)
