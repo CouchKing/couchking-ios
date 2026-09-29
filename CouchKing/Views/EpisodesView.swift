@@ -109,13 +109,13 @@ struct EpisodeRow: View {
                     AsyncImage(url: URL(string: ep.thumb ?? "")) { img in
                         img.resizable().aspectRatio(contentMode: .fill)
                     } placeholder: { Theme.card }
-                    .frame(width: 128, height: 72)
+                    .frame(width: Platform.episodeThumbWidth, height: Platform.episodeThumbWidth * 9 / 16)
                     .blur(radius: (!watched && session.pref("blurUnwatched", false)) ? 8 : 0)
                     .clipped()
                     if progress > 0.01 {
                         ZStack(alignment: .leading) {
-                            Rectangle().fill(.white.opacity(0.3)).frame(width: 128, height: 3)
-                            Rectangle().fill(Theme.accent).frame(width: 128 * progress, height: 3)
+                            Rectangle().fill(.white.opacity(0.3)).frame(width: Platform.episodeThumbWidth, height: 3)
+                            Rectangle().fill(Theme.accent).frame(width: Platform.episodeThumbWidth * progress, height: 3)
                         }
                     }
                     if ep.unaired {
@@ -125,7 +125,7 @@ struct EpisodeRow: View {
                             .padding(4)
                     }
                 }
-                .frame(width: 128, height: 72)
+                .frame(width: Platform.episodeThumbWidth, height: Platform.episodeThumbWidth * 9 / 16)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.accent, lineWidth: current ? 2 : 0))
             }.buttonStyle(.plain)
@@ -180,7 +180,7 @@ struct EpisodeDetailView: View {
                     AsyncImage(url: URL(string: ep.thumb ?? "")) { img in
                         img.resizable().aspectRatio(contentMode: .fill)
                     } placeholder: { Theme.card }
-                    .frame(height: 190).frame(maxWidth: .infinity).clipped()
+                    .frame(height: Platform.isTV ? 420 : 190).frame(maxWidth: .infinity).clipped()
                     .blur(radius: (!watched && session.pref("blurUnwatched", false)) ? 10 : 0)
                     .clipShape(RoundedRectangle(cornerRadius: 12))
                     Text(ep.name).font(.title3.bold())

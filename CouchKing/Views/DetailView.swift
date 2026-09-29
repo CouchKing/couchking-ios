@@ -104,7 +104,7 @@ struct DetailView: View {
             AsyncImage(url: URL(string: bg ?? meta.poster ?? "")) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: { Theme.panel }
-            .frame(height: 260).frame(maxWidth: .infinity).clipped()
+            .frame(height: Platform.backdropHeight).frame(maxWidth: .infinity).clipped()
             LinearGradient(colors: [.clear, Theme.bg.opacity(0.6), Theme.bg],
                            startPoint: .top, endPoint: .bottom)
             if let logo = rich.logo, let u = URL(string: logo) {
@@ -117,12 +117,12 @@ struct DetailView: View {
                 Text(meta.name).font(.title2.bold()).padding(14)
             }
         }
-        .frame(height: 260)
+        .frame(height: Platform.backdropHeight)
     }
 
     private var header: some View {
         HStack(alignment: .top, spacing: 14) {
-            PosterCard(meta: meta, width: 96)
+            PosterCard(meta: meta, width: Platform.posterWidth * 0.9)
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     if let y = rich.releaseInfo { Text(y) }
@@ -223,7 +223,7 @@ struct ActionCircle: View {
         Button(action: action) {
             VStack(spacing: 4) {
                 Image(systemName: active ? icon + ".fill" : icon)
-                    .frame(width: 46, height: 46)
+                    .frame(width: Platform.actionSize, height: Platform.actionSize)
                     .background(Theme.card, in: Circle())
                     .foregroundStyle(active ? Theme.accent : .primary)
                 Text(label).font(.caption2).foregroundStyle(.secondary)

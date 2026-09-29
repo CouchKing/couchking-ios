@@ -24,6 +24,12 @@ enum Platform {
     static var gutter: CGFloat { isTV ? 60 : (isMac ? 24 : 14) }
     /// Hero carousel height.
     static var heroHeight: CGFloat { isTV ? 520 : (isMac ? 360 : 230) }
+    /// Details backdrop height.
+    static var backdropHeight: CGFloat { isTV ? 560 : (isMac ? 400 : 260) }
+    /// Episode thumbnail width (16:9).
+    static var episodeThumbWidth: CGFloat { isTV ? 320 : (isMac ? 200 : 128) }
+    /// Details action-circle diameter.
+    static var actionSize: CGFloat { isTV ? 84 : (isMac ? 52 : 46) }
     /// Tiles per adaptive-grid column minimum.
     static var gridMin: CGFloat { posterWidth }
 
