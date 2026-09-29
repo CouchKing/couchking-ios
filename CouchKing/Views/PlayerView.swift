@@ -812,11 +812,28 @@ struct PlayerView: View {
             if !ids.contains(key) { ids.append(key) }
             added["wt:" + key] = now
             // advance Continue Watching to the next episode with a fresh (blank) bar when we know it
-            // — parity w/ TV 2.0.123 (AJ Sep 28): resume the NEXT episode, not replay the finished one.
+            // — parity w/ TV 2.0.126 (AJ Sep 28): resume the NEXT episode, not replay the finished one.
             if let nx = nextEpisode, let ns = nx.season, let ne = nx.episode {
                 var cwl = ps["cwlast"] as? [String: Any] ?? [:]
                 cwl[request.meta.id] = "\(request.meta.id):\(ns):\(ne)"
                 ps["cwlast"] = cwl
+            }
+            // WATCHED SHELF (parity w/ TV 2.0.126): a show earns Library→Watched only when the
+            // episode just finished is the LAST one that exists (nothing after it) — handles
+            // 7/8-with-finale-pending and jumping in mid-series. Uses the cached episode list.
+            if let vids = MetaCache.shared.cached(request.meta.id) {
+                let eps = vids.compactMap { v -> (Int, Int)? in
+                    guard let s = v["season"] as? Int, s > 0, let e = v["episode"] as? Int else { return nil }
+                    return (s, e)
+                }.sorted { $0.0 != $1.0 ? $0.0 < $1.0 : $0.1 < $1.1 }
+                let cs = request.season ?? 0, ce = request.episode ?? 0
+                if eps.last.map({ $0.0 == cs && $0.1 == ce }) == true {
+                    var wt = ps["watchedTitles"] as? [[String: Any]] ?? []
+                    if !wt.contains(where: { $0["id"] as? String == request.meta.id }) {
+                        wt.insert(request.meta.dict, at: 0)
+                    }
+                    ps["watchedTitles"] = wt
+                }
             }
         } else {
             if !ids.contains(request.meta.id) { ids.append(request.meta.id) }
