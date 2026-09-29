@@ -256,6 +256,9 @@ struct StreamList: View {
     @State private var notice = ""
     @State private var gate = ""
     @State private var play: PlayRequest?
+    #if os(tvOS)
+    @Namespace private var streamNS
+    #endif
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -285,19 +288,7 @@ struct StreamList: View {
             if !notice.isEmpty {
                 Text(notice).font(.caption).foregroundStyle(.secondary)
             }
-            ForEach(Array(streams.prefix(10).enumerated()), id: \.offset) { _, s in
-                Button { start(s) } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(s["name"] as? String ?? "Stream").font(.subheadline.bold())
-                        Text(s["title"] as? String ?? s["description"] as? String ?? "")
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(10)
-                    .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
-                }
-                .ckTile()
-            }
+            streamRows
         }
         .overlay {
             if !gate.isEmpty {
@@ -309,6 +300,54 @@ struct StreamList: View {
         }
         .task { await load() }
         .ckFullScreenCover(item: $play) { req in PlayerView(request: req) }
+    }
+
+    private var shown: [[String: Any]] { Array(streams.prefix(10)) }
+
+    /// Stream rows per platform: iPhone cards · Apple TV horizontal card strip (Firestick
+    /// buildTvStreamStrip: 320dp cards, first focused) · Mac desktop `.stream` rows.
+    @ViewBuilder private var streamRows: some View {
+        #if os(tvOS)
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 24) {
+                ForEach(Array(shown.enumerated()), id: \.offset) { i, s in
+                    Button { start(s) } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(s["name"] as? String ?? "Stream").font(.system(size: 34, weight: .bold))
+                                .foregroundStyle(.white).lineLimit(1)
+                            Text(s["title"] as? String ?? s["description"] as? String ?? "")
+                                .font(.system(size: 27)).foregroundStyle(TV.dim).lineLimit(2)
+                        }
+                        .frame(width: 640 - 68, alignment: .leading)
+                        .padding(.horizontal, 34).padding(.vertical, 28)
+                        .background(TV.card2, in: RoundedRectangle(cornerRadius: 20))
+                    }
+                    .buttonStyle(TVRingButton(radius: 20))
+                    .prefersDefaultFocus(i == 0, in: streamNS)
+                }
+            }
+            .padding(.vertical, 20).padding(.horizontal, 8)
+        }
+        .focusScope(streamNS)
+        #elseif os(macOS)
+        ForEach(Array(shown.enumerated()), id: \.offset) { _, s in
+            DeskStreamRow(stream: s) { start(s) }
+        }
+        #else
+        ForEach(Array(shown.enumerated()), id: \.offset) { _, s in
+            Button { start(s) } label: {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(s["name"] as? String ?? "Stream").font(.subheadline.bold())
+                    Text(s["title"] as? String ?? s["description"] as? String ?? "")
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
+            }
+            .ckTile()
+        }
+        #endif
     }
 
     /// Stream → PlayRequest (windows riding on the stream object override /player/resume).

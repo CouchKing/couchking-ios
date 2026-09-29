@@ -83,6 +83,10 @@ enum TMDB {
     static func trending(kind: String) async -> [Meta] {
         await metas(results(await get("/trending/\(kind)/week")), kind: kind)
     }
+    /// Trending today (the desktop's Top 10 Today source).
+    static func trendingDay(kind: String) async -> [Meta] {
+        await metas(results(await get("/trending/\(kind)/day")), kind: kind, limit: 12)
+    }
     static func discover(kind: String, _ query: String, page: Int = 1) async -> [Meta] {
         await metas(results(await get("/discover/\(kind)", query + "&page=\(page)")), kind: kind, limit: 20)
     }
