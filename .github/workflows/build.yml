@@ -62,4 +62,79 @@ jobs:
             shot-home.png
             CouchKing-unsigned.ipa
             CouchKing-Simulator.app.zip
-  # TestFlight lane activates once the Apple Developer account + signing secrets exist.
+  # TestFlight lane — signs with the App Store Connect API key (cloud-managed signing, no
+  # certs/profiles to manage locally) and uploads the iPhone build to TestFlight.
+  # Runs only on master pushes / manual dispatch, only when the signing secrets exist.
+  testflight:
+    needs: compile
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    runs-on: macos-15
+    env:
+      KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+      ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+      TEAM_ID: "9DQ4PK94U6"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Skip if no signing secrets
+        id: gate
+        run: |
+          if [ -z "$KEY_ID" ]; then echo "no signing secrets — skipping"; echo "go=no" >> $GITHUB_OUTPUT
+          else echo "go=yes" >> $GITHUB_OUTPUT; fi
+      - name: Install XcodeGen
+        if: steps.gate.outputs.go == 'yes'
+        run: brew install xcodegen
+      - name: Generate project
+        if: steps.gate.outputs.go == 'yes'
+        run: xcodegen generate
+      - name: Install API key
+        if: steps.gate.outputs.go == 'yes'
+        env: { APPSTORE_P8: "${{ secrets.APPSTORE_P8 }}" }
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "$APPSTORE_P8" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8
+          chmod 600 ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8
+      - name: Archive (cloud-managed signing, build number = run #)
+        if: steps.gate.outputs.go == 'yes'
+        run: |
+          set -o pipefail
+          xcodebuild -project CouchKing.xcodeproj -scheme CouchKing \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -archivePath build/CouchKing.xcarchive \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8 \
+            -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER_ID" \
+            DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Automatic \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            archive 2>&1 | tee archive.log | tail -30
+      - name: Export IPA
+        if: steps.gate.outputs.go == 'yes'
+        run: |
+          set -o pipefail
+          cat > ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>destination</key><string>export</string>
+            <key>uploadSymbols</key><true/>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath build/CouchKing.xcarchive -exportPath build/export \
+            -exportOptionsPlist ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8 \
+            -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER_ID" \
+            2>&1 | tee export.log | tail -20
+      - name: Upload to TestFlight
+        if: steps.gate.outputs.go == 'yes'
+        run: |
+          IPA=$(find build/export -name '*.ipa' | head -1)
+          echo "uploading: $IPA"
+          xcrun altool --upload-app -f "$IPA" --type ios \
+            --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" 2>&1 | tee upload.log | tail -25
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: testflight-logs, path: "*.log" }

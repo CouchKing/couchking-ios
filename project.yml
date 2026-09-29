@@ -21,6 +21,7 @@ targets:
            UIInterfaceOrientationLandscapeRight]
         NSAppTransportSecurity: { NSAllowsArbitraryLoads: false }
         UIBackgroundModes: [audio]   # keep playing with screen off, like Android
+        ITSAppUsesNonExemptEncryption: false   # HTTPS only = exempt; auto-clears TestFlight compliance prompt
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.couchking.ios
