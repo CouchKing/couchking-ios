@@ -778,7 +778,10 @@ struct PlayerView: View {
         if (15_000...300_000).contains(subsLead) { lead = subsLead }
         else if windows.credits > 0 && windows.credits < dur { lead = dur - windows.credits }
         else { lead = 90_000 }
-        return max(dur - max(lead, 0), dur * 80 / 100)
+        // CAP (AJ Sep 28, parity w/ TV 2.0.123): finished by 90% (movies) / 92% (shows) so a
+        // long-credits movie marks watched + leaves Continue Watching without sitting through credits.
+        let cap = dur * (request.season != nil ? 92 : 90) / 100
+        return min(max(dur - max(lead, 0), dur * 80 / 100), cap)
     }
 
     /// NOT watched if you barely played it: starting near the top + <2 min played is never
@@ -808,6 +811,13 @@ struct PlayerView: View {
         if request.season != nil {
             if !ids.contains(key) { ids.append(key) }
             added["wt:" + key] = now
+            // advance Continue Watching to the next episode with a fresh (blank) bar when we know it
+            // — parity w/ TV 2.0.123 (AJ Sep 28): resume the NEXT episode, not replay the finished one.
+            if let nx = nextEpisode, let ns = nx.season, let ne = nx.episode {
+                var cwl = ps["cwlast"] as? [String: Any] ?? [:]
+                cwl[request.meta.id] = "\(request.meta.id):\(ns):\(ne)"
+                ps["cwlast"] = cwl
+            }
         } else {
             if !ids.contains(request.meta.id) { ids.append(request.meta.id) }
             added["wt:" + request.meta.id] = now
