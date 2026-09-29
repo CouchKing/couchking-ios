@@ -23,6 +23,7 @@ jobs:
         with: { name: build-log, path: build.log }
       - name: Run in simulator + screenshots
         continue-on-error: true   # screenshots are a bonus — never block the artifacts
+        timeout-minutes: 6        # simctl bootstatus can hang forever; cap it so it can't wedge the pipeline
         run: |
           set -x
           APP=$(find dd -name "CouchKing.app" -path "*iphonesimulator*" -type d | head -1)
