@@ -40,7 +40,9 @@ targets:
   CouchKing-tvOS:
     type: application
     platform: tvOS
-    sources: [CouchKing]
+    sources:
+      - path: CouchKing
+        excludes: ["Info.plist"]   # the iOS target's generated plist lives in CouchKing/
     info:
       path: Platforms/tvOS/Info.plist
       properties:
@@ -54,7 +56,9 @@ targets:
   CouchKing-macOS:
     type: application
     platform: macOS
-    sources: [CouchKing]
+    sources:
+      - path: CouchKing
+        excludes: ["Info.plist"]   # the iOS target's generated plist lives in CouchKing/
     info:
       path: Platforms/macOS/Info.plist
       properties:

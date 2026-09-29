@@ -90,7 +90,7 @@ struct PlayerSurface {
     let gravity: AVLayerVideoGravity
     let pip: PiPModel
 
-    private func make() -> PlayerLayerView {
+    @MainActor private func make() -> PlayerLayerView {
         let v = PlayerLayerView()
         #if !os(macOS)
         v.backgroundColor = .black
@@ -100,7 +100,7 @@ struct PlayerSurface {
         pip.attach(v.playerLayer)
         return v
     }
-    private func update(_ v: PlayerLayerView) {
+    @MainActor private func update(_ v: PlayerLayerView) {
         if v.playerLayer.player !== player { v.playerLayer.player = player }
         if v.playerLayer.videoGravity != gravity { v.playerLayer.videoGravity = gravity }
     }
