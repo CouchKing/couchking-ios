@@ -67,7 +67,9 @@ jobs:
   # certs/profiles to manage locally) and uploads the iPhone build to TestFlight.
   # Runs only on master pushes / manual dispatch, only when the signing secrets exist.
   testflight:
-    needs: compile
+    # runs in parallel with compile — it does its own archive, so it needn't wait behind the
+    # flaky screenshot step + unsigned-IPA build (~12 min of dead time). A broken build fails
+    # its own archive step, so nothing bad uploads.
     if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
     runs-on: macos-15
     env:
