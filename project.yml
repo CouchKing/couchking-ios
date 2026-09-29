@@ -32,6 +32,7 @@ targets:
            UIInterfaceOrientationLandscapeRight]
         NSAppTransportSecurity: { NSAllowsArbitraryLoads: false }
         UIBackgroundModes: [audio]   # keep playing with screen off, like Android
+        ITSAppUsesNonExemptEncryption: false   # HTTPS only = exempt; auto-clears TestFlight compliance prompt
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "1"   # iPhone first; iPad later
@@ -51,6 +52,7 @@ targets:
         NSAppTransportSecurity: { NSAllowsArbitraryLoads: false }
         UIBackgroundModes: [audio]
         UIUserInterfaceStyle: Dark
+        ITSAppUsesNonExemptEncryption: false   # HTTPS only = exempt (same as iOS)
 
   # Mac — the desktop-app layout (resizable window, sidebar, hover, keyboard). Streaming only.
   CouchKing-macOS:
@@ -64,6 +66,7 @@ targets:
       properties:
         CFBundleDisplayName: CouchKing
         LSApplicationCategoryType: public.app-category.entertainment
+        ITSAppUsesNonExemptEncryption: false   # HTTPS only = exempt (same as iOS)
         NSAppTransportSecurity: { NSAllowsArbitraryLoads: false }
     entitlements:
       path: Platforms/macOS/CouchKing.entitlements
