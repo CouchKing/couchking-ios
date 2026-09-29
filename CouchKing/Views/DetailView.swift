@@ -1,5 +1,7 @@
 import SwiftUI
+#if canImport(WebKit) && !os(tvOS)
 import WebKit
+#endif
 
 // Details page — Android showDetail parity: backdrop with gradient, show LOGO instead of text
 // when available, year · rating · runtime, genres as tappable chips (→ Discover pre-filtered),
@@ -10,6 +12,7 @@ struct DetailView: View {
     let meta: Meta
     @State private var full: [String: Any] = [:]
     @State private var trailerId: TrailerId?
+    @Environment(\.openURL) private var openURL
     @State private var providers: TMDB.Providers?
     @State private var providersLoaded = false
     @State private var person: TMDB.Person?
@@ -38,7 +41,7 @@ struct DetailView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                .padding(.horizontal, 14).padding(.bottom, 20)
+                .padding(.horizontal, Platform.gutter).padding(.bottom, 20)
             }
         }
         .background(Theme.bg)
@@ -67,15 +70,18 @@ struct DetailView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(chips, id: \.0) { label, accent in
-                            Button {
-                                if let l = p.link, let u = URL(string: l) { UIApplication.shared.open(u) }
-                            } label: {
-                                Text(label).font(.caption)
-                                    .padding(.horizontal, 10).padding(.vertical, 6)
-                                    .background(accent ? Theme.accent : Theme.card, in: Capsule())
-                                    .foregroundStyle(accent ? .white : .primary)
+                            let chip = Text(label).font(.caption)
+                                .padding(.horizontal, 10).padding(.vertical, 6)
+                                .background(accent ? Theme.accent : Theme.card, in: Capsule())
+                                .foregroundStyle(accent ? .white : .primary)
+                            if Platform.isTV {
+                                chip   // Apple TV has no browser: informational labels only
+                            } else {
+                                Button {
+                                    if let l = p.link, let u = URL(string: l) { openURL(u) }
+                                } label: { chip }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -98,7 +104,7 @@ struct DetailView: View {
             AsyncImage(url: URL(string: bg ?? meta.poster ?? "")) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: { Theme.panel }
-            .frame(height: 260).frame(maxWidth: .infinity).clipped()
+            .frame(height: Platform.backdropHeight).frame(maxWidth: .infinity).clipped()
             LinearGradient(colors: [.clear, Theme.bg.opacity(0.6), Theme.bg],
                            startPoint: .top, endPoint: .bottom)
             if let logo = rich.logo, let u = URL(string: logo) {
@@ -111,12 +117,12 @@ struct DetailView: View {
                 Text(meta.name).font(.title2.bold()).padding(14)
             }
         }
-        .frame(height: 260)
+        .frame(height: Platform.backdropHeight)
     }
 
     private var header: some View {
         HStack(alignment: .top, spacing: 14) {
-            PosterCard(meta: meta, width: 96)
+            PosterCard(meta: meta, width: Platform.posterWidth * 0.9)
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     if let y = rich.releaseInfo { Text(y) }
@@ -155,7 +161,7 @@ struct DetailView: View {
 
     private var actionRow: some View {
         HStack(spacing: 14) {
-            if let yt = ytId {
+            if let yt = ytId, !Platform.isTV {
                 ActionCircle(icon: "film", active: false, label: "Trailer") { trailerId = TrailerId(id: yt) }
             }
             ActionCircle(icon: "plus.circle", active: session.inLibrary(meta.id),
@@ -217,7 +223,7 @@ struct ActionCircle: View {
         Button(action: action) {
             VStack(spacing: 4) {
                 Image(systemName: active ? icon + ".fill" : icon)
-                    .frame(width: 46, height: 46)
+                    .frame(width: Platform.actionSize, height: Platform.actionSize)
                     .background(Theme.card, in: Circle())
                     .foregroundStyle(active ? Theme.accent : .primary)
                 Text(label).font(.caption2).foregroundStyle(.secondary)
@@ -239,33 +245,54 @@ struct TrailerView: View {
             YouTubeEmbed(ytId: ytId)
                 .background(.black)
                 .navigationTitle("Trailer")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
+                .ckInlineTitle()
+                .toolbar { ToolbarItem(placement: .ckTrailing) { Button("Done") { dismiss() } } }
         }
     }
 }
 
-struct YouTubeEmbed: UIViewRepresentable {
+/// YouTube embed player in a web view (iPhone + Mac). Apple TV has no WKWebView; the trailer
+/// button is hidden there.
+struct YouTubeEmbed {
     let ytId: String
-    func makeUIView(context: Context) -> WKWebView {
-        let cfg = WKWebViewConfiguration()
-        cfg.allowsInlineMediaPlayback = true
-        cfg.mediaTypesRequiringUserActionForPlayback = []
-        let v = WKWebView(frame: .zero, configuration: cfg)
-        v.isOpaque = false
-        v.backgroundColor = .black
-        v.scrollView.isScrollEnabled = false
-        let html = """
+    private var html: String { """
         <html><body style="margin:0;background:#000">
         <iframe width="100%" height="100%" src="https://www.youtube.com/embed/\(ytId)?autoplay=1&playsinline=1&rel=0&modestbranding=1"
         frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
         </body></html>
-        """
+        """ }
+    #if !os(tvOS)
+    fileprivate func makeWeb() -> WKWebView {
+        let cfg = WKWebViewConfiguration()
+        #if os(iOS)
+        cfg.allowsInlineMediaPlayback = true
+        #endif
+        cfg.mediaTypesRequiringUserActionForPlayback = []
+        let v = WKWebView(frame: .zero, configuration: cfg)
+        #if os(iOS)
+        v.isOpaque = false
+        v.backgroundColor = .black
+        v.scrollView.isScrollEnabled = false
+        #endif
         v.loadHTMLString(html, baseURL: URL(string: "https://www.youtube.com"))
         return v
     }
+    #endif
+}
+
+#if os(iOS)
+extension YouTubeEmbed: UIViewRepresentable {
+    func makeUIView(context: Context) -> WKWebView { makeWeb() }
     func updateUIView(_ v: WKWebView, context: Context) {}
 }
+#elseif os(macOS)
+extension YouTubeEmbed: NSViewRepresentable {
+    func makeNSView(context: Context) -> WKWebView { makeWeb() }
+    func updateNSView(_ v: WKWebView, context: Context) {}
+}
+#else
+extension YouTubeEmbed: View { var body: some View { EmptyView() } }
+#endif
 
 
 
@@ -274,7 +301,7 @@ struct PersonView: View {
     let person: TMDB.Person
     @State private var credits: [Meta] = []
     @State private var loading = true
-    private let cols = [GridItem(.adaptive(minimum: 108), spacing: 10)]
+    private let cols = [GridItem(.adaptive(minimum: Platform.gridMin), spacing: Platform.isTV ? 40 : 10)]
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
@@ -291,7 +318,7 @@ struct PersonView: View {
                 Text("Filmography").font(.headline)
                 LazyVGrid(columns: cols, spacing: 12) {
                     ForEach(credits) { m in
-                        NavigationLink(value: m) { PosterCard(meta: m) }.buttonStyle(.plain)
+                        NavigationLink(value: m) { PosterCard(meta: m) }.ckTile()
                     }
                 }
                 if loading { ProgressView().frame(maxWidth: .infinity) }
@@ -300,7 +327,7 @@ struct PersonView: View {
         }
         .background(Theme.bg)
         .navigationTitle(person.name)
-        .navigationBarTitleDisplayMode(.inline)
+        .ckInlineTitle()
         .task { credits = await TMDB.filmography(person.id); loading = false }
     }
 }

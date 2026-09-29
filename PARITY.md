@@ -10,6 +10,33 @@ Android references are file + function/rough line so the implementer can read th
 
 ---
 
+## Platforms — iPhone · Apple TV · Mac (universal app, MULTIPLATFORM.md)
+
+One codebase, one bundle id (`app.couchking.ios`). Every feature below is the SAME shared code on
+all three (auth, `/tvapp/state` sync + union merge, profiles/prefs, For You, Live TV contracts,
+player heartbeat/resume) — so sync is identical by construction. This table tracks only what
+differs per platform. Status = compiles green on macos-15 CI; **nothing here is verified on
+hardware yet** (no Apple TV / Mac in the loop).
+
+| Area | iPhone | Apple TV (Firestick-style) | Mac (desktop-style) |
+|---|---|---|---|
+| Builds on CI | ✅ | ✅ | ✅ |
+| Navigation shell | ✅ bottom tabs | ✅ top tabs, Home first (Firestick order) | ✅ sidebar (NavigationSplitView), 1360×860 window |
+| Home rows / hero / Top 10 / CW | ✅ | ✅ 10-foot posters, card focus lift, focus rows; hero = focused card, remote ←/→ pages it | ✅ hover lift, hero with ◀ ▶ arrows, pauses on hover |
+| Discover / Search / Library | ✅ | ✅ focusable grids + chips + search keyboard | ✅ |
+| Details / Episodes | ✅ | ✅ scaled header, thumbs, action circles; trailer hidden (no WKWebView); provider chips = labels only | ✅ trailer in web view; provider chips open the browser |
+| Player controls | ✅ touch + PiP + AirPlay | ✅ select = controls, ←/→ seek step, play/pause button, Menu = hide→exit, skip pill takes focus; progress bar (no Slider); PiP; no AirPlay (TV is the receiver) | ✅ space / ←→ / ↑↓ volume / M / F full screen, hover shows controls, PiP, AirPlay |
+| Player presentation | full-screen cover | full-screen cover | large sheet over the window (no full-screen cover on macOS) |
+| Live TV guide | ✅ drag timeline | ✅ focusable programme blocks, timeline follows focus; ★ via long-press context menu | ✅ drag + Earlier/Later; ★ via right-click |
+| Settings / shelves reorder | ✅ drag | ✅ ↑/↓ buttons | ✅ drag |
+| Downloads | ❌ none (by design) | ❌ none (by design) | ❌ none (by design) |
+| Signing / TestFlight | main session | main session | main session |
+
+Reference apps (`/data/couchking-tv`, `/data/couchking-desktop`) were not available to this build;
+the TV/desktop UX follows the Android TV + desktop behavior described in this file and
+IOS_CONTRACTS.md. Compare against the real Firestick / desktop builds on hardware and file gaps
+as rows here.
+
 ## 1. Auth & Accounts
 
 - ✅ Sign in / sign up via `POST /tvapp/auth` (email+password, create w/ name, token stored) — `Sync.auth` (Sync.kt L27), iOS `Session.signIn`

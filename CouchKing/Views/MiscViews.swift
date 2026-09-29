@@ -14,7 +14,7 @@ struct ProfilePickerView: View {
                             Text(p.name).font(.subheadline)
                         }
                     }
-                    .buttonStyle(.plain)
+                    .ckTile()
                 }
             }
             .padding(.horizontal, 24)
@@ -103,9 +103,9 @@ struct PeopleRow: View {
     let people: [TMDB.Person]
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("People").font(.headline).padding(.horizontal, 14)
+            Text("People").font(.headline).padding(.horizontal, Platform.gutter)
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 12) {
+                LazyHStack(spacing: Platform.isTV ? 40 : 12) {
                     ForEach(people) { p in
                         NavigationLink(value: p) {
                             VStack(spacing: 4) {
@@ -116,11 +116,13 @@ struct PeopleRow: View {
                                 Text(p.name).font(.caption2).lineLimit(1).frame(width: 84)
                             }
                         }
-                        .buttonStyle(.plain)
+                        .ckTile()
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Platform.gutter)
+                .padding(.vertical, Platform.isTV ? 36 : 0)   // room for the focus lift
             }
+            .ckFocusSection()
         }
     }
 }
@@ -180,7 +182,7 @@ struct LibraryView: View {
                                 .background(Theme.panel, in: Capsule())
                         }
                     }
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, Platform.gutter)
                     if filter == "all" {
                         section("Movies", visible("movie"))
                         section("Shows", visible("series"))
@@ -230,17 +232,19 @@ struct LibraryRow: View {
     let newEps: [String: NewEpsInfo]
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if !title.isEmpty { Text(title).font(.headline).padding(.horizontal, 14) }
+            if !title.isEmpty { Text(title).font(.headline).padding(.horizontal, Platform.gutter) }
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 10) {
+                LazyHStack(spacing: Platform.isTV ? 40 : 10) {
                     ForEach(metas) { m in
                         NavigationLink(value: m) {
                             PosterCard(meta: m, newEps: newEps[m.id]?.count ?? 0)
-                        }.buttonStyle(.plain)
+                        }.ckTile()
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Platform.gutter)
+                .padding(.vertical, Platform.isTV ? 36 : 0)   // room for the focus lift
             }
+            .ckFocusSection()
         }
     }
 }
@@ -269,7 +273,7 @@ struct LiveTuneView: View {
                 .padding(16)
             }
             .background(Theme.bg)
-            .toolbar { ToolbarItem(placement: .topBarLeading) { Button("Back") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .ckLeading) { Button("Back") { dismiss() } } }
         }
     }
 }

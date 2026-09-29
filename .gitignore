@@ -1,3 +1,6 @@
 CouchKing.xcodeproj/
 *.ipa
 DerivedData/
+Platforms/*/Info.plist
+Platforms/*/*.entitlements
+CouchKing/Info.plist

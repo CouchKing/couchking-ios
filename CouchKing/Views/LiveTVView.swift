@@ -55,7 +55,7 @@ struct LiveTVView: View {
             .background(Theme.bg)
             .navigationTitle("Live TV")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .ckTrailing) {
                     Menu {
                         ForEach(LiveTV.regions, id: \.0) { code, label in
                             Button(code == region ? "✓ " + label : label) { setRegion(code) }
@@ -78,7 +78,7 @@ struct LiveTVView: View {
                     await runSearch()
                 }
             }
-            .fullScreenCover(item: $tune, onDismiss: { Task { await afterTune() } }) { c in LiveTuneView(channel: c) }
+            .ckFullScreenCover(item: $tune, onDismiss: { Task { await afterTune() } }) { c in LiveTuneView(channel: c) }
             .task(id: "\(session.catalogs.count)|\(session.currentProfile)") { await build(force: false) }
             .onChange(of: scenePhase) { ph in
                 // rebuild any Live TV page older than 60s on foreground resume
@@ -120,9 +120,9 @@ struct LiveTVView: View {
                 .padding(.horizontal, 8).padding(.vertical, 3)
                 .background(live ? Color.red : Theme.panel, in: Capsule())
                 .foregroundStyle(.white)
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Platform.gutter)
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 8) {
+                LazyHStack(spacing: Platform.isTV ? 40 : 8) {
                     ForEach(games) { g in
                         Button { tune = g.meta } label: {
                             HStack(spacing: 8) {
@@ -139,11 +139,13 @@ struct LiveTVView: View {
                             .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(live ? Color.red.opacity(0.7) : .clear, lineWidth: 1))
                         }
-                        .buttonStyle(.plain)
+                        .ckTile()
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Platform.gutter)
+                .padding(.vertical, Platform.isTV ? 36 : 0)   // room for the focus lift
             }
+            .ckFocusSection()
         }
     }
 
@@ -157,8 +159,10 @@ struct LiveTVView: View {
                         .foregroundStyle(chip == c ? .white : .primary)
                 }
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, Platform.gutter)
+            .padding(.vertical, Platform.isTV ? 36 : 0)   // room for the focus lift
         }
+        .ckFocusSection()
     }
 
     @ViewBuilder private func channelList(_ list: [LiveChannel], empty: String) -> some View {
@@ -169,9 +173,8 @@ struct LiveTVView: View {
             ChannelRow(name: ch.name, logo: ch.logo, now: ch.now(now)?.t ?? "",
                        next: ch.next(now).map { "Next: \($0.t) · \(LiveTV.clock($0.s))" } ?? "",
                        fav: guide.favs.contains(ch.id))
-                .onTapGesture { tuneChannel(ch) }
-                .onLongPressGesture { toggleFav(ch) }
-                .padding(.horizontal, 14)
+                .liveTap({ tuneChannel(ch) }, fav: { toggleFav(ch) }, isFav: guide.favs.contains(ch.id))
+                .padding(.horizontal, Platform.gutter)
         }
     }
 
@@ -182,9 +185,10 @@ struct LiveTVView: View {
         ForEach(catalog) { m in
             ChannelRow(name: m.name, logo: m.poster ?? m.logo ?? "", now: m.description ?? "", next: "",
                        fav: guide.favs.contains(m.id.replacingOccurrences(of: "cklive:", with: "")))
-                .onTapGesture { tune = m }
-                .onLongPressGesture { toggleFavId(m.id.replacingOccurrences(of: "cklive:", with: ""), channel: nil) }
-                .padding(.horizontal, 14)
+                .liveTap({ tune = m },
+                         fav: { toggleFavId(m.id.replacingOccurrences(of: "cklive:", with: ""), channel: nil) },
+                         isFav: guide.favs.contains(m.id.replacingOccurrences(of: "cklive:", with: "")))
+                .padding(.horizontal, Platform.gutter)
         }
     }
 
@@ -194,8 +198,8 @@ struct LiveTVView: View {
         }
         ForEach(catalog) { m in
             ChannelRow(name: m.name, logo: m.poster ?? m.logo ?? "", now: m.description ?? "", next: "", fav: false)
-                .onTapGesture { tune = m }
-                .padding(.horizontal, 14)
+                .liveTap({ tune = m })
+                .padding(.horizontal, Platform.gutter)
         }
     }
 
@@ -335,9 +339,13 @@ struct GuideGrid: View {
     @State private var scrollX: CGFloat = 0
     @State private var dragStart: CGFloat? = nil
 
-    static let pxPerMin: CGFloat = 4
-    static let colW: CGFloat = 96
-    static let rowH: CGFloat = 56
+    // 10-foot TV needs bigger blocks; the desktop sits in between (Firestick / Electron guide).
+    static let pxPerMin: CGFloat = Platform.isTV ? 10 : (Platform.isMac ? 6 : 4)
+    static let colW: CGFloat = Platform.isTV ? 200 : (Platform.isMac ? 140 : 96)
+    static let rowH: CGFloat = Platform.isTV ? 90 : (Platform.isMac ? 60 : 56)
+    /// Apple TV timeline width (1920pt screen − safe-area gutters − channel column). Blocks are
+    /// laid out inside this fixed width so focus frames stay exact.
+    static let tvTimelineW: CGFloat = 1920 - 2 * 60 - 200
 
     private var dayStart: Int { LiveTV.dayStart(day, now: now) }
     private var windowMs: Int { (day == 0 ? 72 : 24) * 3_600_000 }
@@ -380,13 +388,18 @@ struct GuideGrid: View {
                     .overlay(Capsule().stroke(day == d ? Theme.accent : Theme.card, lineWidth: 1))
                     .foregroundStyle(.primary)
             }
+            #if os(macOS)
+            Spacer()
+            Button { shift(-1) } label: { Label("Earlier", systemImage: "chevron.left") }
+            Button { shift(1) } label: { Label("Later", systemImage: "chevron.right") }
+            #endif
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, Platform.gutter)
         if !recent.isEmpty && day == 0 {
             VStack(alignment: .leading, spacing: 6) {
-                Text("↻ Continue watching").font(.caption.bold()).padding(.horizontal, 14)
+                Text("↻ Continue watching").font(.caption.bold()).padding(.horizontal, Platform.gutter)
                 ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 8) {
+                    LazyHStack(spacing: Platform.isTV ? 40 : 8) {
                         ForEach(recent) { ch in
                             Button { onTune(ch) } label: {
                                 VStack(alignment: .leading, spacing: 2) {
@@ -396,11 +409,13 @@ struct GuideGrid: View {
                                 .padding(8).frame(width: 150, alignment: .leading)
                                 .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
                             }
-                            .buttonStyle(.plain)
+                            .ckTile()
                         }
                     }
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, Platform.gutter)
+                    .padding(.vertical, Platform.isTV ? 36 : 0)   // room for the focus lift
                 }
+                .ckFocusSection()
             }
         }
         if guide.channels.isEmpty {
@@ -414,14 +429,17 @@ struct GuideGrid: View {
                     case .header(let t):
                         Text(t).font(.caption.bold()).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 14).padding(.top, 8)
+                            .padding(.horizontal, Platform.gutter).padding(.top, 8)
                     case .channel(let ch):
                         GuideRow(channel: ch, dayStart: dayStart, windowW: windowW, now: now, scrollX: scrollX,
-                                 onTune: { onTune(ch) }, onFav: { onFav(ch) })
+                                 isFav: guide.favs.contains(ch.id),
+                                 onTune: { onTune(ch) }, onFav: { onFav(ch) },
+                                 onFocusX: { x in scrollX = min(max(0, x - 120), max(0, windowW - 260)) })
                     }
                 }
             }
         }
+        #if !os(tvOS)
         // horizontal pan of the shared timeline; vertical drags still scroll the page
         .simultaneousGesture(
             DragGesture(minimumDistance: 12)
@@ -434,6 +452,12 @@ struct GuideGrid: View {
                 }
                 .onEnded { _ in dragStart = nil }
         )
+        #endif
+    }
+
+    /// Mac: step the shared timeline by an hour (the desktop guide's ◀ ▶).
+    private func shift(_ hours: CGFloat) {
+        scrollX = min(max(0, scrollX + hours * 60 * Self.pxPerMin), max(0, windowW - 260))
     }
 
     /// Pinned header: date + scroll-synced half-hour ticks + the now-line.
@@ -465,10 +489,14 @@ struct GuideRow: View {
     let windowW: CGFloat
     let now: Int
     let scrollX: CGFloat
+    var isFav = false
     let onTune: () -> Void
     let onFav: () -> Void
+    var onFocusX: ((CGFloat) -> Void)? = nil
 
     private var dayEnd: Int { dayStart + Int(windowW / GuideGrid.pxPerMin) * 60_000 }
+    private var progs: [LiveProg] { channel.progs.filter { $0.e > dayStart && $0.s < dayEnd } }
+    private func x(_ ms: Int) -> CGFloat { CGFloat((ms - dayStart) / 60_000) * GuideGrid.pxPerMin }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -476,35 +504,118 @@ struct GuideRow: View {
                 AsyncImage(url: URL(string: channel.logo)) { img in
                     img.resizable().aspectRatio(contentMode: .fit)
                 } placeholder: { Image(systemName: "tv").foregroundStyle(.secondary) }
-                .frame(width: 56, height: 28)
-                Text(channel.name).font(.system(size: 9)).lineLimit(1)
+                .frame(width: GuideGrid.colW * 0.58, height: GuideGrid.rowH * 0.5)
+                Text(channel.name).font(.system(size: Platform.isTV ? 16 : 9)).lineLimit(1)
             }
             .frame(width: GuideGrid.colW, height: GuideGrid.rowH)
             .background(Theme.panel)
             .contentShape(Rectangle())
-            .onTapGesture(perform: onTune)
-            .onLongPressGesture(perform: onFav)
-            ZStack(alignment: .leading) {
-                ForEach(channel.progs.filter { $0.e > dayStart && $0.s < dayEnd }, id: \.self) { p in
-                    let x0 = max(0, CGFloat((p.s - dayStart) / 60_000) * GuideGrid.pxPerMin)
-                    let x1 = min(windowW, CGFloat((p.e - dayStart) / 60_000) * GuideGrid.pxPerMin)
-                    let live = p.s <= now && now < p.e
-                    Text(p.t).font(.system(size: 11)).lineLimit(2)
-                        .padding(.horizontal, 6)
-                        .frame(width: max(8, x1 - x0 - 2), height: GuideGrid.rowH - 6, alignment: .leading)
-                        .background(live ? Theme.accent.opacity(0.55) : Theme.card,
-                                    in: RoundedRectangle(cornerRadius: 6))
-                        .offset(x: x0 - scrollX)
-                        .onTapGesture(perform: onTune)
-                }
-                if now >= dayStart && now < dayEnd {
-                    Rectangle().fill(.red).frame(width: 2, height: GuideGrid.rowH)
-                        .offset(x: CGFloat((now - dayStart) / 60_000) * GuideGrid.pxPerMin - scrollX)
-                        .allowsHitTesting(false)
+            .liveTap(onTune, fav: onFav, isFav: isFav)
+            timeline
+        }
+        .padding(.leading, Platform.gutter)
+    }
+
+    #if os(tvOS)
+    /// Apple TV: every visible programme is a focusable block laid out (not offset) inside a
+    /// fixed-width timeline; focusing one scrolls the shared timeline to it (Firestick guide).
+    private var timeline: some View {
+        let right = scrollX + GuideGrid.tvTimelineW
+        return ZStack(alignment: .leading) {
+            ForEach(progs.filter { x($0.e) > scrollX && x($0.s) < right }, id: \.self) { p in
+                let vx0 = max(x(p.s), scrollX)
+                let vx1 = min(x(p.e), right)
+                GuideBlock(prog: p, live: p.s <= now && now < p.e, width: max(8, vx1 - vx0 - 4),
+                           onTune: onTune, onFav: onFav, isFav: isFav,
+                           onFocus: { onFocusX?(x(p.s)) })
+                    .padding(.leading, vx0 - scrollX)
+            }
+            if now >= dayStart && now < dayEnd, x(now) >= scrollX, x(now) < right {
+                Rectangle().fill(.red).frame(width: 3, height: GuideGrid.rowH)
+                    .padding(.leading, x(now) - scrollX)
+                    .allowsHitTesting(false)
+            }
+        }
+        .frame(width: GuideGrid.tvTimelineW, height: GuideGrid.rowH, alignment: .leading)
+        .clipped()
+    }
+    #else
+    private var timeline: some View {
+        ZStack(alignment: .leading) {
+            ForEach(progs, id: \.self) { p in
+                let x0 = max(0, x(p.s))
+                let x1 = min(windowW, x(p.e))
+                let live = p.s <= now && now < p.e
+                Text(p.t).font(.system(size: 11)).lineLimit(2)
+                    .padding(.horizontal, 6)
+                    .frame(width: max(8, x1 - x0 - 2), height: GuideGrid.rowH - 6, alignment: .leading)
+                    .background(live ? Theme.accent.opacity(0.55) : Theme.card,
+                                in: RoundedRectangle(cornerRadius: 6))
+                    .offset(x: x0 - scrollX)
+                    .liveTap(onTune, fav: onFav, isFav: isFav)
+            }
+            if now >= dayStart && now < dayEnd {
+                Rectangle().fill(.red).frame(width: 2, height: GuideGrid.rowH)
+                    .offset(x: x(now) - scrollX)
+                    .allowsHitTesting(false)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading).frame(height: GuideGrid.rowH).clipped()
+    }
+    #endif
+}
+
+#if os(tvOS)
+/// A focusable guide programme: highlighted while live, lifts on focus, reports focus so the
+/// shared timeline follows the remote.
+struct GuideBlock: View {
+    let prog: LiveProg
+    let live: Bool
+    let width: CGFloat
+    let onTune: () -> Void
+    let onFav: () -> Void
+    let isFav: Bool
+    let onFocus: () -> Void
+    @FocusState private var focused: Bool
+    var body: some View {
+        Button(action: onTune) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(prog.t).font(.system(size: 20, weight: .semibold)).lineLimit(1)
+                Text(LiveTV.clock(prog.s) + " – " + LiveTV.clock(prog.e))
+                    .font(.system(size: 15)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            .padding(.horizontal, 10)
+            .frame(width: width, height: GuideGrid.rowH - 8, alignment: .leading)
+            .background(focused ? Theme.accent : (live ? Theme.accent.opacity(0.45) : Theme.card),
+                        in: RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .focused($focused)
+        .contextMenu {
+            Button(isFav ? "Remove from Favorites" : "Add to Favorites",
+                   systemImage: isFav ? "star.slash" : "star") { onFav() }
+        }
+        .onChange(of: focused) { f in if f { onFocus() } }
+    }
+}
+#endif
+
+extension View {
+    /// iPhone: tap = tune, long-press = ★ toggle (Android). Apple TV / Mac: a focusable, clickable
+    /// button; ★ lives in the context menu (remote long-press on select / right-click).
+    @ViewBuilder func liveTap(_ tune: @escaping () -> Void, fav: (() -> Void)? = nil, isFav: Bool = false) -> some View {
+        #if os(iOS)
+        if let fav { self.onTapGesture(perform: tune).onLongPressGesture(perform: fav) }
+        else { self.onTapGesture(perform: tune) }
+        #else
+        Button(action: tune) { self }
+            .buttonStyle(.plain)
+            .contextMenu {
+                if let fav {
+                    Button(isFav ? "Remove from Favorites" : "Add to Favorites",
+                           systemImage: isFav ? "star.slash" : "star") { fav() }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading).frame(height: GuideGrid.rowH).clipped()
-        }
-        .padding(.leading, 14)
+        #endif
     }
 }

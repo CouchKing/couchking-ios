@@ -42,14 +42,14 @@ struct HomeView: View {
             .toolbar {
                 ToolbarItem(placement: .principal) { BrandTitle() }
                 if session.profiles.count > 1 {
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .ckTrailing) {
                         Button { session.switchProfile("") } label: {
                             ProfileAvatar(profile: session.profiles.first { $0.id == session.currentProfile }, size: 30)
                         }
                     }
                 }
             }
-            .navigationBarTitleDisplayMode(.inline)
+            .ckInlineTitle()
             .navigationDestination(for: Meta.self) { DetailView(meta: $0) }
             // a profile switch or the player exiting → content leaves memory and refills
             .task(id: "\(session.currentProfile)|\(session.homeStale)|\(session.addons.first?.url ?? "")") {
@@ -66,7 +66,7 @@ struct HomeView: View {
                 let s = p.count >= 3 ? Int(p[p.count - 2]) : nil
                 let e = p.count >= 3 ? Int(p[p.count - 1]) : nil
                 StreamSheet(meta: item.meta, season: s, episode: e, autoplay: true)
-                    .presentationDetents([.medium, .large])
+                    .ckDetents()
             }
         }
     }
@@ -123,23 +123,88 @@ struct HeroPager: View {
     let metas: [Meta]
     @State private var page = 0
     @State private var paused = false
+    #if os(tvOS)
+    @FocusState private var focused: Bool
+    #endif
     var body: some View {
+        #if os(iOS)
+        phonePager
+        #else
+        bigPager
+        #endif
+    }
+
+    /// Apple TV / Mac: one big card (Firestick idle showcase / desktop hero). Auto-advances every
+    /// 9s; pauses while focused (TV) or hovered (Mac); ← → page it (remote edge / arrow buttons).
+    private var bigPager: some View {
+        let m = metas[min(page, max(0, metas.count - 1))]
+        return ZStack {
+            NavigationLink(value: m) { HeroCard(meta: m) }
+                .ckTile()
+                .id(m.id)
+                .transition(.opacity)
+                #if os(tvOS)
+                .focused($focused)
+                .onMoveCommand { dir in
+                    if dir == .left { step(-1) } else if dir == .right { step(1) }
+                }
+                #endif
+            #if os(macOS)
+            HStack {
+                arrow("chevron.left") { step(-1) }
+                Spacer()
+                arrow("chevron.right") { step(1) }
+            }
+            .padding(.horizontal, 12)
+            #endif
+        }
+        .frame(height: Platform.heroHeight)
+        .padding(.horizontal, Platform.gutter)
+        #if os(macOS)
+        .onHover { paused = $0 }
+        #endif
+        #if os(tvOS)
+        .onChange(of: focused) { f in paused = f }
+        #endif
+        .task { await rotate() }
+    }
+
+    private func step(_ d: Int) {
+        guard !metas.isEmpty else { return }
+        withAnimation { page = (page + d + metas.count) % metas.count }
+    }
+
+    #if os(macOS)
+    private func arrow(_ icon: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon).font(.title2.bold()).padding(12)
+                .background(.black.opacity(0.5), in: Circle()).foregroundStyle(.white)
+        }
+        .buttonStyle(.plain)
+    }
+    #endif
+
+    private func rotate() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(9))
+            if !paused, metas.count > 1 { step(1) }
+        }
+    }
+
+    #if os(iOS)
+    private var phonePager: some View {
         TabView(selection: $page) {
             ForEach(Array(metas.enumerated()), id: \.element.id) { i, m in
-                NavigationLink(value: m) { HeroCard(meta: m) }.buttonStyle(.plain).tag(i)
+                NavigationLink(value: m) { HeroCard(meta: m) }.ckTile().tag(i)
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .automatic))
         .frame(height: 230)
-        .padding(.horizontal, 14)
+        .padding(.horizontal, Platform.gutter)
         .simultaneousGesture(DragGesture().onChanged { _ in paused = true }.onEnded { _ in paused = false })
-        .task {
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(9))
-                if !paused, metas.count > 1 { withAnimation { page = (page + 1) % metas.count } }
-            }
-        }
+        .task { await rotate() }
     }
+    #endif
 }
 
 struct HeroCard: View {
@@ -149,7 +214,7 @@ struct HeroCard: View {
             AsyncImage(url: URL(string: meta.background ?? meta.poster ?? "")) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: { Theme.card }
-            .frame(height: 230).frame(maxWidth: .infinity).clipped()
+            .frame(height: Platform.heroHeight).frame(maxWidth: .infinity).clipped()
             LinearGradient(colors: [.clear, .black.opacity(0.85)], startPoint: .center, endPoint: .bottom)
             VStack(alignment: .leading, spacing: 4) {
                 if let logo = meta.logo, let u = URL(string: logo) {
@@ -179,15 +244,17 @@ struct PosterRow: View {
     let metas: [Meta]
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.headline).padding(.horizontal, 14)
+            Text(title).font(.headline).padding(.horizontal, Platform.gutter)
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 10) {
+                LazyHStack(spacing: Platform.isTV ? 40 : 10) {
                     ForEach(metas) { m in
-                        NavigationLink(value: m) { PosterCard(meta: m) }.buttonStyle(.plain)
+                        NavigationLink(value: m) { PosterCard(meta: m) }.ckTile()
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Platform.gutter)
+                .padding(.vertical, Platform.isTV ? 36 : 0)   // room for the focus lift
             }
+            .ckFocusSection()
         }
     }
 }
@@ -199,7 +266,7 @@ struct PosterCard: View {
     let meta: Meta
     var progress: Double = 0
     var newEps: Int = 0
-    var width: CGFloat = 108
+    var width: CGFloat = Platform.posterWidth
     var body: some View {
         let inLib = session.inLibrary(meta.id)
         let done = session.isWatched(meta.id)
@@ -277,18 +344,20 @@ struct ContinueRow: View {
     let onResume: (CWItem) -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Continue Watching").font(.headline).padding(.horizontal, 14)
+            Text("Continue Watching").font(.headline).padding(.horizontal, Platform.gutter)
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 10) {
+                LazyHStack(spacing: Platform.isTV ? 40 : 10) {
                     ForEach(items) { item in
                         Button { onResume(item) } label: {
                             PosterCard(meta: item.meta, progress: item.progress, newEps: item.newEps)
                         }
-                        .buttonStyle(.plain)
+                        .ckTile()
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Platform.gutter)
+                .padding(.vertical, Platform.isTV ? 36 : 0)   // room for the focus lift
             }
+            .ckFocusSection()
         }
     }
 }
@@ -298,15 +367,17 @@ struct Top10Row: View {
     let metas: [Meta]
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Top 10 Today").font(.headline).padding(.horizontal, 14)
+            Text("Top 10 Today").font(.headline).padding(.horizontal, Platform.gutter)
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 2) {
+                LazyHStack(spacing: Platform.isTV ? 40 : 2) {
                     ForEach(Array(metas.enumerated()), id: \.element.id) { idx, m in
-                        NavigationLink(value: m) { RankedCard(rank: idx + 1, meta: m) }.buttonStyle(.plain)
+                        NavigationLink(value: m) { RankedCard(rank: idx + 1, meta: m) }.ckTile()
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Platform.gutter)
+                .padding(.vertical, Platform.isTV ? 36 : 0)   // room for the focus lift
             }
+            .ckFocusSection()
         }
     }
 }
@@ -314,18 +385,19 @@ struct Top10Row: View {
 struct RankedCard: View {
     let rank: Int
     let meta: Meta
+    private let k = Platform.posterWidth / 108   // scale the phone design for TV / Mac
     var body: some View {
-        HStack(alignment: .bottom, spacing: -16) {
+        HStack(alignment: .bottom, spacing: -16 * k) {
             Text("\(rank)")
-                .font(.system(size: 104, weight: .heavy)).italic()
+                .font(.system(size: 104 * k, weight: .heavy)).italic()
                 .foregroundStyle(Theme.card)
-                .frame(width: rank >= 10 ? 96 : 58, alignment: .trailing)
+                .frame(width: (rank >= 10 ? 96 : 58) * k, alignment: .trailing)
             AsyncImage(url: URL(string: meta.poster ?? "")) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: {
                 Theme.card.overlay(Image(systemName: "film").foregroundStyle(.secondary))
             }
-            .frame(width: 96, height: 144)
+            .frame(width: 96 * k, height: 144 * k)
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .titleMenu(meta)
@@ -354,8 +426,8 @@ struct GuestBanner: View {
             }
             .padding(12)
             .background(Theme.card, in: RoundedRectangle(cornerRadius: 12))
-            .padding(.horizontal, 14)
+            .padding(.horizontal, Platform.gutter)
         }
-        .buttonStyle(.plain)
+        .ckTile()
     }
 }
