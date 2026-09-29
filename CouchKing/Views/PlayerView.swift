@@ -364,7 +364,7 @@ struct PlayerView: View {
 
     #if os(macOS)
     /// Desktop keyboard: space = play/pause, ←/→ = seek step, ↑/↓ = volume, F = full screen,
-    /// M = mute. Invisible buttons keep the shortcuts live even with the controls hidden.
+    /// M = mute, Esc = close. Invisible buttons keep the shortcuts live even with the controls hidden.
     private var keyboardShortcuts: some View {
         ZStack {
             Button("") { togglePlay() }.keyboardShortcut(.space, modifiers: [])
@@ -377,6 +377,7 @@ struct PlayerView: View {
             Button("") { player.isMuted.toggle(); flashLabel(player.isMuted ? "Muted" : "Sound on") }
                 .keyboardShortcut("m", modifiers: [])
             Button("") { NSApp.keyWindow?.toggleFullScreen(nil) }.keyboardShortcut("f", modifiers: [])
+            Button("") { dismiss() }.keyboardShortcut(.cancelAction)   // Esc closes the player sheet
         }
         .opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
     }
