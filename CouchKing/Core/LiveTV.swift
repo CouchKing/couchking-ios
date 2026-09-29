@@ -76,10 +76,19 @@ struct LiveGame: Identifiable, Hashable {
     }
 }
 
+/// An upcoming game with its sport's emoji (the merged "📅 Upcoming games" strip).
+struct EmojiGame: Identifiable {
+    let emoji: String, game: LiveGame
+    var id: String { game.id }
+}
+
 struct LiveSport: Identifiable {
     let sport: String, emoji: String
     let live: [LiveGame], soon: [LiveGame]
     var id: String { sport }
+    init(sport: String, emoji: String, live: [LiveGame], soon: [LiveGame]) {
+        self.sport = sport; self.emoji = emoji; self.live = live; self.soon = soon
+    }
     init?(_ o: [String: Any], now: Int) {
         guard let s = o["sport"] as? String else { return nil }
         sport = s; emoji = o["emoji"] as? String ?? ""

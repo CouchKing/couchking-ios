@@ -9,29 +9,67 @@ import SwiftUI
 struct LiveTVView: View {
     @EnvironmentObject var session: Session
     @Environment(\.scenePhase) private var scenePhase
-    @State private var region = UserDefaults.standard.string(forKey: "liveRegion") ?? ""
-    @State private var chip = UserDefaults.standard.string(forKey: "liveChip") ?? "Guide"
-    @State private var day = 0
-    @State private var guide = LiveGuide()
-    @State private var sports: [LiveSport] = []
-    @State private var catalog: [Meta] = []            // Local / 24/7 / All Channels / search
-    @State private var q = ""
-    @State private var searchTask: Task<Void, Never>?
-    @State private var locked = false
-    @State private var loading = true
-    @State private var builtAt = 0
-    @State private var now = LiveTV.nowMs()
-    @State private var favDirty = false
-    @State private var tune: Meta?
-    @State private var gamesTask: Task<Void, Never>?
+    @State var region = UserDefaults.standard.string(forKey: "liveRegion") ?? ""
+    @State var chip = UserDefaults.standard.string(forKey: "liveChip") ?? "Guide"
+    @State var day = 0
+    @State var guide = LiveGuide()
+    @State var sports: [LiveSport] = []
+    @State var catalog: [Meta] = []            // Local / 24/7 / All Channels / search
+    @State var q = ""
+    @State var searchTask: Task<Void, Never>?
+    @State var locked = false
+    @State var loading = true
+    @State var builtAt = 0
+    @State var now = LiveTV.nowMs()
+    @State var favDirty = false
+    @State var tune: Meta?
+    @State var gamesTask: Task<Void, Never>?
 
-    private var searching: Bool { !q.trimmingCharacters(in: .whitespaces).isEmpty }
-    private var chips: [String] {
+    var searching: Bool { !q.trimmingCharacters(in: .whitespaces).isEmpty }
+    var chips: [String] {
         ["Guide", "★ Favorites"] + guide.sections + (region.isEmpty ? ["Local", "24/7"] : []) + ["All Channels"]
     }
-    private var catalogChip: Bool { ["Local", "24/7", "All Channels"].contains(chip) }
+    var catalogChip: Bool { ["Local", "24/7", "All Channels"].contains(chip) }
+
+    #if os(tvOS)
+    @Namespace var liveNS
+    #endif
 
     var body: some View {
+        platformPage
+            .ckFullScreenCover(item: $tune, onDismiss: { Task { await afterTune() } }) { c in LiveTuneView(channel: c) }
+            .task(id: "\(session.catalogs.count)|\(session.currentProfile)") { await build(force: false) }
+            .onChange(of: scenePhase) { ph in
+                // rebuild any Live TV page older than 60s on foreground resume
+                if ph == .active, LiveTV.nowMs() - builtAt > 60_000 { Task { await build(force: false) } }
+            }
+            .onChange(of: q) { v in
+                searchTask?.cancel()
+                if v.trimmingCharacters(in: .whitespaces).isEmpty { catalog = []; return }
+                searchTask = Task {
+                    try? await Task.sleep(for: .milliseconds(350))
+                    guard !Task.isCancelled else { return }
+                    await runSearch()
+                }
+            }
+            .onAppear { startGamesLoop() }
+            .onDisappear { gamesTask?.cancel(); gamesTask = nil }
+    }
+
+    /// Apple TV = the Firestick page (TV/LiveTV+TV.swift), Mac = the desktop page
+    /// (Mac/LiveTV+Desk.swift), iPhone = the phone page below.
+    @ViewBuilder var platformPage: some View {
+        #if os(tvOS)
+        tvPage
+        #elseif os(macOS)
+        deskPage
+        #else
+        phonePage
+        #endif
+    }
+
+    #if os(iOS)
+    var phonePage: some View {
         NavigationStack {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
@@ -69,29 +107,24 @@ struct LiveTVView: View {
             }
             .searchable(text: $q, prompt: "Channels & shows airing soon")
             .onSubmit(of: .search) { searchTask?.cancel(); Task { await runSearch() } }
-            .onChange(of: q) { v in
-                searchTask?.cancel()
-                if v.trimmingCharacters(in: .whitespaces).isEmpty { catalog = []; return }
-                searchTask = Task {
-                    try? await Task.sleep(for: .milliseconds(350))
-                    guard !Task.isCancelled else { return }
-                    await runSearch()
-                }
-            }
-            .ckFullScreenCover(item: $tune, onDismiss: { Task { await afterTune() } }) { c in LiveTuneView(channel: c) }
-            .task(id: "\(session.catalogs.count)|\(session.currentProfile)") { await build(force: false) }
-            .onChange(of: scenePhase) { ph in
-                // rebuild any Live TV page older than 60s on foreground resume
-                if ph == .active, LiveTV.nowMs() - builtAt > 60_000 { Task { await build(force: false) } }
-            }
-            .onAppear { startGamesLoop() }
-            .onDisappear { gamesTask?.cancel(); gamesTask = nil }
+        }
+    }
+    #endif
+
+    /// Region-aware games (web/Firestick keep()): Fútbol rides with the UK view; USA / UK / CA
+    /// each see the games on their own channels — live strips and upcoming both.
+    var regionSports: [LiveSport] {
+        let want = region.isEmpty ? "US" : region
+        return sports.compactMap { sp in
+            let keep: (LiveGame) -> Bool = { g in sp.sport == "Fútbol" ? want == "UK" : g.rg == want }
+            let l = sp.live.filter(keep), so = sp.soon.filter(keep)
+            return l.isEmpty && so.isEmpty ? nil : LiveSport(sport: sp.sport, emoji: sp.emoji, live: l, soon: so)
         }
     }
 
     // MARK: pieces
 
-    private var lockedPanel: some View {
+    var lockedPanel: some View {
         VStack(spacing: 10) {
             Text("🔒").font(.system(size: 54))
             Text("Live TV — Locked").font(.title3.bold())
@@ -101,7 +134,7 @@ struct LiveTVView: View {
     }
 
     /// Per-sport red "LIVE NOW" strips + one "📅 Upcoming games" strip (games.json).
-    @ViewBuilder private var gamesBanner: some View {
+    @ViewBuilder var gamesBanner: some View {
         let live = sports.filter { !$0.live.isEmpty }
         let soon = sports.flatMap(\.soon).sorted { $0.s < $1.s }
         if !live.isEmpty || !soon.isEmpty {
@@ -114,7 +147,7 @@ struct LiveTVView: View {
         }
     }
 
-    private func gameStrip(title: String, games: [LiveGame], live: Bool) -> some View {
+    func gameStrip(title: String, games: [LiveGame], live: Bool) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.caption.bold())
                 .padding(.horizontal, 8).padding(.vertical, 3)
@@ -149,7 +182,7 @@ struct LiveTVView: View {
         }
     }
 
-    private var chipsRow: some View {
+    var chipsRow: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
                 ForEach(chips, id: \.self) { c in
@@ -165,7 +198,7 @@ struct LiveTVView: View {
         .ckFocusSection()
     }
 
-    @ViewBuilder private func channelList(_ list: [LiveChannel], empty: String) -> some View {
+    @ViewBuilder func channelList(_ list: [LiveChannel], empty: String) -> some View {
         if list.isEmpty && !loading {
             Text(empty).foregroundStyle(.secondary).padding(24)
         }
@@ -178,7 +211,7 @@ struct LiveTVView: View {
         }
     }
 
-    @ViewBuilder private var catalogList: some View {
+    @ViewBuilder var catalogList: some View {
         if catalog.isEmpty && !loading {
             Text("Nothing here right now.").foregroundStyle(.secondary).padding(24)
         }
@@ -192,7 +225,7 @@ struct LiveTVView: View {
         }
     }
 
-    @ViewBuilder private var searchResults: some View {
+    @ViewBuilder var searchResults: some View {
         if catalog.isEmpty && !loading {
             Text("No channels or shows match.").foregroundStyle(.secondary).padding(24)
         }
@@ -205,25 +238,25 @@ struct LiveTVView: View {
 
     // MARK: actions
 
-    private func setRegion(_ code: String) {
+    func setRegion(_ code: String) {
         region = code
         UserDefaults.standard.set(code, forKey: "liveRegion")
         setChip("Guide")
         Task { await build(force: true) }
     }
 
-    private func setChip(_ c: String) {
+    func setChip(_ c: String) {
         chip = c
         UserDefaults.standard.set(c, forKey: "liveChip")
         if catalogChip { Task { await loadCatalog() } }
     }
 
-    private func tuneChannel(_ ch: LiveChannel) { tune = ch.meta(now) }
+    func tuneChannel(_ ch: LiveChannel) { tune = ch.meta(now) }
 
-    private func toggleFav(_ ch: LiveChannel) { toggleFavId(ch.id, channel: ch) }
+    func toggleFav(_ ch: LiveChannel) { toggleFavId(ch.id, channel: ch) }
 
     /// Long-press ★ toggle: patch locally so the star shows instantly, then POST the desired state.
-    private func toggleFavId(_ id: String, channel: LiveChannel?) {
+    func toggleFavId(_ id: String, channel: LiveChannel?) {
         let on = !guide.favs.contains(id)
         let ch = channel ?? guide.channels.first { $0.id == id }
         guide.favs.removeAll { $0 == id }
@@ -235,7 +268,7 @@ struct LiveTVView: View {
     }
 
     /// Build the page (Android liveRenderGuide): guide + games, stamped for the 60s staleness rule.
-    private func build(force: Bool) async {
+    func build(force: Bool) async {
         guard session.catalogs.contains(where: { $0.isLive }) else { loading = false; return }
         loading = true
         now = LiveTV.nowMs()
@@ -258,20 +291,20 @@ struct LiveTVView: View {
 
     /// Back from the player: freeze-and-rebuild the guide centered on NOW; refetch favs +
     /// recent when the in-player ★ / channel-hop set the dirty flag.
-    private func afterTune() async {
+    func afterTune() async {
         now = LiveTV.nowMs()
         let force = favDirty
         favDirty = false
         await build(force: force)
     }
 
-    private func loadCatalog() async {
+    func loadCatalog() async {
         loading = true
         catalog = await LiveTV.catalog(session, genre: chip == "All Channels" ? "" : chip)
         loading = false
     }
 
-    private func runSearch() async {
+    func runSearch() async {
         let query = q.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty else { return }
         let r = await LiveTV.catalog(session, search: query)
@@ -279,7 +312,7 @@ struct LiveTVView: View {
     }
 
     /// The games banner self-refreshes every 3 minutes (never served stale).
-    private func startGamesLoop() {
+    func startGamesLoop() {
         gamesTask?.cancel()
         gamesTask = Task {
             while !Task.isCancelled {
@@ -599,6 +632,20 @@ struct GuideBlock: View {
     }
 }
 #endif
+
+/// Places each child at its `LaneX` offset (negative = partly off the left edge) inside a
+/// fixed-size lane — layout-based, so Apple TV focus frames match what is drawn.
+struct LaneX: LayoutValueKey { static let defaultValue: CGFloat = 0 }
+struct LaneLayout: Layout {
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
+    }
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for v in subviews {
+            v.place(at: CGPoint(x: bounds.minX + v[LaneX.self], y: bounds.minY), proposal: .unspecified)
+        }
+    }
+}
 
 extension View {
     /// iPhone: tap = tune, long-press = ★ toggle (Android). Apple TV / Mac: a focusable, clickable

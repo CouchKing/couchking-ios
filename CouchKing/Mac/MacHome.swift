@@ -13,6 +13,7 @@ struct MacHome: View {
     @State private var rows: [(String, [Meta])] = []
     @State private var loadGen = 0
     @State private var resume: CWItem?
+    @State private var resuming = false
 
     struct HeroItem { let meta: Meta; let background: String; let sub: String; let cw: CWItem? }
 
@@ -61,11 +62,10 @@ struct MacHome: View {
         .onReceive(session.objectWillChange) { _ in
             Task { cw = await session.continueWatchingOrdered(); await paintHero() }
         }
-        .sheet(item: $resume) { item in
-            let p = item.resumeKey.split(separator: ":")
-            StreamSheet(meta: item.meta, season: p.count >= 3 ? Int(p[p.count - 2]) : nil,
-                        episode: p.count >= 3 ? Int(p[p.count - 1]) : nil, autoplay: true)
-                .ckDetents()
+        // hero Resume (resumeTitle): series → the current episode's page, auto-playing the top
+        // stream; movies → details, auto-playing the top stream
+        .navigationDestination(isPresented: $resuming) {
+            if let item = resume { MacResume(item: item) }
         }
     }
 
@@ -101,8 +101,8 @@ struct MacHome: View {
                     HStack(spacing: 9.6) {
                         if session.hasAddon {
                             Button(h.cw != nil ? "▶ Resume" : "▶ Watch") {
-                                if let c = h.cw { resume = c }
-                                else { resume = CWItem(meta: h.meta, progress: 0, resumeKey: h.meta.id) }
+                                resume = h.cw ?? CWItem(meta: h.meta, progress: 0, resumeKey: h.meta.id)
+                                resuming = true
                             }
                             .buttonStyle(DeskButton(kind: .primary))
                         }
@@ -175,6 +175,38 @@ struct MacHome: View {
                 guard gen == loadGen else { return }
                 if !metas.isEmpty { fresh.append((cat.name, metas)); rows = fresh }
             }
+        }
+    }
+}
+/// app.js resumeTitle(): resolves the resume pointer, then lands on the episode page (series)
+/// or the details page (movies) with the top stream auto-playing.
+struct MacResume: View {
+    @EnvironmentObject var session: Session
+    let item: CWItem
+    @State private var episodes: [Episode]?
+
+    var body: some View {
+        Group {
+            if item.meta.type == "series" {
+                if let episodes {
+                    let p = item.resumeKey.split(separator: ":")
+                    let s = p.count >= 3 ? Int(p[p.count - 2]) : nil, e = p.count >= 3 ? Int(p[p.count - 1]) : nil
+                    if let ep = episodes.first(where: { $0.season == s && $0.episode == e }) {
+                        MacEpisodePage(meta: item.meta, ep: ep, episodes: episodes, autoplay: true)
+                    } else {
+                        MacDetail(meta: item.meta)
+                    }
+                } else {
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity).background(Desk.bg)
+                }
+            } else {
+                MacDetail(meta: item.meta, autoplay: true)
+            }
+        }
+        .task {
+            guard item.meta.type == "series", episodes == nil else { return }
+            let full = await Catalog.fullMeta(session: session, type: "series", id: item.meta.id)
+            episodes = (full["videos"] as? [[String: Any]] ?? []).compactMap(Episode.init)
         }
     }
 }

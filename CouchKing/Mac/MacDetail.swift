@@ -9,6 +9,7 @@ struct MacDetail: View {
     @EnvironmentObject var session: Session
     @Environment(\.openURL) private var openURL
     let meta: Meta
+    var autoplay = false            // hero Resume on a movie: play the top stream on arrival
     @State private var full: [String: Any] = [:]
     @State private var providers: TMDB.Providers?
     @State private var trailer: TrailerId?
@@ -28,7 +29,7 @@ struct MacDetail: View {
                     head.padding(.vertical, 16)
                     if meta.type == "movie" && session.hasAddon {
                         DeskRowLabel(text: "Streams")
-                        StreamList(meta: meta)
+                        StreamList(meta: meta, autoplay: autoplay)
                     }
                     if meta.type == "series" { episodeList }
                 }
