@@ -21,7 +21,17 @@ struct SettingsView: View {
     init(embedded: Bool = false) { self.embedded = embedded }
 
     var body: some View {
-        if embedded { content } else { NavigationStack { content } }
+        if embedded { page } else { NavigationStack { page } }
+    }
+
+    /// Apple TV + Mac draw the Firestick / desktop settings hub (SettingsHub.swift); iPhone keeps
+    /// its grouped form.
+    @ViewBuilder private var page: some View {
+        #if os(tvOS) || os(macOS)
+        SettingsHub()
+        #else
+        content
+        #endif
     }
 
     private var content: some View {

@@ -54,7 +54,7 @@ struct TVShell: View {
                 case .discover: TVDiscover()
                 case .library: TVLibrary()
                 case .live: LiveTVView()
-                case .settings: SettingsView(embedded: true)
+                case .settings: SettingsView(embedded: true).environment(\.ckClose, { select(.home) })   // "‹" = back to Home
                 }
             }
             .navigationDestination(for: Meta.self) { TVDetail(meta: $0) }
