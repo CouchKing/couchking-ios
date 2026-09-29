@@ -120,9 +120,9 @@ struct LiveTVView: View {
                 .padding(.horizontal, 8).padding(.vertical, 3)
                 .background(live ? Color.red : Theme.panel, in: Capsule())
                 .foregroundStyle(.white)
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Platform.gutter)
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 8) {
+                LazyHStack(spacing: Platform.isTV ? 40 : 8) {
                     ForEach(games) { g in
                         Button { tune = g.meta } label: {
                             HStack(spacing: 8) {
@@ -142,8 +142,10 @@ struct LiveTVView: View {
                         .ckTile()
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Platform.gutter)
+                .padding(.vertical, Platform.isTV ? 36 : 0)   // room for the focus lift
             }
+            .ckFocusSection()
         }
     }
 
@@ -157,8 +159,10 @@ struct LiveTVView: View {
                         .foregroundStyle(chip == c ? .white : .primary)
                 }
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, Platform.gutter)
+            .padding(.vertical, Platform.isTV ? 36 : 0)   // room for the focus lift
         }
+        .ckFocusSection()
     }
 
     @ViewBuilder private func channelList(_ list: [LiveChannel], empty: String) -> some View {
@@ -393,9 +397,9 @@ struct GuideGrid: View {
         .padding(.horizontal, Platform.gutter)
         if !recent.isEmpty && day == 0 {
             VStack(alignment: .leading, spacing: 6) {
-                Text("↻ Continue watching").font(.caption.bold()).padding(.horizontal, 14)
+                Text("↻ Continue watching").font(.caption.bold()).padding(.horizontal, Platform.gutter)
                 ScrollView(.horizontal, showsIndicators: false) {
-                    LazyHStack(spacing: 8) {
+                    LazyHStack(spacing: Platform.isTV ? 40 : 8) {
                         ForEach(recent) { ch in
                             Button { onTune(ch) } label: {
                                 VStack(alignment: .leading, spacing: 2) {
@@ -408,8 +412,10 @@ struct GuideGrid: View {
                             .ckTile()
                         }
                     }
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, Platform.gutter)
+                    .padding(.vertical, Platform.isTV ? 36 : 0)   // room for the focus lift
                 }
+                .ckFocusSection()
             }
         }
         if guide.channels.isEmpty {
@@ -423,7 +429,7 @@ struct GuideGrid: View {
                     case .header(let t):
                         Text(t).font(.caption.bold()).foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 14).padding(.top, 8)
+                            .padding(.horizontal, Platform.gutter).padding(.top, 8)
                     case .channel(let ch):
                         GuideRow(channel: ch, dayStart: dayStart, windowW: windowW, now: now, scrollX: scrollX,
                                  isFav: guide.favs.contains(ch.id),

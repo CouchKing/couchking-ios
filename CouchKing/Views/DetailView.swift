@@ -41,7 +41,7 @@ struct DetailView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                .padding(.horizontal, 14).padding(.bottom, 20)
+                .padding(.horizontal, Platform.gutter).padding(.bottom, 20)
             }
         }
         .background(Theme.bg)
@@ -301,7 +301,7 @@ struct PersonView: View {
     let person: TMDB.Person
     @State private var credits: [Meta] = []
     @State private var loading = true
-    private let cols = [GridItem(.adaptive(minimum: 108), spacing: 10)]
+    private let cols = [GridItem(.adaptive(minimum: Platform.gridMin), spacing: Platform.isTV ? 40 : 10)]
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {

@@ -1339,7 +1339,7 @@ struct EpisodePanel: View {
                             Button("Season \(s)") { season = s }
                                 .buttonStyle(.bordered).tint(s == season ? Theme.accent : .gray)
                         }
-                    }.padding(.horizontal, 14)
+                    }.padding(.horizontal, Platform.gutter)
                 }
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -1362,7 +1362,7 @@ struct EpisodePanel: View {
                                 .buttonStyle(.plain)
                                 .id(ep.id)
                             }
-                        }.padding(.horizontal, 14)
+                        }.padding(.horizontal, Platform.gutter)
                     }
                     .onAppear { proxy.scrollTo(currentId, anchor: .center) }
                 }

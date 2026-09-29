@@ -200,7 +200,7 @@ struct HeroPager: View {
         }
         .tabViewStyle(.page(indexDisplayMode: .automatic))
         .frame(height: 230)
-        .padding(.horizontal, 14)
+        .padding(.horizontal, Platform.gutter)
         .simultaneousGesture(DragGesture().onChanged { _ in paused = true }.onEnded { _ in paused = false })
         .task { await rotate() }
     }
@@ -244,15 +244,17 @@ struct PosterRow: View {
     let metas: [Meta]
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.headline).padding(.horizontal, 14)
+            Text(title).font(.headline).padding(.horizontal, Platform.gutter)
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 10) {
+                LazyHStack(spacing: Platform.isTV ? 40 : 10) {
                     ForEach(metas) { m in
                         NavigationLink(value: m) { PosterCard(meta: m) }.ckTile()
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Platform.gutter)
+                .padding(.vertical, Platform.isTV ? 36 : 0)   // room for the focus lift
             }
+            .ckFocusSection()
         }
     }
 }
@@ -264,7 +266,7 @@ struct PosterCard: View {
     let meta: Meta
     var progress: Double = 0
     var newEps: Int = 0
-    var width: CGFloat = 108
+    var width: CGFloat = Platform.posterWidth
     var body: some View {
         let inLib = session.inLibrary(meta.id)
         let done = session.isWatched(meta.id)
@@ -342,9 +344,9 @@ struct ContinueRow: View {
     let onResume: (CWItem) -> Void
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Continue Watching").font(.headline).padding(.horizontal, 14)
+            Text("Continue Watching").font(.headline).padding(.horizontal, Platform.gutter)
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 10) {
+                LazyHStack(spacing: Platform.isTV ? 40 : 10) {
                     ForEach(items) { item in
                         Button { onResume(item) } label: {
                             PosterCard(meta: item.meta, progress: item.progress, newEps: item.newEps)
@@ -352,8 +354,10 @@ struct ContinueRow: View {
                         .ckTile()
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Platform.gutter)
+                .padding(.vertical, Platform.isTV ? 36 : 0)   // room for the focus lift
             }
+            .ckFocusSection()
         }
     }
 }
@@ -363,15 +367,17 @@ struct Top10Row: View {
     let metas: [Meta]
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Top 10 Today").font(.headline).padding(.horizontal, 14)
+            Text("Top 10 Today").font(.headline).padding(.horizontal, Platform.gutter)
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 2) {
+                LazyHStack(spacing: Platform.isTV ? 40 : 2) {
                     ForEach(Array(metas.enumerated()), id: \.element.id) { idx, m in
                         NavigationLink(value: m) { RankedCard(rank: idx + 1, meta: m) }.ckTile()
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Platform.gutter)
+                .padding(.vertical, Platform.isTV ? 36 : 0)   // room for the focus lift
             }
+            .ckFocusSection()
         }
     }
 }
@@ -379,18 +385,19 @@ struct Top10Row: View {
 struct RankedCard: View {
     let rank: Int
     let meta: Meta
+    private let k = Platform.posterWidth / 108   // scale the phone design for TV / Mac
     var body: some View {
-        HStack(alignment: .bottom, spacing: -16) {
+        HStack(alignment: .bottom, spacing: -16 * k) {
             Text("\(rank)")
-                .font(.system(size: 104, weight: .heavy)).italic()
+                .font(.system(size: 104 * k, weight: .heavy)).italic()
                 .foregroundStyle(Theme.card)
-                .frame(width: rank >= 10 ? 96 : 58, alignment: .trailing)
+                .frame(width: (rank >= 10 ? 96 : 58) * k, alignment: .trailing)
             AsyncImage(url: URL(string: meta.poster ?? "")) { img in
                 img.resizable().aspectRatio(contentMode: .fill)
             } placeholder: {
                 Theme.card.overlay(Image(systemName: "film").foregroundStyle(.secondary))
             }
-            .frame(width: 96, height: 144)
+            .frame(width: 96 * k, height: 144 * k)
             .clipShape(RoundedRectangle(cornerRadius: 8))
         }
         .titleMenu(meta)
@@ -419,7 +426,7 @@ struct GuestBanner: View {
             }
             .padding(12)
             .background(Theme.card, in: RoundedRectangle(cornerRadius: 12))
-            .padding(.horizontal, 14)
+            .padding(.horizontal, Platform.gutter)
         }
         .ckTile()
     }

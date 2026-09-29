@@ -126,6 +126,16 @@ extension View {
         #endif
     }
 
+    /// Apple TV / Mac: treat a row as one focus section so up/down moves row-to-row and focus
+    /// lands on the nearest tile (Firestick leanback rows). No-op on iPhone.
+    @ViewBuilder func ckFocusSection() -> some View {
+        #if os(tvOS) || os(macOS)
+        self.focusSection()
+        #else
+        self
+        #endif
+    }
+
     /// Poster / tile button look: the Apple TV "card" lift-and-shine on focus (Firestick's
     /// focused-poster scale), plain on phone, hover-lift on Mac.
     @ViewBuilder func ckTile() -> some View {

@@ -31,14 +31,14 @@ struct BrowseView: View {
                 AddonCatalog(["type": type, "id": "year", "name": "🆕 New this year", "genres": g])].compactMap { $0 }
     }
     private var current: AddonCatalog? { collections.first { $0.cid == collection } ?? collections.first }
-    private let cols = [GridItem(.adaptive(minimum: 108), spacing: 10)]
+    private let cols = [GridItem(.adaptive(minimum: Platform.gridMin), spacing: Platform.isTV ? 40 : 10)]
 
     var body: some View {
         VStack(spacing: 10) {
             Picker("", selection: $type) {
                 Text("Movies").tag("movie"); Text("Shows").tag("series"); Text("Anime").tag("anime")
             }
-            .pickerStyle(.segmented).padding(.horizontal, 14)
+            .pickerStyle(.segmented).padding(.horizontal, Platform.gutter)
             .onChange(of: type) { _ in
                 if type == "anime" { loadAnime(); return }
                 collection = collections.first?.cid ?? ""
@@ -64,7 +64,7 @@ struct BrowseView: View {
                             .background(current?.cid == c.cid ? Theme.accent : Theme.card, in: Capsule())
                             .foregroundStyle(current?.cid == c.cid ? .white : .primary)
                     }
-                }.padding(.horizontal, 14)
+                }.padding(.horizontal, Platform.gutter)
             }
             HStack(spacing: 8) {
                 if let c = current, !c.genres.isEmpty {
@@ -85,7 +85,7 @@ struct BrowseView: View {
                 } label: { dropdown(year == 0 ? "All years" : String(year)) }
                 Spacer()
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, Platform.gutter)
             ScrollView {
                 LazyVGrid(columns: cols, spacing: 12) {
                     ForEach(metas) { m in
@@ -93,7 +93,7 @@ struct BrowseView: View {
                             .onAppear { if m.id == metas.last?.id { loadMore() } }
                     }
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, Platform.gutter)
                 if loading { ProgressView().padding(.top, 20) }
                 if !loading && metas.isEmpty && done {
                     Text("Nothing here yet.").foregroundStyle(.secondary).padding(24)
