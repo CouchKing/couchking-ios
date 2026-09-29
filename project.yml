@@ -36,6 +36,7 @@ targets:
     settings:
       base:
         TARGETED_DEVICE_FAMILY: "1"   # iPhone first; iPad later
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon   # CouchKing/Assets.xcassets/AppIcon.appiconset (1024 → all sizes)
 
   # Apple TV — the Firestick-style leanback app (remote / focus driven). Streaming only.
   CouchKing-tvOS:
@@ -53,6 +54,9 @@ targets:
         UIBackgroundModes: [audio]
         UIUserInterfaceStyle: Dark
         ITSAppUsesNonExemptEncryption: false   # HTTPS only = exempt (same as iOS)
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"   # tvOS brand assets (layered icon + top shelf)
 
   # Mac — the desktop-app layout (resizable window, sidebar, hover, keyboard). Streaming only.
   CouchKing-macOS:
@@ -73,3 +77,6 @@ targets:
       properties:
         com.apple.security.app-sandbox: true
         com.apple.security.network.client: true   # API + video streams; nothing else
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon   # shared AppIcon set carries mac idiom sizes 16–1024
