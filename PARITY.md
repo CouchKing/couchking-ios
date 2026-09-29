@@ -18,24 +18,24 @@ player heartbeat/resume) — so sync is identical by construction. This table tr
 differs per platform. Status = compiles green on macos-15 CI; **nothing here is verified on
 hardware yet** (no Apple TV / Mac in the loop).
 
-| Area | iPhone | Apple TV (Firestick-style) | Mac (desktop-style) |
+| Area | iPhone | Apple TV = Firestick (`reference/android-tv`) | Mac = desktop (`reference/desktop`) |
 |---|---|---|---|
 | Builds on CI | ✅ | ✅ | ✅ |
-| Navigation shell | ✅ bottom tabs | ✅ top tabs, Home first (Firestick order) | ✅ sidebar (NavigationSplitView), 1360×860 window |
-| Home rows / hero / Top 10 / CW | ✅ | ✅ 10-foot posters, card focus lift, focus rows; hero = focused card, remote ←/→ pages it | ✅ hover lift, hero with ◀ ▶ arrows, pauses on hover |
-| Discover / Search / Library | ✅ | ✅ focusable grids + chips + search keyboard | ✅ |
-| Details / Episodes | ✅ | ✅ scaled header, thumbs, action circles; trailer hidden (no WKWebView); provider chips = labels only | ✅ trailer in web view; provider chips open the browser |
-| Player controls | ✅ touch + PiP + AirPlay | ✅ select = controls, ←/→ seek step, play/pause button, Menu = hide→exit, skip pill takes focus; progress bar (no Slider); PiP; no AirPlay (TV is the receiver) | ✅ space / ←→ / ↑↓ volume / M / F full screen, hover shows controls, PiP, AirPlay |
-| Player presentation | full-screen cover | full-screen cover | large sheet over the window (no full-screen cover on macOS) |
-| Live TV guide | ✅ drag timeline | ✅ focusable programme blocks, timeline follows focus; ★ via long-press context menu | ✅ drag + Earlier/Later; ★ via right-click |
-| Settings / shelves reorder | ✅ drag | ✅ ↑/↓ buttons | ✅ drag |
+| Navigation shell | ✅ bottom tabs | ✅ 64dp icon rail over the board, snaps to 190dp + labels on focus; Search · Home · Discover · Library · [Live TV] · Settings; Menu pops → Home → rail → exit | ✅ 64px rail, expands to 200px on hover; same order; no window toolbar, "‹ Back" on pages |
+| Home | ✅ | ✅ board: focused title's backdrop + 470dp info column, rows below the 232dp line, narration + idle showcase; CW · Top 10 Today · For You · shelves | ✅ static hero (CW #1 else trending #1), Resume → episode page / details auto-play; CW · Top 10 Today · For You — Movies / Series · shelves |
+| Posters / Top 10 | ✅ | ✅ 112×168dp, scale-only focus 1.08, badges, 118sp numerals | ✅ 146×219, hover 1.055 + accent outline, badges, hover ✕ on CW |
+| Discover / Search / Library | ✅ | ✅ dropdown pickers, strips of 15 | ✅ Menu pickers, strips of 15 |
+| Details / Episodes | ✅ | ✅ 480dp column, genre chips, 54dp round actions, stream card strip, continuous episode strip → episode page | ✅ 380px backdrop, 210×315 poster, ghost buttons, inline `.stream` rows, 150×84 episode rows → episode page |
+| Player | ✅ touch + PiP + AirPlay | ✅ Firestick controller: top bar (‹ · title · clock / Ends), center play/pause, purple time bar, captioned cells (Next · Episodes · Subtitles · Sub Size · Size · Audio · Speed · Info), 5s hide, OK = play/pause, arrows show controls on the time bar, Menu peels one layer, episode drawer / captions panel / sheets | ✅ in-window overlay (not a sheet): top bar, 6px scrubber, labeled cells (Back 10s · Play · Fwd 10s · Next · Subtitles · Sub Size · Size · Speed · Info · Volume · Fullscreen), 3s idle fade, click = play/pause, keys Space / ← → / Esc only; no PiP / AirPlay / audio menu (desktop has none) |
+| Live TV | ✅ drag timeline | ✅ Live TV + 🌎 region chip, LIVE NOW / Upcoming strips, search, chips (Guide focused), day tabs, ↻ strip, 150dp column / 52dp rows / 4dp per min, focus pans the shared lane; ★ via long-press menu | ✅ h2 + region select, `.lvb` banner, `.lv-chips` + inline search, EPG box (210px column, 30px header, 260px / 30 min, 56px rows, red now-line) panned by trackpad / shift-wheel, `.lvg-chrow` rows with ☆ ▶ |
+| Settings | ✅ grouped form | ✅ hub: user card, value rows (#2C2649 focus fill), Player / Addons / Legal / Shelves / Reorder (▲▼) sub-pages | ✅ hub: `.user-card`, `.srow` rows (560px), same sub-pages, ▲▼ reorder |
 | Downloads | ❌ none (by design) | ❌ none (by design) | ❌ none (by design) |
 | Signing / TestFlight | main session | main session | main session |
 
-Reference apps (`/data/couchking-tv`, `/data/couchking-desktop`) were not available to this build;
-the TV/desktop UX follows the Android TV + desktop behavior described in this file and
-IOS_CONTRACTS.md. Compare against the real Firestick / desktop builds on hardware and file gaps
-as rows here.
+The Apple TV and Mac UX are ported from the real apps in `reference/` (Firestick
+`MainActivity.kt` / `PlayerActivity.kt`, desktop `style.css` / `app.js`), using their exact
+sizes and colours (1dp = 2pt on Apple TV, 1rem = 16px on Mac). Everything is compile-verified
+on CI only — layout, focus and hover still need a look on real Apple TV / Mac hardware.
 
 ## 1. Auth & Accounts
 
