@@ -5,11 +5,29 @@ import AVKit
 // (not AVPlayerViewController / SwiftUI VideoPlayer) so an AVPictureInPictureController can be
 // attached to it and started from our own top-corner button. Our overlay supplies every control.
 
+#if os(macOS)
+/// An NSView hosting an AVPlayerLayer that tracks the view's bounds.
+final class PlayerLayerView: NSView {
+    let playerLayer = AVPlayerLayer()
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer = CALayer()
+        layer?.backgroundColor = NSColor.black.cgColor
+        playerLayer.frame = bounds
+        playerLayer.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
+        layer?.addSublayer(playerLayer)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override func layout() { super.layout(); playerLayer.frame = bounds }
+}
+#else
 /// A UIView whose backing layer IS the AVPlayerLayer (resizes with the view, no manual frames).
 final class PlayerLayerView: UIView {
     override static var layerClass: AnyClass { AVPlayerLayer.self }
     var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
 }
+#endif
 
 /// Owns the PiP controller for one player surface and publishes whether PiP is possible
 /// (the item must be ready) and whether the pop-out is currently showing.
@@ -26,8 +44,10 @@ final class PiPModel: NSObject, ObservableObject, AVPictureInPictureControllerDe
     func attach(_ layer: AVPlayerLayer) {
         guard controller == nil, Self.supported,
               let c = AVPictureInPictureController(playerLayer: layer) else { return }
+        #if os(iOS)
         // swiping home / locking mid-playback pops the video out automatically
         c.canStartPictureInPictureAutomaticallyFromInline = true
+        #endif
         c.delegate = self
         controller = c
         possibleObs = c.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { [weak self] c, _ in
@@ -65,35 +85,53 @@ final class PiPModel: NSObject, ObservableObject, AVPictureInPictureControllerDe
 }
 
 /// The video surface: AVPlayerLayer with the aspect-cycle gravity, PiP attached on creation.
-struct PlayerSurface: UIViewRepresentable {
+struct PlayerSurface {
     let player: AVPlayer
     let gravity: AVLayerVideoGravity
     let pip: PiPModel
 
-    func makeUIView(context: Context) -> PlayerLayerView {
+    private func make() -> PlayerLayerView {
         let v = PlayerLayerView()
+        #if !os(macOS)
         v.backgroundColor = .black
+        #endif
         v.playerLayer.player = player
         v.playerLayer.videoGravity = gravity
         pip.attach(v.playerLayer)
         return v
     }
-
-    func updateUIView(_ v: PlayerLayerView, context: Context) {
+    private func update(_ v: PlayerLayerView) {
         if v.playerLayer.player !== player { v.playerLayer.player = player }
         if v.playerLayer.videoGravity != gravity { v.playerLayer.videoGravity = gravity }
     }
 }
 
+#if os(macOS)
+extension PlayerSurface: NSViewRepresentable {
+    func makeNSView(context: Context) -> PlayerLayerView { make() }
+    func updateNSView(_ v: PlayerLayerView, context: Context) { update(v) }
+}
+#else
+extension PlayerSurface: UIViewRepresentable {
+    func makeUIView(context: Context) -> PlayerLayerView { make() }
+    func updateUIView(_ v: PlayerLayerView, context: Context) { update(v) }
+}
+#endif
+
 /// Audio session for video: `.playback` keeps sound going with the ringer switch on silent,
 /// with the screen locked, in the background, and in the PiP window (needs UIBackgroundModes
 /// audio, already in project.yml).
+/// (The Mac has no audio session to configure.)
 enum PlaybackAudio {
     static func configure() {
+        #if os(iOS) || os(tvOS)
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [])
+        #endif
     }
     static func activate() {
+        #if os(iOS) || os(tvOS)
         configure()
         try? AVAudioSession.sharedInstance().setActive(true)
+        #endif
     }
 }

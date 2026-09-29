@@ -62,4 +62,47 @@ jobs:
             shot-home.png
             CouchKing-unsigned.ipa
             CouchKing-Simulator.app.zip
-  # TestFlight lane activates once the Apple Developer account + signing secrets exist.
+
+  # Apple TV compile check (unsigned). Signing / TestFlight lanes are owned by the main session.
+  compile-tvos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate
+      - name: Build for tvOS simulator
+        run: |
+          set -o pipefail
+          xcodebuild -project CouchKing.xcodeproj -scheme CouchKing-tvOS \
+            -destination 'generic/platform=tvOS Simulator' \
+            -derivedDataPath dd-tv CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build-tvos.log | tail -20
+      - name: Surface errors
+        if: failure()
+        run: grep -E "error:" build-tvos.log | sort -u | head -60
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: build-log-tvos, path: build-tvos.log }
+
+  # Mac compile check (unsigned). Signing / TestFlight lanes are owned by the main session.
+  compile-macos:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Generate project
+        run: xcodegen generate
+      - name: Build for macOS
+        run: |
+          set -o pipefail
+          xcodebuild -project CouchKing.xcodeproj -scheme CouchKing-macOS \
+            -destination 'generic/platform=macOS' \
+            -derivedDataPath dd-mac CODE_SIGNING_ALLOWED=NO build 2>&1 | tee build-macos.log | tail -20
+      - name: Surface errors
+        if: failure()
+        run: grep -E "error:" build-macos.log | sort -u | head -60
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: build-log-macos, path: build-macos.log }

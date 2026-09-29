@@ -74,11 +74,11 @@ struct EpisodesView: View {
         }
         .sheet(item: $pick) { ep in
             StreamSheet(meta: meta, season: ep.season, episode: ep.episode, episodes: all)
-                .presentationDetents([.medium, .large])
+                .ckDetents()
         }
         .sheet(item: $detail) { ep in
             EpisodeDetailView(meta: meta, ep: ep, episodes: all)
-                .presentationDetents([.medium, .large])
+                .ckDetents()
         }
     }
 }
@@ -209,10 +209,10 @@ struct EpisodeDetailView: View {
             }
             .background(Theme.bg)
             .navigationTitle("Episode \(ep.episode)")
-            .navigationBarTitleDisplayMode(.inline)
+            .ckInlineTitle()
             .sheet(isPresented: $showStreams) {
                 StreamSheet(meta: meta, season: ep.season, episode: ep.episode, episodes: episodes)
-                    .presentationDetents([.medium, .large])
+                    .ckDetents()
             }
         }
     }
@@ -296,7 +296,7 @@ struct StreamList: View {
                     .padding(10)
                     .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
                 }
-                .buttonStyle(.plain)
+                .ckTile()
             }
         }
         .overlay {
@@ -308,7 +308,7 @@ struct StreamList: View {
             }
         }
         .task { await load() }
-        .fullScreenCover(item: $play) { req in PlayerView(request: req) }
+        .ckFullScreenCover(item: $play) { req in PlayerView(request: req) }
     }
 
     /// Stream → PlayRequest (windows riding on the stream object override /player/resume).
@@ -394,7 +394,7 @@ struct StreamSheet: View {
             }
             .background(Theme.bg)
             .navigationTitle(season != nil ? "S\(season!)E\(episode!)" : meta.name)
-            .navigationBarTitleDisplayMode(.inline)
+            .ckInlineTitle()
         }
     }
 }

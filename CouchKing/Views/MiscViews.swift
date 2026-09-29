@@ -14,7 +14,7 @@ struct ProfilePickerView: View {
                             Text(p.name).font(.subheadline)
                         }
                     }
-                    .buttonStyle(.plain)
+                    .ckTile()
                 }
             }
             .padding(.horizontal, 24)
@@ -116,7 +116,7 @@ struct PeopleRow: View {
                                 Text(p.name).font(.caption2).lineLimit(1).frame(width: 84)
                             }
                         }
-                        .buttonStyle(.plain)
+                        .ckTile()
                     }
                 }
                 .padding(.horizontal, 14)
@@ -236,7 +236,7 @@ struct LibraryRow: View {
                     ForEach(metas) { m in
                         NavigationLink(value: m) {
                             PosterCard(meta: m, newEps: newEps[m.id]?.count ?? 0)
-                        }.buttonStyle(.plain)
+                        }.ckTile()
                     }
                 }
                 .padding(.horizontal, 14)
@@ -269,7 +269,7 @@ struct LiveTuneView: View {
                 .padding(16)
             }
             .background(Theme.bg)
-            .toolbar { ToolbarItem(placement: .topBarLeading) { Button("Back") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .ckLeading) { Button("Back") { dismiss() } } }
         }
     }
 }

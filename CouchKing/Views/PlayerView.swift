@@ -1,5 +1,8 @@
 import SwiftUI
 import AVKit
+#if os(macOS)
+import AppKit
+#endif
 
 // Player — Android PlayerActivity parity: /webplay remux fallback (initial open + mid-play
 // stall), resume (local → server → mid-play reconcile), Skip Intro / Skip Recap with handled
@@ -77,6 +80,9 @@ struct PlayerView: View {
     @State private var hideTask: Task<Void, Never>?
     @State private var scrubbing = false
     @State private var scrubMs: Double = 0
+    // remote / keyboard focus (Apple TV: the Firestick-style "controls hidden → arrows seek")
+    enum PFocus: Hashable { case picture, skip, play }
+    @FocusState private var pfocus: PFocus?
 
     private var isLive: Bool { request.meta.type == "tv" }
     /// The url actually playing (the real file after a placeholder hot-swap).
@@ -95,10 +101,10 @@ struct PlayerView: View {
         ZStack {
             PlayerSurface(player: player, gravity: gravity, pip: pip)
                 .ignoresSafeArea()
-            // tap on the picture = show/hide the controls (buttons above keep their own taps)
-            Color.clear.contentShape(Rectangle())
-                .ignoresSafeArea()
-                .onTapGesture { toggleControls() }
+            // tap on the picture = show/hide the controls (buttons above keep their own taps).
+            // On Apple TV this layer is the remote's landing spot while the controls are hidden:
+            // select shows them, left/right seek by the seek step, up/down show the controls.
+            pictureCatcher
             if !firstFrame && !failed { loadingScreen }
             overlay
             if placeholder { placeholderBanner }
@@ -109,12 +115,26 @@ struct PlayerView: View {
         .background(.black)
         // any tap during an episode = someone's there → the idle chain resets
         .simultaneousGesture(TapGesture().onEnded { epTouched = true })
+        #if os(tvOS)
+        .onPlayPauseCommand { togglePlay() }
+        .onExitCommand {   // Menu: first hide the controls, then leave the player
+            if controlsVisible && playing { hideTask?.cancel(); controlsVisible = false; pfocus = .picture }
+            else { dismiss() }
+        }
+        .onChange(of: skipKey) { k in if !k.isEmpty { pfocus = .skip } }   // skip pill takes focus
+        #endif
+        #if os(macOS)
+        .background { keyboardShortcuts }
+        .onContinuousHover { phase in
+            if case .active = phase { if !controlsVisible { controlsVisible = true }; scheduleHide() }
+        }
+        #endif
         .onAppear { Task { await start() } }
         .onDisappear { stop() }
-        .fullScreenCover(item: $nextEpisode) { req in PlayerView(request: req) }
+        .ckFullScreenCover(item: $nextEpisode) { req in PlayerView(request: req) }
         .sheet(isPresented: $showSubPanel) {
             SubtitlePanel(tracks: subTracks, index: $subIndex, onPick: { pickSub($0) })
-                .presentationDetents([.medium, .large])
+                .ckDetents()
         }
         .sheet(isPresented: $showEpisodes) {
             EpisodePanel(meta: request.meta, episodes: request.episodes,
@@ -123,7 +143,7 @@ struct PlayerView: View {
                 epTouched = true
                 Task { await playEpisode(ep, idle: 0) }
             }
-            .presentationDetents([.medium, .large])
+            .ckDetents()
         }
     }
 
@@ -236,9 +256,11 @@ struct PlayerView: View {
                 .opacity(pip.possible || pip.active ? 1 : 0.4)
                 .accessibilityLabel(pip.active ? "Exit picture in picture" : "Picture in picture")
             }
-            AirPlayButton()
-                .frame(width: 40, height: 40)
-                .background(.black.opacity(0.5), in: Circle())
+            if !Platform.isTV {
+                AirPlayButton()
+                    .frame(width: 40, height: 40)
+                    .background(.black.opacity(0.5), in: Circle())
+            }
             Menu { menuItems } label: {
                 Image(systemName: "ellipsis").padding(10)
                     .background(.black.opacity(0.5), in: Circle())
@@ -258,6 +280,7 @@ struct PlayerView: View {
                     .foregroundStyle(.white)
             }
             .accessibilityLabel(playing ? "Pause" : "Play")
+            .focused($pfocus, equals: .play)
             if isLive {
                 Text("LIVE").font(.caption2.bold())
                     .padding(.horizontal, 6).padding(.vertical, 3)
@@ -267,6 +290,16 @@ struct PlayerView: View {
             } else if durMs > 0 && !placeholder {
                 let shown = scrubbing ? Int(scrubMs) : posMs
                 Text(clock(shown)).font(.caption.monospacedDigit()).foregroundStyle(.white)
+                #if os(tvOS)
+                GeometryReader { g in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(.white.opacity(0.3))
+                        Capsule().fill(Theme.accent)
+                            .frame(width: g.size.width * CGFloat(Double(shown) / Double(max(durMs, 1))))
+                    }
+                }
+                .frame(height: 8)
+                #else
                 Slider(value: Binding(get: { scrubbing ? scrubMs : Double(posMs) },
                                       set: { scrubMs = $0 }),
                        in: 0...Double(max(durMs, 1)),
@@ -279,6 +312,7 @@ struct PlayerView: View {
                            }
                        })
                     .tint(Theme.accent)
+                #endif
                 Text("-" + clock(max(0, durMs - shown))).font(.caption.monospacedDigit()).foregroundStyle(.white)
             } else {
                 Spacer()
@@ -287,6 +321,66 @@ struct PlayerView: View {
         .padding(.horizontal, 20)
         .padding(.bottom, 28)
     }
+
+    /// The picture itself: tap (phone/Mac) toggles the controls. On Apple TV it is focusable while
+    /// the controls are hidden — select shows them, left/right seek (Firestick remote), up/down
+    /// bring the controls back.
+    @ViewBuilder private var pictureCatcher: some View {
+        #if os(tvOS)
+        Color.clear
+            .ignoresSafeArea()
+            .focusable(!controlsVisible)
+            .focused($pfocus, equals: .picture)
+            .onTapGesture { toggleControls() }
+            .onMoveCommand { dir in
+                epTouched = true
+                switch dir {
+                case .left: remoteSeek(-1)
+                case .right: remoteSeek(1)
+                default: showControls()
+                }
+            }
+        #else
+        Color.clear.contentShape(Rectangle())
+            .ignoresSafeArea()
+            .onTapGesture { toggleControls() }
+        #endif
+    }
+
+    private func remoteSeek(_ dir: Int) {
+        guard !isLive, !placeholder else { showControls(); return }
+        let step = session.pref("seekStep", 10) * 1000
+        seek(ms: max(0, posMs + dir * step))
+        flashLabel(dir < 0 ? "⟲ \(step / 1000)s" : "⟳ \(step / 1000)s")
+    }
+
+    private func showControls() {
+        controlsVisible = true
+        #if os(tvOS)
+        pfocus = .play
+        #endif
+        scheduleHide()
+    }
+
+    #if os(macOS)
+    /// Desktop keyboard: space = play/pause, ←/→ = seek step, ↑/↓ = volume, F = full screen,
+    /// M = mute. Invisible buttons keep the shortcuts live even with the controls hidden.
+    private var keyboardShortcuts: some View {
+        ZStack {
+            Button("") { togglePlay() }.keyboardShortcut(.space, modifiers: [])
+            Button("") { remoteSeek(-1) }.keyboardShortcut(.leftArrow, modifiers: [])
+            Button("") { remoteSeek(1) }.keyboardShortcut(.rightArrow, modifiers: [])
+            Button("") { player.volume = min(1, player.volume + 0.1); flashLabel("Volume \(Int(player.volume * 100))%") }
+                .keyboardShortcut(.upArrow, modifiers: [])
+            Button("") { player.volume = max(0, player.volume - 0.1); flashLabel("Volume \(Int(player.volume * 100))%") }
+                .keyboardShortcut(.downArrow, modifiers: [])
+            Button("") { player.isMuted.toggle(); flashLabel(player.isMuted ? "Muted" : "Sound on") }
+                .keyboardShortcut("m", modifiers: [])
+            Button("") { NSApp.keyWindow?.toggleFullScreen(nil) }.keyboardShortcut("f", modifiers: [])
+        }
+        .opacity(0).frame(width: 0, height: 0).accessibilityHidden(true)
+    }
+    #endif
 
     private func togglePlay() {
         epTouched = true
@@ -303,8 +397,12 @@ struct PlayerView: View {
     /// Tap the picture: show the controls (and re-arm the auto-hide), or hide them.
     private func toggleControls() {
         epTouched = true
-        if controlsVisible { hideTask?.cancel(); controlsVisible = false }
-        else { controlsVisible = true; scheduleHide() }
+        if controlsVisible {
+            hideTask?.cancel(); controlsVisible = false
+            #if os(tvOS)
+            pfocus = .picture
+            #endif
+        } else { showControls() }
     }
 
     /// Controls fade out 4s after the last interaction while playing; they stay while paused
@@ -314,7 +412,12 @@ struct PlayerView: View {
         hideTask = Task {
             try? await Task.sleep(for: .seconds(4))
             guard !Task.isCancelled else { return }
-            if playing && !scrubbing && !showSubPanel && !showEpisodes { controlsVisible = false }
+            if playing && !scrubbing && !showSubPanel && !showEpisodes {
+                controlsVisible = false
+                #if os(tvOS)
+                if pfocus != .skip { pfocus = .picture }
+                #endif
+            }
         }
     }
 
@@ -404,7 +507,7 @@ struct PlayerView: View {
     @ViewBuilder private var skipButton: some View {
         if placeholder { EmptyView() }
         else if let st = skipState {
-            SkipPill(text: st.0) {
+            SkipPill(text: st.0, focus: $pfocus) {
                 epTouched = true
                 if st.0 == "Skip Recap" { recapHandled = true }
                 if st.0 == "Skip Intro" { introHandled = true }
@@ -538,7 +641,7 @@ struct PlayerView: View {
 
     private func start() async {
         // keep-screen-on while playing (Android FLAG_KEEP_SCREEN_ON fix, Sep 18)
-        UIApplication.shared.isIdleTimerDisabled = true
+        Platform.keepAwake(true)
         PlaybackAudio.activate()   // .playback: sound on silent, in background, in the PiP window
         scaleMode = session.pref("scaleMode", "fit")
         if !isLive {
@@ -1096,7 +1199,7 @@ struct PlayerView: View {
     }
 
     private func stop() {
-        UIApplication.shared.isIdleTimerDisabled = false
+        Platform.keepAwake(false)
         let pos = max(Int(player.currentTime().seconds * 1000), posMs)
         posMs = pos
         if let d = player.currentItem?.duration.seconds, d.isFinite, d > 0 { durMs = Int(d * 1000) }
@@ -1127,8 +1230,16 @@ struct PlayerView: View {
 // MARK: - pieces
 
 struct SkipPill: View {
-    let text: String, action: () -> Void
+    let text: String
+    var focus: FocusState<PlayerView.PFocus?>.Binding? = nil
+    let action: () -> Void
+    init(text: String, focus: FocusState<PlayerView.PFocus?>.Binding? = nil, action: @escaping () -> Void) {
+        self.text = text; self.focus = focus; self.action = action
+    }
     var body: some View {
+        if let focus { pill.focused(focus, equals: .skip) } else { pill }
+    }
+    private var pill: some View {
         Button(action: action) {
             Text(text).font(.subheadline.bold())
                 .padding(.horizontal, 16).padding(.vertical, 10)
@@ -1204,7 +1315,7 @@ struct SubtitlePanel: View {
                 }
             }
             .navigationTitle("Subtitles")
-            .navigationBarTitleDisplayMode(.inline)
+            .ckInlineTitle()
         }
     }
 }
@@ -1260,7 +1371,7 @@ struct EpisodePanel: View {
             .padding(.top, 10)
             .background(Theme.bg)
             .navigationTitle(meta.name)
-            .navigationBarTitleDisplayMode(.inline)
+            .ckInlineTitle()
             .onAppear {
                 season = episodes.first { $0.id == currentId }?.season ?? seasons.first ?? 0
             }
@@ -1269,7 +1380,9 @@ struct EpisodePanel: View {
 }
 
 // Native AirPlay route button — casts the actual video to an Apple TV / AirPlay device (reliable,
-// unlike the web transcode). Also lists other output routes.
+// unlike the web transcode). Also lists other output routes. Apple TV itself is the AirPlay
+// receiver, so tvOS shows nothing here.
+#if os(iOS)
 struct AirPlayButton: UIViewRepresentable {
     func makeUIView(context: Context) -> AVRoutePickerView {
         let v = AVRoutePickerView()
@@ -1280,6 +1393,18 @@ struct AirPlayButton: UIViewRepresentable {
     }
     func updateUIView(_ v: AVRoutePickerView, context: Context) {}
 }
+#elseif os(macOS)
+struct AirPlayButton: NSViewRepresentable {
+    func makeNSView(context: Context) -> AVRoutePickerView {
+        let v = AVRoutePickerView()
+        v.isRoutePickerButtonBordered = false
+        return v
+    }
+    func updateNSView(_ v: AVRoutePickerView, context: Context) {}
+}
+#else
+struct AirPlayButton: View { var body: some View { EmptyView() } }
+#endif
 
 // Minimal SRT/VTT cue parser — covers the addon's ranked subtitle files.
 struct SubCue {

@@ -1,10 +1,21 @@
 # XcodeGen project definition — CI runs `xcodegen generate` then xcodebuild.
 # No .pbxproj in git = no merge pain; add files by just adding them to CouchKing/.
+# One codebase, three platforms, ONE bundle id (universal purchase): iPhone, Apple TV, Mac.
 name: CouchKing
 options:
   bundleIdPrefix: app.couchking
   deploymentTarget:
     iOS: "16.0"
+    tvOS: "17.0"
+    macOS: "13.0"
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: app.couchking.ios
+    PRODUCT_NAME: CouchKing
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEVELOPMENT_TEAM: "9DQ4PK94U6"
+    SWIFT_VERSION: "5.9"
 targets:
   CouchKing:
     type: application
@@ -23,8 +34,35 @@ targets:
         UIBackgroundModes: [audio]   # keep playing with screen off, like Android
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: app.couchking.ios
-        MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1"   # iPhone first; iPad later
-        SWIFT_VERSION: "5.9"
+
+  # Apple TV — the Firestick-style leanback app (remote / focus driven). Streaming only.
+  CouchKing-tvOS:
+    type: application
+    platform: tvOS
+    sources: [CouchKing]
+    info:
+      path: Platforms/tvOS/Info.plist
+      properties:
+        CFBundleDisplayName: CouchKing
+        UILaunchScreen: {}
+        NSAppTransportSecurity: { NSAllowsArbitraryLoads: false }
+        UIBackgroundModes: [audio]
+        UIUserInterfaceStyle: Dark
+
+  # Mac — the desktop-app layout (resizable window, sidebar, hover, keyboard). Streaming only.
+  CouchKing-macOS:
+    type: application
+    platform: macOS
+    sources: [CouchKing]
+    info:
+      path: Platforms/macOS/Info.plist
+      properties:
+        CFBundleDisplayName: CouchKing
+        LSApplicationCategoryType: public.app-category.entertainment
+        NSAppTransportSecurity: { NSAllowsArbitraryLoads: false }
+    entitlements:
+      path: Platforms/macOS/CouchKing.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true   # API + video streams; nothing else

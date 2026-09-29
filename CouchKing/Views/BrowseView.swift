@@ -89,7 +89,7 @@ struct BrowseView: View {
             ScrollView {
                 LazyVGrid(columns: cols, spacing: 12) {
                     ForEach(metas) { m in
-                        NavigationLink(value: m) { PosterCard(meta: m) }.buttonStyle(.plain)
+                        NavigationLink(value: m) { PosterCard(meta: m) }.ckTile()
                             .onAppear { if m.id == metas.last?.id { loadMore() } }
                     }
                 }
@@ -175,7 +175,7 @@ struct DiscoverTab: View {
         NavigationStack {
             BrowseView()
                 .navigationTitle("Discover")
-                .navigationBarTitleDisplayMode(.inline)
+                .ckInlineTitle()
                 .navigationDestination(for: Meta.self) { DetailView(meta: $0) }
         }
     }

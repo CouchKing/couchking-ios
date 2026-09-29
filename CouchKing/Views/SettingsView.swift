@@ -84,7 +84,7 @@ struct SettingsView: View {
                 if !err.isEmpty { Text(err).font(.caption).foregroundStyle(.red) }
             } else {
                 TextField("Email", text: $email)
-                    .keyboardType(.emailAddress).textInputAutocapitalization(.never)
+                    .ckEmailField()
                 SecureField("Password", text: $password)
                 if creating { TextField("Your name", text: $name) }
                 if !err.isEmpty { Text(err).font(.caption).foregroundStyle(.red) }
@@ -139,7 +139,7 @@ struct SettingsView: View {
                     }
                 }
                 TextField("Access code", text: $addonCode)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    .ckCodeField()
                 if !addonMsg.isEmpty { Text(addonMsg).font(.caption).foregroundStyle(.secondary) }
                 Button(probing ? "Checking…" : "Add addon") { addAddon() }
                     .disabled(probing || addonCode.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -272,13 +272,13 @@ struct ForgotPasswordView: View {
                 Text("We'll email you a 6-digit code — it expires in 15 minutes.")
                     .font(.footnote).foregroundStyle(.secondary)
                 TextField("Email", text: $email)
-                    .keyboardType(.emailAddress).textInputAutocapitalization(.never)
+                    .ckEmailField()
                 Button("Email me the code") { sendCode() }
                     .disabled(!email.contains("@") || !email.contains("."))
             }
             if sent {
                 Section {
-                    TextField("6-digit code", text: $code).keyboardType(.numberPad)
+                    TextField("6-digit code", text: $code).ckNumberField()
                     SecureField("New password (4+ characters)", text: $pass)
                     SecureField("Confirm new password", text: $pass2)
                     Button("Set new password") { reset() }
@@ -341,18 +341,23 @@ struct ProfileEditView: View {
             // avatar AND color picker (Android addAvatarColorPicker) — the hue drives the tile everywhere
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 52))]) {
                 ForEach(avatars, id: \.self) { a in
-                    Text(a).font(.system(size: 32))
-                        .frame(width: 48, height: 48)
-                        .background(a == avatar ? Theme.accent.opacity(0.4) : .clear,
-                                    in: RoundedRectangle(cornerRadius: 10))
-                        .onTapGesture { avatar = a }
+                    // buttons (not tap gestures) so the Siri Remote can focus them
+                    Button { avatar = a } label: {
+                        Text(a).font(.system(size: 32))
+                            .frame(width: 48, height: 48)
+                            .background(a == avatar ? Theme.accent.opacity(0.4) : .clear,
+                                        in: RoundedRectangle(cornerRadius: 10))
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             HStack(spacing: 10) {
                 ForEach(Profile.colors, id: \.self) { c in
-                    Circle().fill(Profile.tint(c)).frame(width: 28, height: 28)
-                        .overlay(Circle().stroke(.white, lineWidth: c == color ? 3 : 0))
-                        .onTapGesture { color = c }
+                    Button { color = c } label: {
+                        Circle().fill(Profile.tint(c)).frame(width: 28, height: 28)
+                            .overlay(Circle().stroke(.white, lineWidth: c == color ? 3 : 0))
+                    }
+                    .buttonStyle(.plain)
                 }
             }
             Button(profile == nil ? "Create" : "Save") {
@@ -461,6 +466,20 @@ struct ShelfReorderView: View {
     @EnvironmentObject var session: Session
     var body: some View {
         List {
+            #if os(tvOS)
+            // no drag on the remote: move a shelf up / down with the buttons (Firestick reorder screen)
+            let shelves = session.enabledShelves()
+            ForEach(Array(shelves.enumerated()), id: \.element.id) { i, c in
+                HStack {
+                    Text(c.name); Spacer()
+                    Text(c.type == "movie" ? "Movies" : "Shows").font(.caption).foregroundStyle(.secondary)
+                    Button { move(i, by: -1) } label: { Image(systemName: "chevron.up") }
+                        .disabled(i == 0)
+                    Button { move(i, by: 1) } label: { Image(systemName: "chevron.down") }
+                        .disabled(i == shelves.count - 1)
+                }
+            }
+            #else
             ForEach(session.enabledShelves()) { c in
                 HStack { Text(c.name); Spacer()
                     Text(c.type == "movie" ? "Movies" : "Shows").font(.caption).foregroundStyle(.secondary) }
@@ -470,9 +489,22 @@ struct ShelfReorderView: View {
                 keys.move(fromOffsets: from, toOffset: to)
                 session.setShelves(keys)
             }
+            #endif
         }
+        #if os(iOS)
         .environment(\.editMode, .constant(.active))
+        #endif
         .navigationTitle("Reorder shelves")
+    }
+}
+
+extension ShelfReorderView {
+    fileprivate func move(_ i: Int, by d: Int) {
+        var keys = session.enabledShelves().map(\.id)
+        let j = i + d
+        guard keys.indices.contains(i), keys.indices.contains(j) else { return }
+        keys.swapAt(i, j)
+        session.setShelves(keys)
     }
 }
 
@@ -504,7 +536,7 @@ struct LegalTextView: View {
         ScrollView { Text(text).font(.callout).padding(16).frame(maxWidth: .infinity, alignment: .leading) }
             .background(Theme.bg)
             .navigationTitle(title)
-            .navigationBarTitleDisplayMode(.inline)
+            .ckInlineTitle()
     }
 }
 

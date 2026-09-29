@@ -1,0 +1,161 @@
+import SwiftUI
+#if canImport(UIKit)
+import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
+
+// One codebase, three platforms. Everything that differs between iPhone, Apple TV (Firestick-
+// style leanback, remote/focus driven) and Mac (desktop-app layout, pointer + keyboard) goes
+// through here, so the views stay single-source.
+enum Platform {
+    #if os(tvOS)
+    static let isTV = true, isMac = false, isPhone = false
+    #elseif os(macOS)
+    static let isTV = false, isMac = true, isPhone = false
+    #else
+    static let isTV = false, isMac = false, isPhone = true
+    #endif
+
+    /// Poster tile width: phone rows, 10-foot TV rows, desktop grid.
+    static var posterWidth: CGFloat { isTV ? 230 : (isMac ? 150 : 108) }
+    /// Row side gutter (TV safe area is wider).
+    static var gutter: CGFloat { isTV ? 60 : (isMac ? 24 : 14) }
+    /// Hero carousel height.
+    static var heroHeight: CGFloat { isTV ? 520 : (isMac ? 360 : 230) }
+    /// Tiles per adaptive-grid column minimum.
+    static var gridMin: CGFloat { posterWidth }
+
+    #if os(macOS)
+    private static var awake: NSObjectProtocol?
+    #endif
+    /// Keep the display awake while video plays (iOS/tvOS idle timer, Mac display-sleep assertion).
+    @MainActor
+    static func keepAwake(_ on: Bool) {
+        #if os(iOS) || os(tvOS)
+        UIApplication.shared.isIdleTimerDisabled = on
+        #elseif os(macOS)
+        if on, awake == nil {
+            awake = ProcessInfo.processInfo.beginActivity(options: [.idleDisplaySleepDisabled, .userInitiated],
+                                                          reason: "Playing video")
+        } else if !on, let a = awake {
+            ProcessInfo.processInfo.endActivity(a); awake = nil
+        }
+        #endif
+    }
+}
+
+extension ToolbarItemPlacement {
+    /// Top-right on iPhone; the platform default elsewhere.
+    static var ckTrailing: ToolbarItemPlacement {
+        #if os(iOS)
+        return .topBarTrailing
+        #else
+        return .automatic
+        #endif
+    }
+    static var ckLeading: ToolbarItemPlacement {
+        #if os(iOS)
+        return .topBarLeading
+        #elseif os(macOS)
+        return .navigation
+        #else
+        return .automatic
+        #endif
+    }
+}
+
+extension View {
+    /// Inline navigation title (iPhone only — TV/Mac have no large-title bar).
+    @ViewBuilder func ckInlineTitle() -> some View {
+        #if os(iOS)
+        self.navigationBarTitleDisplayMode(.inline)
+        #else
+        self
+        #endif
+    }
+
+    /// Half/full sheet detents on iPhone; TV/Mac sheets size themselves.
+    @ViewBuilder func ckDetents() -> some View {
+        #if os(iOS)
+        self.presentationDetents([.medium, .large])
+        #elseif os(macOS)
+        self.frame(minWidth: 560, idealWidth: 640, minHeight: 480, idealHeight: 620)
+        #else
+        self
+        #endif
+    }
+
+    /// Email field: email keyboard, no auto-capitalisation (phone/TV keyboards only).
+    @ViewBuilder func ckEmailField() -> some View {
+        #if os(iOS) || os(tvOS)
+        self.keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
+        #else
+        self.autocorrectionDisabled()
+        #endif
+    }
+
+    @ViewBuilder func ckCodeField() -> some View {
+        #if os(iOS) || os(tvOS)
+        self.textInputAutocapitalization(.never).autocorrectionDisabled()
+        #else
+        self.autocorrectionDisabled()
+        #endif
+    }
+
+    @ViewBuilder func ckNumberField() -> some View {
+        #if os(iOS) || os(tvOS)
+        self.keyboardType(.numberPad)
+        #else
+        self
+        #endif
+    }
+
+    /// Full-screen presentation (the player, the Live TV tune screen). The Mac has no
+    /// full-screen cover, so it opens as a large sheet over the window.
+    func ckFullScreenCover<Item: Identifiable, Content: View>(
+        item: Binding<Item?>, onDismiss: (() -> Void)? = nil,
+        @ViewBuilder content: @escaping (Item) -> Content) -> some View {
+        #if os(macOS)
+        return self.sheet(item: item, onDismiss: onDismiss) { i in
+            content(i).frame(minWidth: 960, idealWidth: 1280, minHeight: 540, idealHeight: 720)
+        }
+        #else
+        return self.fullScreenCover(item: item, onDismiss: onDismiss, content: content)
+        #endif
+    }
+
+    /// Poster / tile button look: the Apple TV "card" lift-and-shine on focus (Firestick's
+    /// focused-poster scale), plain on phone, hover-lift on Mac.
+    @ViewBuilder func ckTile() -> some View {
+        #if os(tvOS)
+        self.buttonStyle(.card)
+        #elseif os(macOS)
+        self.buttonStyle(HoverLiftStyle())
+        #else
+        self.buttonStyle(.plain)
+        #endif
+    }
+}
+
+#if os(macOS)
+/// Desktop poster hover: lift + accent ring under the pointer (Electron app hover state).
+struct HoverLiftStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HoverLift(pressed: configuration.isPressed) { configuration.label }
+    }
+    private struct HoverLift<L: View>: View {
+        let pressed: Bool
+        @ViewBuilder let label: () -> L
+        @State private var hover = false
+        var body: some View {
+            label()
+                .scaleEffect(pressed ? 0.97 : (hover ? 1.05 : 1))
+                .shadow(color: .black.opacity(hover ? 0.5 : 0), radius: 10, y: 6)
+                .animation(.easeOut(duration: 0.15), value: hover)
+                .onHover { hover = $0 }
+        }
+    }
+}
+#endif
