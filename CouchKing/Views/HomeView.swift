@@ -181,12 +181,21 @@ struct HeroPager: View {
 
     #if os(iOS)
     private var phonePager: some View {
-        TabView(selection: $page) {
-            ForEach(Array(metas.enumerated()), id: \.element.id) { i, m in
-                NavigationLink(value: m) { HeroCard(meta: m) }.buttonStyle(.plain).tag(i)
+        // each page pinned to EXACTLY the container width — a wide backdrop image could
+        // oversize the page and shove the name/year off-screen (AJ: "the rolling card at
+        // the top is too big and off center, can't see the names")
+        GeometryReader { geo in
+            TabView(selection: $page) {
+                ForEach(Array(metas.enumerated()), id: \.element.id) { i, m in
+                    NavigationLink(value: m) { HeroCard(meta: m) }
+                        .buttonStyle(.plain)
+                        .frame(width: geo.size.width, height: Platform.heroHeight)
+                        .clipped()
+                        .tag(i)
+                }
             }
+            .tabViewStyle(.page(indexDisplayMode: .automatic))
         }
-        .tabViewStyle(.page(indexDisplayMode: .automatic))
         .frame(height: Platform.heroHeight)
         .simultaneousGesture(DragGesture().onChanged { _ in paused = true }.onEnded { _ in paused = false })
         .task { await rotate() }

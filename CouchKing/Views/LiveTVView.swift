@@ -71,17 +71,20 @@ struct LiveTVView: View {
     #if os(iOS)
     var phonePage: some View {
         NavigationStack {
+            GeometryReader { geo in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
+                LazyVStack(alignment: .leading, spacing: 14, pinnedViews: [.sectionHeaders]) {
                     if locked {
                         lockedPanel
                     } else {
                         if !searching { gamesBanner }
                         if !searching { chipsRow }
                         if searching { searchResults }
-                        else if chip == "Guide" { GuideGrid(guide: guide, day: $day, now: now,
-                                                            onTune: { tuneChannel($0) },
-                                                            onFav: { toggleFav($0) }) }
+                        else if chip == "Guide" {
+                            GuideGrid(guide: guide, day: $day, now: now,
+                                      onTune: { tuneChannel($0) },
+                                      onFav: { toggleFav($0) })
+                        }
                         else if chip == "★ Favorites" { channelList(guide.favChannels, empty: "Long-press a channel to add it here.") }
                         else if catalogChip { catalogList }
                         else { channelList(guide.channels.filter { $0.section == chip }, empty: "Nothing in this section right now.") }
@@ -89,6 +92,9 @@ struct LiveTVView: View {
                     }
                 }
                 .padding(.vertical, 8)
+                .frame(width: geo.size.width, alignment: .leading)
+                .environment(\.ckGuideWidth, geo.size.width)
+            }
             }
             .background(Theme.bg)
             .navigationTitle("Live TV")
@@ -136,14 +142,17 @@ struct LiveTVView: View {
 
     /// Per-sport red "LIVE NOW" strips + one "📅 Upcoming games" strip (games.json).
     @ViewBuilder var gamesBanner: some View {
-        let live = sports.filter { !$0.live.isEmpty }
-        let soon = sports.flatMap(\.soon).sorted { $0.s < $1.s }
+        // REGION-FILTERED (the raw list leaked Fútbol/Europe into the US view AND its flood
+        // pushed real US games past the cap — AJ "upcoming games have europe games… we are
+        // missing games"). regionSports = the same keep() rule web/Firestick apply.
+        let live = regionSports.filter { !$0.live.isEmpty }
+        let soon = regionSports.flatMap(\.soon).sorted { $0.s < $1.s }
         if !live.isEmpty || !soon.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(live) { sp in
                     gameStrip(title: "LIVE NOW · \(sp.emoji) \(sp.sport)", games: sp.live, live: true)
                 }
-                if !soon.isEmpty { gameStrip(title: "📅 Upcoming games", games: Array(soon.prefix(30)), live: false) }
+                if !soon.isEmpty { gameStrip(title: "📅 Upcoming games", games: Array(soon.prefix(40)), live: false) }
             }
         }
     }
@@ -166,7 +175,16 @@ struct LiveTVView: View {
                                 .frame(width: 36, height: 28)
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(g.t).font(.caption.bold()).lineLimit(1)
-                                    Text(live ? g.ch : "\(g.ch) · \(g.when)").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                                    // WHEN leads and is bright — long channel names were eating
+                                    // the kickoff time ("can't see when they're playing")
+                                    if live {
+                                        Text(g.ch).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                                    } else {
+                                        HStack(spacing: 4) {
+                                            Text(g.when).font(.caption2.bold()).foregroundStyle(Theme.gold)
+                                            Text("· " + g.ch).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                                        }
+                                    }
                                 }
                             }
                             .padding(8).frame(width: 210, alignment: .leading)
@@ -364,6 +382,16 @@ struct ChannelRow: View {
 /// SECTION headers, a fixed channel column + a shared horizontal timeline (4px/min) with the
 /// current programme highlighted and a 2px red now-line. Rows are lazy; the timeline pans with
 /// one shared offset so every row and the pinned tick header stay aligned.
+/// The Live page's exact viewport width — the guide sizes its timeline off this so the
+/// channel column can never be pushed off-screen by the (72h-wide) virtual timeline.
+private struct CKGuideWidthKey: EnvironmentKey { static let defaultValue: CGFloat = 393 }
+extension EnvironmentValues {
+    var ckGuideWidth: CGFloat {
+        get { self[CKGuideWidthKey.self] }
+        set { self[CKGuideWidthKey.self] = newValue }
+    }
+}
+
 struct GuideGrid: View {
     let guide: LiveGuide
     @Binding var day: Int
@@ -372,6 +400,11 @@ struct GuideGrid: View {
     let onFav: (LiveChannel) -> Void
     @State private var scrollX: CGFloat = 0
     @State private var dragStart: CGFloat? = nil
+    @Environment(\.ckGuideWidth) private var pageW
+    /// The visible timeline strip: page − gutter − channel column. EVERY row and the tick
+    /// header clip to exactly this, so the 17,000pt virtual timeline can't shove the
+    /// channel column off-screen (AJ: "can't see the channels on the left").
+    private var timelineW: CGFloat { max(120, pageW - Platform.gutter - Self.colW) }
 
     // 10-foot TV needs bigger blocks; the desktop sits in between (Firestick / Electron guide).
     static let pxPerMin: CGFloat = Platform.isTV ? 10 : (Platform.isMac ? 6 : 4)
@@ -455,8 +488,7 @@ struct GuideGrid: View {
         if guide.channels.isEmpty {
             Text("No guide right now — pull to refresh.").foregroundStyle(.secondary).padding(24)
         }
-        VStack(spacing: 4) {
-            tickHeader
+        Section(header: tickHeader.background(Theme.bg)) {
             LazyVStack(spacing: 2) {
                 ForEach(lines) { line in
                     switch line {
@@ -468,7 +500,8 @@ struct GuideGrid: View {
                         GuideRow(channel: ch, dayStart: dayStart, windowW: windowW, now: now, scrollX: scrollX,
                                  isFav: guide.favs.contains(ch.id),
                                  onTune: { onTune(ch) }, onFav: { onFav(ch) },
-                                 onFocusX: { x in scrollX = min(max(0, x - 120), max(0, windowW - 260)) })
+                                 onFocusX: { x in scrollX = min(max(0, x - 120), max(0, windowW - timelineW)) },
+                                 timelineW: timelineW)
                     }
                 }
             }
@@ -476,15 +509,22 @@ struct GuideGrid: View {
         #if !os(tvOS)
         // horizontal pan of the shared timeline; vertical drags still scroll the page
         .simultaneousGesture(
-            DragGesture(minimumDistance: 12)
+            DragGesture(minimumDistance: 8)
                 .onChanged { g in
                     if dragStart == nil {
                         guard abs(g.translation.width) > abs(g.translation.height) else { return }
                         dragStart = scrollX
                     }
-                    scrollX = min(max(0, (dragStart ?? 0) - g.translation.width), max(0, windowW - 260))
+                    guard let d = dragStart else { return }
+                    scrollX = min(max(0, d - g.translation.width), max(0, windowW - timelineW))
                 }
-                .onEnded { _ in dragStart = nil }
+                .onEnded { g in
+                    // fling: glide to where the gesture was headed (bare drags felt janky)
+                    guard let d = dragStart else { return }
+                    let target = min(max(0, d - g.predictedEndTranslation.width), max(0, windowW - timelineW))
+                    dragStart = nil
+                    withAnimation(.easeOut(duration: 0.5)) { scrollX = target }
+                }
         )
         #endif
     }
@@ -498,20 +538,27 @@ struct GuideGrid: View {
     private var tickHeader: some View {
         HStack(spacing: 0) {
             Text(LiveTV.day(dayStart, "EEE MMM d")).font(.caption2.bold())
-                .frame(width: Self.colW, height: 24, alignment: .leading).padding(.leading, 14)
+                .frame(width: Self.colW, height: 26, alignment: .leading).padding(.leading, 14)
             ZStack(alignment: .topLeading) {
+                // only the ticks inside the visible strip — offscreen ones aren't laid out
                 ForEach(0..<(windowMs / 1_800_000), id: \.self) { i in
-                    Text(LiveTV.clock(dayStart + i * 1_800_000)).font(.system(size: 10))
-                        .foregroundStyle(.secondary)
-                        .offset(x: CGFloat(i * 30) * Self.pxPerMin - scrollX)
+                    let x = CGFloat(i * 30) * Self.pxPerMin - scrollX
+                    if x > -80 && x < timelineW {
+                        Text(LiveTV.clock(dayStart + i * 1_800_000)).font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                            .offset(x: x)
+                    }
                 }
                 if now >= dayStart && now < dayStart + windowMs {
-                    Rectangle().fill(.red).frame(width: 2, height: 24)
-                        .offset(x: CGFloat((now - dayStart) / 60_000) * Self.pxPerMin - scrollX)
+                    let x = CGFloat((now - dayStart) / 60_000) * Self.pxPerMin - scrollX
+                    if x >= 0 && x < timelineW {
+                        Rectangle().fill(.red).frame(width: 2, height: 26).offset(x: x)
+                    }
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading).frame(height: 24).clipped()
+            .frame(width: timelineW, height: 26, alignment: .leading).clipped()
         }
+        .padding(.leading, Platform.gutter)
         .background(Theme.bg)
     }
 }
@@ -527,6 +574,7 @@ struct GuideRow: View {
     let onTune: () -> Void
     let onFav: () -> Void
     var onFocusX: ((CGFloat) -> Void)? = nil
+    var timelineW: CGFloat = 300
 
     private var dayEnd: Int { dayStart + Int(windowW / GuideGrid.pxPerMin) * 60_000 }
     private var progs: [LiveProg] { channel.progs.filter { $0.e > dayStart && $0.s < dayEnd } }
@@ -539,7 +587,9 @@ struct GuideRow: View {
                     img.resizable().aspectRatio(contentMode: .fit)
                 } placeholder: { Image(systemName: "tv").foregroundStyle(.secondary) }
                 .frame(width: GuideGrid.colW * 0.58, height: GuideGrid.rowH * 0.5)
-                Text(channel.name).font(.system(size: Platform.isTV ? 16 : 9)).lineLimit(1)
+                Text(channel.name).font(.system(size: Platform.isTV ? 16 : 10, weight: .medium))
+                    .lineLimit(2).multilineTextAlignment(.center).minimumScaleFactor(0.8)
+                    .padding(.horizontal, 2)
             }
             .frame(width: GuideGrid.colW, height: GuideGrid.rowH)
             .background(Theme.panel)
@@ -575,26 +625,37 @@ struct GuideRow: View {
     }
     #else
     private var timeline: some View {
-        ZStack(alignment: .leading) {
-            ForEach(progs, id: \.self) { p in
-                let x0 = max(0, x(p.s))
-                let x1 = min(windowW, x(p.e))
+        // Only the blocks that INTERSECT the visible strip are laid out (72h × every channel
+        // of offscreen Texts was the scroll jank), each clamped to the strip and clipped —
+        // an over-wide block can never push the row past the screen.
+        let right = scrollX + timelineW
+        return ZStack(alignment: .leading) {
+            ForEach(progs.filter { x($0.e) > scrollX && x($0.s) < right }, id: \.self) { p in
+                let vx0 = max(x(p.s), scrollX)
+                let vx1 = min(x(p.e), right)
                 let live = p.s <= now && now < p.e
-                Text(p.t).font(.system(size: 11)).lineLimit(2)
-                    .padding(.horizontal, 6)
-                    .frame(width: max(8, x1 - x0 - 2), height: GuideGrid.rowH - 6, alignment: .leading)
-                    .background(live ? Theme.accent.opacity(0.55) : Theme.card,
-                                in: RoundedRectangle(cornerRadius: 6))
-                    .offset(x: x0 - scrollX)
-                    .liveTap(onTune, fav: onFav, isFav: isFav)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(p.t).font(.system(size: 11, weight: .medium)).lineLimit(2)
+                    Text(LiveTV.clock(p.s)).font(.system(size: 9)).foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 6)
+                .frame(width: max(8, vx1 - vx0 - 2), height: GuideGrid.rowH - 6, alignment: .leading)
+                .background(live ? Theme.accent.opacity(0.55) : Theme.card,
+                            in: RoundedRectangle(cornerRadius: 6))
+                .clipped()
+                .offset(x: vx0 - scrollX)
+                .liveTap(onTune, fav: onFav, isFav: isFav)
             }
             if now >= dayStart && now < dayEnd {
-                Rectangle().fill(.red).frame(width: 2, height: GuideGrid.rowH)
-                    .offset(x: x(now) - scrollX)
-                    .allowsHitTesting(false)
+                let nx = x(now) - scrollX
+                if nx >= 0 && nx < timelineW {
+                    Rectangle().fill(.red).frame(width: 2, height: GuideGrid.rowH)
+                        .offset(x: nx)
+                        .allowsHitTesting(false)
+                }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading).frame(height: GuideGrid.rowH).clipped()
+        .frame(width: timelineW, height: GuideGrid.rowH, alignment: .leading).clipped()
     }
     #endif
 }

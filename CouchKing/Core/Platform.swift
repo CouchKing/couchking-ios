@@ -147,6 +147,18 @@ extension View {
     }
 
     /// Half/full sheet detents on iPhone; TV/Mac sheets size themselves.
+    /// Full-height sheet (the episode page etc. — a medium detent opened as a HALF page and
+    /// you had to drag it up; Android shows a full page).
+    @ViewBuilder func ckLargeSheet() -> some View {
+        #if os(iOS)
+        self.presentationDetents([.large])
+        #elseif os(macOS)
+        self.frame(minWidth: 560, idealWidth: 640, minHeight: 480, idealHeight: 620)
+        #else
+        self
+        #endif
+    }
+
     @ViewBuilder func ckDetents() -> some View {
         #if os(iOS)
         self.presentationDetents([.medium, .large])

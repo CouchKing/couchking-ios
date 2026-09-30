@@ -772,7 +772,7 @@ struct PlayerView: View {
             if r0 > 0 { sessionStartMs = r0 }
             timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 10),
                                                           queue: .main) { t in
-                Task { @MainActor in tick(remuxBaseMs + Int(t.seconds * 1000)) }
+                Task { @MainActor in tick(remuxBaseMs + Self.safeMs(t.seconds)) }
             }
             subTracks = rankSubtitles(request.subtitles)
             await loadSubtitles()
@@ -804,7 +804,7 @@ struct PlayerView: View {
         // position ticker drives skip buttons + subtitle cues + the account heartbeat
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 10),
                                                       queue: .main) { t in
-            Task { @MainActor in tick(remuxBaseMs + Int(t.seconds * 1000)) }
+            Task { @MainActor in tick(remuxBaseMs + Self.safeMs(t.seconds)) }
         }
         subTracks = rankSubtitles(request.subtitles)
         await loadSubtitles()
@@ -833,6 +833,11 @@ struct PlayerView: View {
     func onError() {
         if !remuxed { playRemux(fromMs: posMs) } else { failed = true }
     }
+
+
+    /// NaN/∞-safe CMTime→ms (Int(NaN) is a Swift runtime CRASH — currentTime() on a torn-down
+    /// or failed item returns invalid time; this was the "crashes when I try to play" bug).
+    nonisolated static func safeMs(_ seconds: Double) -> Int { seconds.isFinite ? Int(seconds * 1000) : 0 }
 
     func posKey() -> String {
         if let s = request.season, let e = request.episode { return "\(request.meta.id):\(s):\(e)" }
@@ -1359,7 +1364,7 @@ struct PlayerView: View {
     func stop() {
         Platform.keepAwake(false)
         Platform.lockLandscape(false)
-        let pos = max(remuxBaseMs + Int(player.currentTime().seconds * 1000), posMs)
+        let pos = max(remuxBaseMs + Self.safeMs(player.currentTime().seconds), posMs)
         posMs = pos
         if remuxed { if probedDurMs > 0 { durMs = probedDurMs } }
         else if let d = player.currentItem?.duration.seconds, d.isFinite, d > 0 { durMs = Int(d * 1000) }

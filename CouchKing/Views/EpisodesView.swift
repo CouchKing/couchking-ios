@@ -88,7 +88,7 @@ struct EpisodesView: View {
         }
         .sheet(item: $detail) { ep in
             EpisodeDetailView(meta: meta, ep: ep, episodes: all)
-                .ckDetents()
+                .ckLargeSheet()
         }
     }
 }
