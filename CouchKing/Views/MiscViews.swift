@@ -299,29 +299,45 @@ struct LibraryRow: View {
 /// Tuning screen (Android liveTune): logo + "Tuning ESPN… / Now: <program>" while the stream
 /// list loads; then the access-gate probe + player. Back returns to the guide on this channel.
 struct LiveTuneView: View {
+    // STRAIGHT-THROUGH tune (Android liveTune): resolve the feed silently and open the
+    // player — no visible "streams" page. Closing the player closes this too, so ✕ lands
+    // back on the GUIDE, never on a stream list (AJ ×2).
     @EnvironmentObject var session: Session
     @Environment(\.dismiss) private var dismiss
     @Environment(\.ckClose) private var ckClose
     let channel: Meta
+    @State private var req: PlayRequest?
+    @State private var gate = ""
+    private func close() { if let ckClose { ckClose() } else { dismiss() } }
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 14) {
-                    AsyncImage(url: URL(string: channel.poster ?? channel.logo ?? "")) { img in
+        ZStack {
+            Theme.bg.ignoresSafeArea()
+            if gate.isEmpty {
+                VStack(spacing: 12) {
+                    AsyncImage(url: URL(string: channel.logo ?? channel.poster ?? "")) { img in
                         img.resizable().aspectRatio(contentMode: .fit)
                     } placeholder: { Image(systemName: "tv").font(.largeTitle).foregroundStyle(.secondary) }
-                    .frame(height: 90).padding(.top, 20)
+                    .frame(height: 80)
                     Text("Tuning \(channel.name)…").font(.headline)
-                    if let d = channel.description, !d.isEmpty {
-                        Text("Now: \(d)").font(.subheadline).foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    StreamList(meta: channel, autoplay: true).padding(.top, 8)
+                    ProgressView()
                 }
-                .padding(16)
+            } else {
+                GateModal(text: gate) { close() }
             }
-            .background(Theme.bg)
-            .toolbar { ToolbarItem(placement: .ckLeading) { Button("Back") { if let ckClose { ckClose() } else { dismiss() } } } }
         }
+        .task { await resolve() }
+        .ckFullScreenCover(item: $req, onDismiss: { close() }) { PlayerView(request: $0) }
+    }
+    private func resolve() async {
+        guard let base = session.addonBase() else { close(); return }
+        let u = session.profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        guard let r = try? await API.json("/stream/tv/\(channel.id).json?u=\(u)", base: base),
+              let st = (r["streams"] as? [[String: Any]])?.first(where: { ($0["url"] as? String)?.isEmpty == false }),
+              let us = st["url"] as? String, let url = URL(string: us) else {
+            gate = "This channel has no feed right now."; return
+        }
+        let code = await API.probe(url)
+        if let reason = API.gateReason(code) { gate = reason; return }
+        req = PlayRequest(url: url, meta: channel, season: nil, episode: nil)
     }
 }

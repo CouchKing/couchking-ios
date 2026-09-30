@@ -147,6 +147,7 @@ struct PlayerView: View {
             if failed { errorCard }
             #if os(iOS)
             if showSubPanel { subSidePanel.transition(.move(edge: .trailing)) }
+            if showMiniGuide { miniGuidePanel.transition(.move(edge: .trailing)) }
             #endif
         }
         .background(.black)
@@ -306,6 +307,75 @@ struct PlayerView: View {
         .animation(.easeInOut(duration: 0.2), value: controlsVisible)
     }
 
+    // ---- in-player MINI GUIDE (Android Sep 26): channel strip while watching live ----
+    #if os(iOS)
+    @State var showMiniGuide = false
+    @State var miniChannels: [LiveChannel] = []
+    var miniGuidePanel: some View {
+        HStack(spacing: 0) {
+            Spacer()
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("Guide").font(.subheadline.bold())
+                    Spacer()
+                    Button { withAnimation { showMiniGuide = false } } label: { Image(systemName: "xmark") }
+                }
+                .foregroundStyle(.white).padding(.horizontal, 14).padding(.vertical, 12)
+                Divider().overlay(Theme.card2)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(miniChannels) { ch in
+                            Button {
+                                withAnimation { showMiniGuide = false }
+                                Task { await switchLive(ch) }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    AsyncImage(url: URL(string: ch.logo)) { img in
+                                        img.resizable().aspectRatio(contentMode: .fit)
+                                    } placeholder: { Image(systemName: "tv").foregroundStyle(.secondary) }
+                                    .frame(width: 34, height: 22)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(ch.name).font(.caption.bold()).lineLimit(1)
+                                        Text(ch.now(LiveTV.nowMs())?.t ?? "").font(.caption2)
+                                            .foregroundStyle(.secondary).lineLimit(1)
+                                    }
+                                    Spacer(minLength: 0)
+                                }
+                                .foregroundStyle(ch.id == request.meta.id ? Theme.accent : .white)
+                                .padding(.horizontal, 12).padding(.vertical, 8)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .frame(width: 280)
+            .frame(maxHeight: .infinity)
+            .background(.black.opacity(0.85))
+        }
+        .task {
+            guard miniChannels.isEmpty else { return }
+            let region = UserDefaults.standard.string(forKey: "liveRegion") ?? ""
+            if case .ok(let g) = await LiveTV.guide(session, region: region) {
+                let favs = Set(g.favs)
+                miniChannels = g.favChannels + g.channels.filter { !favs.contains($0.id) }
+            }
+        }
+    }
+    /// Channel zap without leaving the player (Android mini-guide tune).
+    func switchLive(_ ch: LiveChannel) async {
+        guard let base = session.addonBase() else { return }
+        let u = session.profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        guard let r = try? await API.json("/stream/tv/\(ch.id).json?u=\(u)", base: base),
+              let st = (r["streams"] as? [[String: Any]])?.first(where: { ($0["url"] as? String)?.isEmpty == false }),
+              let us = st["url"] as? String, let url = URL(string: us) else {
+            flashLabel("No feed for \(ch.name)"); return
+        }
+        await reloadInPlace(PlayRequest(url: url, meta: ch.meta(LiveTV.nowMs()), season: nil, episode: nil))
+    }
+    #endif
+
     /// Right-side captions strip (Android live-captions panel) — narrow, so you can still
     /// watch while picking a track. Full style options behind the ⚙︎.
     #if os(iOS)
@@ -459,6 +529,9 @@ struct PlayerView: View {
                 barButton("Screen", "aspectratio") { cycleScale() }
                 if request.season != nil && !request.episodes.isEmpty {
                     barButton("Episodes", "list.bullet.rectangle") { showEpisodes = true; hideTask?.cancel() }
+                }
+                if isLive {
+                    barButton("Guide", "list.bullet.below.rectangle") { showMiniGuide = true; hideTask?.cancel() }
                 }
                 barButton("Stats", "chart.bar") { showStats.toggle() }
             }
