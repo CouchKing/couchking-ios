@@ -79,6 +79,14 @@ struct PlayerView: View {
     /// a seek requested before the item was .readyToPlay — applied the moment it is
     @State var pendingSeekMs = -1
     @State var seeking = false   // remux reopen / buffering a seek → keep loading card, not black
+    /// Episode list fetched at open when the request came without one (CW resume etc.) —
+    /// the Episodes button/panel and next-up need it no matter how playback started.
+    @State var fetchedEpisodes: [Episode] = []
+    var allEpisodes: [Episode] { request.episodes.isEmpty ? fetchedEpisodes : request.episodes }
+    /// Title logo fetched when the request's meta came bare (list metas carry no logo) —
+    /// the loading screen shows the show/movie's graphic title like Android.
+    @State var titleLogo: String? = nil
+    @State var titleBackdrop: String? = nil
     @State var serverAhead = 0        // mid-play reconcile: another device's position
     // ---- placeholder / "not yet available" clip (IOS_CONTRACTS §5) ----
     @State var placeholder = false
@@ -179,7 +187,7 @@ struct PlayerView: View {
             // NO detents: a medium sheet is illegal in landscape (compact height) and iOS
             // dismisses it the moment it appears — the "episode list opens then closes
             // instantly" bug. Full sheet works in both orientations.
-            EpisodePanel(meta: request.meta, episodes: request.episodes,
+            EpisodePanel(meta: request.meta, episodes: allEpisodes,
                          currentId: posKey()) { ep in
                 showEpisodes = false
                 epTouched = true
@@ -204,8 +212,19 @@ struct PlayerView: View {
     var loadingScreen: some View {
         // Android/Fire TV loading: the TITLE's logo art, else the title NAME big — never the
         // full poster, never the CouchKing brand mark (AJ Sep 30, both directions).
+        ZStack {
+            // the show/movie's backdrop, dimmed — the "cool loading screen" from Android
+            if let bg = request.meta.background ?? titleBackdrop, let u = URL(string: bg) {
+                AsyncImage(url: u) { img in
+                    img.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: { Color.black }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+                .overlay(.black.opacity(0.55))
+                .ignoresSafeArea()
+            }
         VStack(spacing: 12) {
-            if let lg = request.meta.logo, let u = URL(string: lg) {
+            if let lg = request.meta.logo ?? titleLogo, let u = URL(string: lg) {
                 AsyncImage(url: u) { img in
                     img.resizable().aspectRatio(contentMode: .fit)
                 } placeholder: {
@@ -226,6 +245,7 @@ struct PlayerView: View {
                 Text("S\(s) E\(e)").font(.caption).foregroundStyle(.secondary)
             }
             ProgressView().tint(.white).padding(.top, 6)
+        }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.black)
@@ -527,7 +547,7 @@ struct PlayerView: View {
                     }
                 } label: { barLabel(rate == 1 ? "Speed" : String(format: "%g×", rate), "speedometer") }
                 barButton("Screen", "aspectratio") { cycleScale() }
-                if request.season != nil && !request.episodes.isEmpty {
+                if request.season != nil && !allEpisodes.isEmpty {
                     barButton("Episodes", "list.bullet.rectangle") { showEpisodes = true; hideTask?.cancel() }
                 }
                 if isLive {
@@ -675,7 +695,7 @@ struct PlayerView: View {
             }
         } label: { Label("Speed", systemImage: "speedometer") }
         Button { cycleScale() } label: { Label("Aspect: \(scaleMode.capitalized)", systemImage: "aspectratio") }
-        if request.season != nil && !request.episodes.isEmpty {
+        if request.season != nil && !allEpisodes.isEmpty {
             Button { showEpisodes = true } label: { Label("Episodes", systemImage: "list.bullet.rectangle") }
         }
         Button { showStats.toggle() } label: { Label(showStats ? "Hide stats" : "Stats", systemImage: "chart.bar") }
@@ -920,7 +940,8 @@ struct PlayerView: View {
             subTracks = rankSubtitles(request.subtitles)
             await loadSubtitles()
         await mergeV3Subs()
-            nextEp = computeNextEpisode()
+            await fetchMetaExtras()
+        nextEp = computeNextEpisode()
             return
         }
         // DON'T seek a not-ready item (the resume/fast-forward "stuck & crash" bug — seeking an
@@ -954,7 +975,24 @@ struct PlayerView: View {
         await loadSubtitles()
         await mergeV3Subs()
         // next episode from the REAL episode list (season-crossing, no e+1 guessing)
+        await fetchMetaExtras()
         nextEp = computeNextEpisode()
+    }
+
+    /// Fill in what a bare PlayRequest lacks: the episode list (CW resume has none — the
+    /// Episodes button vanished) and the title LOGO for the loading screen (list metas
+    /// carry no logo; Android always shows the graphic title).
+    func fetchMetaExtras() async {
+        guard !isLive, !placeholder else { return }
+        if (request.meta.logo ?? "").isEmpty || (request.season != nil && request.episodes.isEmpty) {
+            let m = await Catalog.fullMeta(session: session, type: request.season != nil ? "series" : "movie",
+                                           id: request.meta.id)
+            if titleLogo == nil, let lg = m["logo"] as? String, !lg.isEmpty { titleLogo = lg }
+            if titleBackdrop == nil, let bg = m["background"] as? String, !bg.isEmpty { titleBackdrop = bg }
+            if request.season != nil, fetchedEpisodes.isEmpty {
+                fetchedEpisodes = (m["videos"] as? [[String: Any]] ?? []).compactMap(Episode.init)
+            }
+        }
     }
 
     func observeItem(_ item: AVPlayerItem) {
@@ -975,8 +1013,18 @@ struct PlayerView: View {
         })
     }
 
+    @State var errorRetried = false
     func onError() {
-        if !remuxed { playRemux(fromMs: posMs) } else { failed = true }
+        if !remuxed { playRemux(fromMs: posMs); return }
+        if !errorRetried {
+            // a fast double-seek kills the previous transcode session mid-handshake and the
+            // player reports failure — one silent reopen at the same spot rescues it
+            errorRetried = true
+            playRemux(fromMs: posMs)
+            Task { try? await Task.sleep(for: .seconds(6)); errorRetried = false }
+            return
+        }
+        failed = true
     }
 
 
@@ -1282,6 +1330,8 @@ struct PlayerView: View {
         guard let item = player.currentItem, item.status == .readyToPlay else {
             pendingSeekMs = target; posMs = target; return
         }
+        if abs(target - posMs) > 4000 { seeking = true }   // big jump → loading card, not black
+        posMs = target
         player.seek(to: CMTime(seconds: Double(target) / 1000, preferredTimescale: 1000),
                     toleranceBefore: .zero, toleranceAfter: .zero)
     }
@@ -1478,7 +1528,7 @@ struct PlayerView: View {
     /// The episode after this one from the REAL list — crosses seasons (Android nextEpisode()).
     func computeNextEpisode() -> Episode? {
         guard let s = request.season, let e = request.episode else { return nil }
-        let list = request.episodes.filter { $0.season > 0 }
+        let list = allEpisodes.filter { $0.season > 0 }
             .sorted { ($0.season, $0.episode) < ($1.season, $1.episode) }
         if let i = list.firstIndex(where: { $0.season == s && $0.episode == e }), i + 1 < list.count {
             let n = list[i + 1]
@@ -1499,7 +1549,7 @@ struct PlayerView: View {
               let st = (r["streams"] as? [[String: Any]])?.first,
               let us = st["url"] as? String, let url = URL(string: us) else { return nil }
         var req = PlayRequest(url: url, meta: request.meta, season: ep.season, episode: ep.episode)
-        req.episodes = request.episodes
+        req.episodes = allEpisodes
         req.streamWindows = PlayerWindows(stream: st)
         req.subtitles = st["subtitles"] as? [[String: Any]] ?? []
         return req
