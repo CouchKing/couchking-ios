@@ -25,7 +25,7 @@ struct ProfilePickerView: View {
                     Text("Who's watching?").font(.system(size: 28, weight: .bold)).padding(.top, 22).padding(.bottom, 26)
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 8)], spacing: 8) {
                         ForEach(session.profiles) { p in
-                            Button { session.switchProfile(p.id); session.push() } label: {
+                            Button { CrashGuard.crumb("profile-pick"); session.switchProfile(p.id); session.push() } label: {
                                 VStack(spacing: 8) {
                                     FaceCircle(profile: p, size: 92)
                                     Text(p.name).font(.system(size: 15)).foregroundStyle(.primary).lineLimit(1)

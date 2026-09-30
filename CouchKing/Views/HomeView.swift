@@ -74,6 +74,7 @@ struct HomeView: View {
 
     /// Fill top-down, sequentially, in lineup order (Android 2.0.82 loading style).
     private func load() async {
+        CrashGuard.crumb("home-load")
         loadGen += 1
         let gen = loadGen
         loading = true
@@ -92,6 +93,7 @@ struct HomeView: View {
         if !fyS.isEmpty { fy.append(("For You — Shows", fyS)) }
         forYou = fy
         // the shelf line-up, in the person's order
+        CrashGuard.crumb("home-shelves")
         var fresh: [(String, [Meta])] = []
         rows = []
         for cat in session.enabledShelves() {
@@ -180,48 +182,23 @@ struct HeroPager: View {
     }
 
     #if os(iOS)
-    @State private var dragX: CGFloat = 0
     private var phonePager: some View {
-        // HAND-ROLLED pager: a paged TabView inside a vertical ScrollView drifts between
-        // pages after re-layout (the "fine at first, then it scooches/centers and cuts off"
-        // bug — a known SwiftUI defect). An HStack offset by page*width with a snap drag
-        // can't drift: the offset is recomputed from state on every layout.
-        GeometryReader { geo in
-            let w = max(1, geo.size.width)
-            HStack(spacing: 0) {
+        // NATIVE paging scroller (iOS17): each card is exactly the container width, the
+        // horizontal scroll is isolated from the page (can't widen or re-center anything),
+        // and swiping is the system gesture — no custom drag to fight the vertical scroll.
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 0) {
                 ForEach(metas, id: \.id) { m in
                     NavigationLink(value: m) { HeroCard(meta: m) }
                         .buttonStyle(.plain)
-                        .frame(width: w, height: Platform.heroHeight)
-                        .clipped()
+                        .containerRelativeFrame(.horizontal)
                 }
             }
-            .offset(x: -CGFloat(page) * w + dragX)
-            .animation(.interactiveSpring(response: 0.35, dampingFraction: 0.86), value: page)
-            .gesture(
-                DragGesture(minimumDistance: 15)
-                    .onChanged { g in paused = true; dragX = g.translation.width }
-                    .onEnded { g in
-                        let t = g.predictedEndTranslation.width
-                        if t < -w / 3 { page = min(page + 1, metas.count - 1) }
-                        else if t > w / 3 { page = max(page - 1, 0) }
-                        dragX = 0; paused = false
-                    }
-            )
-            // page dots (the TabView used to draw these)
-            .overlay(alignment: .bottom) {
-                HStack(spacing: 5) {
-                    ForEach(metas.indices, id: \.self) { i in
-                        Circle().fill(.white.opacity(i == page ? 0.95 : 0.4))
-                            .frame(width: 6, height: 6)
-                    }
-                }
-                .padding(.bottom, 8)
-            }
+            .scrollTargetLayout()
         }
+        .scrollTargetBehavior(.paging)
         .frame(height: Platform.heroHeight)
         .clipped()
-        .task { await rotate() }
     }
     #endif
 }
@@ -290,6 +267,29 @@ struct PosterRow: View {
 /// • yellow-ringed ✓ top-LEFT = watched — dropped BELOW the "+N" pill when both are on
 /// • watch bar: dark track + white fill, 4dp, inset 9dp, only for 2–97 %
 /// • 12sp medium single-line title under the art (Settings → Titles under posters)
+/// AsyncImage that RETRIES: a failed fetch re-attempts (up to 3×, backoff) instead of
+/// sitting on the placeholder forever.
+struct RetryingImage: View {
+    let url: String
+    @State private var attempt = 0
+    var body: some View {
+        AsyncImage(url: URL(string: url + (attempt > 0 ? "#r\(attempt)" : ""))) { phase in
+            switch phase {
+            case .success(let img): img.resizable().aspectRatio(contentMode: .fill)
+            case .failure:
+                Theme.panel.overlay(Image(systemName: "film").foregroundStyle(.secondary))
+                    .task {
+                        guard attempt < 3 else { return }
+                        try? await Task.sleep(for: .seconds(Double(attempt + 1) * 1.5))
+                        attempt += 1
+                    }
+            default: Theme.panel.overlay(Image(systemName: "film").foregroundStyle(.secondary))
+            }
+        }
+        .id(attempt)
+    }
+}
+
 struct PosterCard: View {
     @EnvironmentObject var session: Session
     let meta: Meta
@@ -303,11 +303,10 @@ struct PosterCard: View {
         let pct = Int((progress * 100).rounded())
         VStack(spacing: 2) {
             ZStack(alignment: .bottomLeading) {
-                AsyncImage(url: URL(string: meta.poster ?? "")) { img in
-                    img.resizable().aspectRatio(contentMode: .fill)
-                } placeholder: {
-                    Theme.panel.overlay(Image(systemName: "film").foregroundStyle(.secondary))
-                }
+                // phase-based with a retry: AsyncImage never re-attempts a failed load, so a
+                // blip while the player held the network left WHOLE ROWS blank until app
+                // restart (AJ: "came back from live tv and all my CW posters are blank")
+                RetryingImage(url: meta.poster ?? "")
                 .frame(width: width, height: height)
                 .clipped()
                 if (2...97).contains(pct) {

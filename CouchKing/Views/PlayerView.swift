@@ -79,6 +79,7 @@ struct PlayerView: View {
     /// a seek requested before the item was .readyToPlay — applied the moment it is
     @State var pendingSeekMs = -1
     @State var seeking = false   // remux reopen / buffering a seek → keep loading card, not black
+    @State var subOffsetMs = 0   // manual subtitle sync nudge (per sit-down)
     /// Episode list fetched at open when the request came without one (CW resume etc.) —
     /// the Episodes button/panel and next-up need it no matter how playback started.
     @State var fetchedEpisodes: [Episode] = []
@@ -193,6 +194,8 @@ struct PlayerView: View {
                 epTouched = true
                 Task { await playEpisode(ep, idle: 0) }
             }
+            .id(posKey())   // play-next swaps the episode in place — rebuild so the purple
+                            // current-episode highlight and auto-scroll follow (AJ)
         }
         #endif
     }
@@ -331,6 +334,7 @@ struct PlayerView: View {
     #if os(iOS)
     @State var showMiniGuide = false
     @State var miniChannels: [LiveChannel] = []
+    @State var miniSections: [(String, [LiveChannel])] = []
     var miniGuidePanel: some View {
         HStack(spacing: 0) {
             Spacer()
@@ -344,7 +348,12 @@ struct PlayerView: View {
                 Divider().overlay(Theme.card2)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
-                        ForEach(miniChannels) { ch in
+                        ForEach(miniSections, id: \.0) { title, chans in
+                            if !title.isEmpty {
+                                Text(title).font(.caption2.bold()).foregroundStyle(.secondary)
+                                    .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 2)
+                            }
+                            ForEach(chans) { ch in
                             Button {
                                 withAnimation { showMiniGuide = false }
                                 Task { await switchLive(ch) }
@@ -366,6 +375,7 @@ struct PlayerView: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            }
                         }
                     }
                 }
@@ -380,6 +390,16 @@ struct PlayerView: View {
             if case .ok(let g) = await LiveTV.guide(session, region: region) {
                 let favs = Set(g.favs)
                 miniChannels = g.favChannels + g.channels.filter { !favs.contains($0.id) }
+                // sectioned like the Live TV page: ★ Favorites, then each category
+                var out: [(String, [LiveChannel])] = []
+                if !g.favChannels.isEmpty { out.append(("★ FAVORITES", g.favChannels)) }
+                var bySec: [String: [LiveChannel]] = [:]; var order: [String] = []
+                for c in g.channels where !favs.contains(c.id) {
+                    if bySec[c.section] == nil { order.append(c.section) }
+                    bySec[c.section, default: []].append(c)
+                }
+                for sec in order { out.append((sec.isEmpty ? "CHANNELS" : sec.uppercased(), bySec[sec] ?? [])) }
+                miniSections = out
             }
         }
     }
@@ -411,6 +431,16 @@ struct PlayerView: View {
                     Button { withAnimation { showSubPanel = false } } label: { Image(systemName: "xmark") }
                 }
                 .foregroundStyle(.white).padding(.horizontal, 14).padding(.vertical, 12)
+                Divider().overlay(Theme.card2)
+                // sync nudge: shift every cue ±0.5s — mis-timed subs for a given release are
+                // fixable on the spot (the offset rides the session, resets per title)
+                HStack(spacing: 10) {
+                    Text("Sync").font(.caption).foregroundStyle(.secondary)
+                    Button { subOffsetMs -= 500; flashLabel("Subs \(subOffsetMs >= 0 ? "+" : "")\(Double(subOffsetMs) / 1000)s") } label: { Image(systemName: "minus.circle") }
+                    Text(String(format: "%+.1fs", Double(subOffsetMs) / 1000)).font(.caption.monospacedDigit())
+                    Button { subOffsetMs += 500; flashLabel("Subs \(subOffsetMs >= 0 ? "+" : "")\(Double(subOffsetMs) / 1000)s") } label: { Image(systemName: "plus.circle") }
+                }
+                .foregroundStyle(.white).padding(.horizontal, 14).padding(.vertical, 8)
                 Divider().overlay(Theme.card2)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
@@ -795,7 +825,7 @@ struct PlayerView: View {
                 .background(Theme.panel.opacity(0.95), in: RoundedRectangle(cornerRadius: 14))
                 .frame(maxWidth: 360)
             }
-            .padding(.trailing, 20).padding(.bottom, 100)
+            .padding(.trailing, 16).padding(.bottom, controlsVisible ? 120 : 24)
         }
         .transition(.move(edge: .trailing).combined(with: .opacity))
     }
@@ -1059,7 +1089,8 @@ struct PlayerView: View {
         lastTickPos = ms
         if !firstFrame, player.rate > 0, ms > 0 { firstFrame = true; seeking = false; scheduleHide() }
         else if seeking, player.timeControlStatus == .playing { seeking = false }
-        currentCue = subCues.first(where: { ms >= $0.from && ms <= $0.to })?.text ?? ""
+        let cueMs = ms - subOffsetMs
+        currentCue = subCues.first(where: { cueMs >= $0.from && cueMs <= $0.to })?.text ?? ""
         // seek discontinuity (Android onPositionDiscontinuity / pendingIntroFrom): jumping back
         // BEFORE a window re-arms its latch; crossing a window's end without skipping latches it
         if abs(ms - prev) > 3000 {

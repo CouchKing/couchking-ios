@@ -630,20 +630,22 @@ struct GuideRow: View {
         // an over-wide block can never push the row past the screen.
         let right = scrollX + timelineW
         return ZStack(alignment: .leading) {
+            // blocks keep their FULL width and just slide — clamping them to the visible
+            // strip made every title reflow as the box resized while panning (AJ:
+            // "disorienting, the words moving to fit"). Offscreen blocks still skipped.
             ForEach(progs.filter { x($0.e) > scrollX && x($0.s) < right }, id: \.self) { p in
-                let vx0 = max(x(p.s), scrollX)
-                let vx1 = min(x(p.e), right)
+                let x0 = x(p.s)
                 let live = p.s <= now && now < p.e
                 VStack(alignment: .leading, spacing: 1) {
                     Text(p.t).font(.system(size: 11, weight: .medium)).lineLimit(2)
                     Text(LiveTV.clock(p.s)).font(.system(size: 9)).foregroundStyle(.secondary)
                 }
                 .padding(.horizontal, 6)
-                .frame(width: max(8, vx1 - vx0 - 2), height: GuideGrid.rowH - 6, alignment: .leading)
+                .frame(width: max(8, x(p.e) - x0 - 2), height: GuideGrid.rowH - 6, alignment: .leading)
                 .background(live ? Theme.accent.opacity(0.55) : Theme.card,
                             in: RoundedRectangle(cornerRadius: 6))
                 .clipped()
-                .offset(x: vx0 - scrollX)
+                .offset(x: x0 - scrollX)
                 .liveTap(onTune, fav: onFav, isFav: isFav)
             }
             if now >= dayStart && now < dayEnd {

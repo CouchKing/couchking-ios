@@ -7,6 +7,12 @@ import Foundation
 enum CrashGuard {
     private static let key = "ckPendingCrash"
 
+    /// Tiny breadcrumb — CrashGuard appends the last one to the trace so an unsymbolicated
+    /// stack still says WHICH phase died (profile-pick, home-load, …).
+    static func crumb(_ t: String) {
+        UserDefaults.standard.set(t + " @" + String(Int(Date().timeIntervalSince1970)), forKey: "ckCrumb")
+    }
+
     static func install() {
         // ship any trace captured on the previous run
         if let t = UserDefaults.standard.string(forKey: key), !t.isEmpty {
@@ -18,12 +24,12 @@ enum CrashGuard {
             }
         }
         NSSetUncaughtExceptionHandler { ex in
-            let t = "\(ex.name.rawValue): \(ex.reason ?? "")\n" + ex.callStackSymbols.prefix(25).joined(separator: "\n")
+            let t = "crumb=\(UserDefaults.standard.string(forKey: "ckCrumb") ?? "-")\n\(ex.name.rawValue): \(ex.reason ?? "")\n" + ex.callStackSymbols.prefix(25).joined(separator: "\n")
             CrashGuard.stash(t)
         }
         for sig in [SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP] {
             signal(sig) { s in
-                let t = "signal \(s)\n" + Thread.callStackSymbols.prefix(25).joined(separator: "\n")
+                let t = "crumb=\(UserDefaults.standard.string(forKey: "ckCrumb") ?? "-")\nsignal \(s)\n" + Thread.callStackSymbols.prefix(25).joined(separator: "\n")
                 CrashGuard.stash(t)
                 exit(s)
             }

@@ -23,7 +23,7 @@ enum Platform {
     /// Row side gutter (TV safe area is wider).
     static var gutter: CGFloat { isTV ? 60 : (isMac ? 24 : 14) }
     /// Hero carousel height.
-    static var heroHeight: CGFloat { isTV ? 520 : (isMac ? 360 : 300) }
+    static var heroHeight: CGFloat { isTV ? 520 : (isMac ? 360 : 210) }   // phone: smaller — 300 dwarfed the screen (AJ)
     /// Details backdrop height.
     static var backdropHeight: CGFloat { isTV ? 560 : (isMac ? 400 : 260) }
     /// Episode thumbnail width (16:9).
