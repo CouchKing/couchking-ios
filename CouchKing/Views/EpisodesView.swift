@@ -36,6 +36,15 @@ struct EpisodesView: View {
     @State private var season = 1
     @State private var pick: Episode?
     @State private var detail: Episode?
+    @State private var landed = false
+
+    /// Select the season of the episode the user is on (cwlast), else the first — once, as soon
+    /// as episodes exist. Manual season taps set `landed` so this never yanks them back.
+    private func landOnCurrentSeason() {
+        guard !landed, !all.isEmpty else { return }
+        if let c = all.first(where: { $0.id == currentId }) { season = c.season; landed = true }
+        else if let f = seasons.first { season = f; landed = true }
+    }
 
     private var all: [Episode] { videos.compactMap(Episode.init) }
     private var episodes: [Episode] {
@@ -68,11 +77,11 @@ struct EpisodesView: View {
             }
             if episodes.isEmpty { Text("No episodes listed yet.").font(.footnote).foregroundStyle(.secondary) }
         }
-        .onAppear {
-            // land on the current episode's season, else the first season
-            let cur = all.first { $0.id == currentId }
-            if let c = cur { season = c.season } else if let f = seasons.first { season = f }
-        }
+        // land on the current episode's season the moment episodes are available — onAppear
+        // alone fired before the async list loaded, so it always fell back to Season 1 (AJ:
+        // "details brings me to season 1, not the episode I'm on"). Re-run when the list fills.
+        .onAppear { landOnCurrentSeason() }
+        .onChange(of: all.count) { _ in landOnCurrentSeason() }
         .sheet(item: $pick) { ep in
             StreamSheet(meta: meta, season: ep.season, episode: ep.episode, episodes: all)
                 .ckDetents()
