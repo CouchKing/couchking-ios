@@ -150,31 +150,19 @@ struct MacHome: View {
         top10 = t10
         var fresh: [(String, [Meta])] = []
         rows = []
-        if session.canStream {
-            for (title, cat) in Catalog.homeLineup(session: session) {
-                var metas = await Catalog.shelf(session: session, cat)
-                guard gen == loadGen else { return }
-                if metas.isEmpty { continue }
-                if !cat.isForYou && !cat.isOrdered && cat.curated.isEmpty {
-                    metas = Catalog.mix(metas, session: session, salt: cat.id)
-                }
-                fresh.append((title == "For You — Shows" ? "For You — Series" : title, metas))
-                rows = fresh
-            }
-        } else {
-            // guests: no For You rows (desktop), discovery shelves only
-            for (title, type, path) in Catalog.guestRows {
-                let metas = await Catalog.guestRow(type, path)
-                guard gen == loadGen else { return }
-                if metas.isEmpty { continue }
-                fresh.append((title, Catalog.mix(metas, session: session, salt: title)))
-                rows = fresh
-            }
-            for cat in session.enabledShelves() where !cat.curated.isEmpty {
-                let metas = await Catalog.shelf(session: session, cat)
-                guard gen == loadGen else { return }
-                if !metas.isEmpty { fresh.append((cat.name, metas)); rows = fresh }
-            }
+        // Android buildShelvesInto: For You — Movies / Shows always on Home (addon algo →
+        // library rec graph → trending), then the person's shelf line-up in THEIR order —
+        // the same shared catalog for guests and service accounts alike.
+        let (fyM, fyS) = await Catalog.forYouRows(session: session)
+        guard gen == loadGen else { return }
+        if !fyM.isEmpty { fresh.append(("For You — Movies", fyM)); rows = fresh }
+        if !fyS.isEmpty { fresh.append(("For You — Series", fyS)); rows = fresh }
+        for cat in session.enabledShelves() {
+            let metas = await Catalog.shelf(session: session, cat)
+            guard gen == loadGen else { return }
+            if metas.isEmpty { continue }
+            fresh.append((cat.name, Array(metas.prefix(60))))
+            rows = fresh
         }
     }
 }
