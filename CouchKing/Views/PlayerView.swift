@@ -1112,9 +1112,9 @@ struct PlayerView: View {
             added["wt:" + key] = now
             // advance Continue Watching to the next episode with a fresh (blank) bar when we know it
             // — parity w/ TV 2.0.126 (AJ Sep 28): resume the NEXT episode, not replay the finished one.
-            if let nx = nextEpisode, let ns = nx.season, let ne = nx.episode {
+            if let nx = nextEp {
                 var cwl = ps["cwlast"] as? [String: Any] ?? [:]
-                cwl[request.meta.id] = "\(request.meta.id):\(ns):\(ne)"
+                cwl[request.meta.id] = "\(request.meta.id):\(nx.season):\(nx.episode)"
                 ps["cwlast"] = cwl
             }
             // WATCHED SHELF (parity w/ TV 2.0.126): a show earns Library→Watched only when the
