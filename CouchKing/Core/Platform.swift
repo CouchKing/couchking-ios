@@ -19,11 +19,11 @@ enum Platform {
     #endif
 
     /// Poster tile width: phone rows, 10-foot TV rows, desktop grid.
-    static var posterWidth: CGFloat { isTV ? 230 : (isMac ? 150 : 108) }
+    static var posterWidth: CGFloat { isTV ? 230 : (isMac ? 150 : 126) }   // Android phone poster = 126×189dp
     /// Row side gutter (TV safe area is wider).
     static var gutter: CGFloat { isTV ? 60 : (isMac ? 24 : 14) }
     /// Hero carousel height.
-    static var heroHeight: CGFloat { isTV ? 520 : (isMac ? 360 : 230) }
+    static var heroHeight: CGFloat { isTV ? 520 : (isMac ? 360 : 300) }
     /// Details backdrop height.
     static var backdropHeight: CGFloat { isTV ? 560 : (isMac ? 400 : 260) }
     /// Episode thumbnail width (16:9).

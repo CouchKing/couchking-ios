@@ -12,14 +12,77 @@ enum TMDB {
         return "https://image.tmdb.org/t/p/\(size)\(p)"
     }
 
-    /// GET a TMDB path (query string without api_key). Nil on any failure.
+    /// GET a TMDB path (query string without api_key). Nil on any failure. Answers are kept for
+    /// 10 minutes in memory (Android Http.jsonCached) so Home repaints and row re-fills don't
+    /// re-download the same pages.
     static func get(_ path: String, _ query: String = "") async -> [String: Any]? {
         let sep = query.isEmpty ? "" : "&"
-        guard let url = URL(string: "\(base)\(path)?api_key=\(key)\(sep)\(query)") else { return nil }
+        let raw = "\(base)\(path)?api_key=\(key)\(sep)\(query)"
+        if let hit = cached(raw) { return hit }
+        guard let url = URL(string: raw) ?? URL(string: raw.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? raw) else { return nil }
         var req = URLRequest(url: url); req.timeoutInterval = 15
         guard let res = try? await URLSession.shared.data(for: req),
-              (res.1 as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-        return (try? JSONSerialization.jsonObject(with: res.0)) as? [String: Any]
+              (res.1 as? HTTPURLResponse)?.statusCode == 200,
+              let j = (try? JSONSerialization.jsonObject(with: res.0)) as? [String: Any] else { return nil }
+        remember(raw, j)
+        return j
+    }
+
+    private static let cacheLock = NSLock()
+    private static var memo: [String: (Date, [String: Any])] = [:]
+    private static func cached(_ k: String) -> [String: Any]? {
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        guard let e = memo[k], Date().timeIntervalSince(e.0) < 600 else { return nil }
+        return e.1
+    }
+    private static func remember(_ k: String, _ v: [String: Any]) {
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        if memo.count > 400 { memo.removeAll() }
+        memo[k] = (Date(), v)
+    }
+
+    /// Generic TMDB shelf (Android Discovery.tmdbRow): "trending/movie/day", "movie/upcoming",
+    /// "discover/tv?…" → imdb-keyed Metas, `pages` deep, de-duplicated.
+    static func row(kind: String, _ pathAndParams: String, pages: Int = 1) async -> [Meta] {
+        let parts = pathAndParams.split(separator: "?", maxSplits: 1).map(String.init)
+        let path = "/" + (parts.first ?? "")
+        let params = parts.count > 1 ? parts[1] : ""
+        let pageLists: [[Meta]] = await withTaskGroup(of: (Int, [Meta]).self) { g in
+            for pg in 1...max(1, pages) {
+                g.addTask {
+                    let q = params.isEmpty ? "page=\(pg)" : params + "&page=\(pg)"
+                    return (pg, await metas(results(await get(path, q)), kind: kind, limit: 20))
+                }
+            }
+            var out: [(Int, [Meta])] = []
+            for await x in g { out.append(x) }
+            return out.sorted { $0.0 < $1.0 }.map { $0.1 }
+        }
+        var seen = Set<String>(), flat: [Meta] = []
+        for l in pageLists { for m in l where !seen.contains(m.id) { seen.insert(m.id); flat.append(m) } }
+        return flat
+    }
+
+    /// One TMDB page of a shelf path (Discover's load-more).
+    static func rowPage(kind: String, _ pathAndParams: String, page: Int) async -> [Meta] {
+        let parts = pathAndParams.split(separator: "?", maxSplits: 1).map(String.init)
+        let path = "/" + (parts.first ?? "")
+        let params = parts.count > 1 ? parts[1] : ""
+        let q = params.isEmpty ? "page=\(page)" : params + "&page=\(page)"
+        return await metas(results(await get(path, q)), kind: kind, limit: 20)
+    }
+
+    /// Theme shelf spanning both types (Android tmdbBoth): movies + shows interleaved.
+    static func both(_ movieQuery: String, _ tvQuery: String, pages: Int = 2) async -> [Meta] {
+        async let m = row(kind: "movie", movieQuery, pages: pages)
+        async let t = row(kind: "tv", tvQuery, pages: pages)
+        let (mv, tv) = (await m, await t)
+        var out: [Meta] = [], seen = Set<String>()
+        for i in 0..<max(mv.count, tv.count) {
+            if i < mv.count, !seen.contains(mv[i].id) { seen.insert(mv[i].id); out.append(mv[i]) }
+            if i < tv.count, !seen.contains(tv[i].id) { seen.insert(tv[i].id); out.append(tv[i]) }
+        }
+        return out
     }
 
     static func enc(_ s: String) -> String {
@@ -28,27 +91,40 @@ enum TMDB {
     }
 
     // ---- id resolution (cached for the app's life) ----
-    private static var imdbCache: [String: String] = [:]      // "movie/123" → tt…
+    // tmdb → imdb never changes, so it lives on disk across launches (a Home of 17 shelves is
+    // ~1000 lookups the first time and none after).
+    private static var imdbCache: [String: String] = {
+        (UserDefaults.standard.dictionary(forKey: "tmdbImdbMap") as? [String: String]) ?? [:]
+    }()
+    private static var imdbDirty = 0
     private static var tmdbCache: [String: Int] = [:]         // "movie/tt…" → 123
+    private static let idLock = NSLock()
 
     /// tmdb → imdb via /{kind}/{id}/external_ids (kind = movie | tv).
     static func imdbId(kind: String, id: Int) async -> String? {
         let k = "\(kind)/\(id)"
-        if let c = imdbCache[k] { return c.isEmpty ? nil : c }
+        idLock.lock(); let hit = imdbCache[k]; idLock.unlock()
+        if let c = hit { return c.isEmpty ? nil : c }
         let r = await get("/\(kind)/\(id)/external_ids")
+        guard r != nil else { return nil }   // unreachable: don't cache a miss
         let imdb = r?["imdb_id"] as? String ?? ""
+        idLock.lock()
         imdbCache[k] = imdb
+        imdbDirty += 1
+        if imdbDirty >= 25 { imdbDirty = 0; UserDefaults.standard.set(imdbCache, forKey: "tmdbImdbMap") }
+        idLock.unlock()
         return imdb.hasPrefix("tt") ? imdb : nil
     }
 
     /// imdb → tmdb id via /find (movie_results / tv_results). kind = movie | tv.
     static func tmdbId(kind: String, imdb: String) async -> Int? {
         let k = "\(kind)/\(imdb)"
-        if let c = tmdbCache[k] { return c > 0 ? c : nil }
-        let r = await get("/find/\(imdb)", "external_source=imdb_id")
-        let arr = r?[kind == "tv" ? "tv_results" : "movie_results"] as? [[String: Any]] ?? []
+        idLock.lock(); let hit = tmdbCache[k]; idLock.unlock()
+        if let c = hit { return c > 0 ? c : nil }
+        guard let r = await get("/find/\(imdb)", "external_source=imdb_id") else { return nil }
+        let arr = r[kind == "tv" ? "tv_results" : "movie_results"] as? [[String: Any]] ?? []
         let id = arr.first?["id"] as? Int ?? 0
-        tmdbCache[k] = id
+        idLock.lock(); tmdbCache[k] = id; idLock.unlock()
         return id > 0 ? id : nil
     }
 

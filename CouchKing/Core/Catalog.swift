@@ -55,11 +55,18 @@ struct AddonCatalog: Identifiable, Hashable {
     let genres: [String]          // manifest `extra` genre options → Discover dropdown / Live chips
     let searchOnly: Bool          // extra search REQUIRED = not a browsable shelf
     var curated: [String] = []    // ordered IMDb ids for a watch-order row (never shuffled)
+    var shelf: Shelf? = nil       // a Home shelf from the shared Discovery.SHELF_CATALOG
     var id: String { type + "/" + cid }
     /// A curated watch-order shelf (IOS_CONTRACTS §3).
     init(curated name: String, cid: String, ids: [String]) {
         type = "movie"; self.cid = cid; self.name = name
         genres = []; searchOnly = false; curated = ids
+    }
+    /// A shelf-catalog row (Android Discovery.Row) as a Home shelf.
+    init(shelf: Shelf) {
+        type = shelf.type; cid = "shelf:" + shelf.label; name = shelf.label
+        genres = []; searchOnly = false; curated = shelf.ids
+        self.shelf = shelf
     }
     init?(_ o: [String: Any]) {
         guard let t = o["type"] as? String, let c = o["id"] as? String else { return nil }
@@ -87,10 +94,152 @@ struct AddonCatalog: Identifiable, Hashable {
     var isShelf: Bool { !isLive && !searchOnly && !isForYou && (type == "movie" || type == "series") }
 }
 
+
+/// One Home shelf (Android Discovery.Row / desktop CK_CAT.SHELF_CATALOG): a Cinemeta catalog
+/// (optionally genre-filtered), a TMDB query (+ a TV query for theme rows that mix both types),
+/// or an exact ordered imdb-id list.
+struct Shelf: Hashable {
+    let label: String, type: String
+    var cine: String = ""          // Cinemeta catalog id ("top" / "year" / "imdbRating")
+    var genre: String? = nil
+    var tmdb: String? = nil        // TMDB path + params, e.g. "discover/movie?with_genres=27"
+    var tmdbTv: String? = nil      // theme shelf: also this TV query, interleaved
+    var ids: [String] = []         // curated watch order — rendered as-is, never shuffled
+    var tmdbKind: String { type == "series" ? "tv" : "movie" }
+}
+
+// The SAME shelves, queries and order as the Firestick / web / desktop apps, so the synced
+// `shelves` labels mean the same rows everywhere.
+enum ShelfCatalog {
+    private static func prov(_ kind: String, _ ids: String) -> String {
+        "discover/\(kind)?with_watch_providers=\(ids)&watch_region=US&sort_by=popularity.desc"
+    }
+    /// True "in theaters now": a primary_release_date window (TMDB now_playing counts re-releases).
+    static func nowPlaying() -> String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; f.timeZone = TimeZone(identifier: "UTC")
+        let gte = f.string(from: Date().addingTimeInterval(-75 * 86400))
+        let lte = f.string(from: Date().addingTimeInterval(3 * 86400))
+        return "discover/movie?sort_by=popularity.desc&with_release_type=3|2&region=US&vote_count.gte=3"
+            + "&primary_release_date.gte=\(gte)&primary_release_date.lte=\(lte)"
+    }
+    private static func tm(_ l: String, _ t: String, _ q: String, tv: String? = nil) -> Shelf {
+        Shelf(label: l, type: t, tmdb: q, tmdbTv: tv)
+    }
+    private static func cine(_ l: String, _ t: String, _ id: String, _ g: String? = nil) -> Shelf {
+        Shelf(label: l, type: t, cine: id, genre: g)
+    }
+
+    static let all: [Shelf] = [
+        tm("Coming Soon", "movie", "movie/upcoming"),
+        tm("Trending Today", "movie", "trending/movie/day"),
+        tm("Christmas Movies", "movie", "discover/movie?with_keywords=207317&sort_by=popularity.desc"),
+        tm("Halloween Movies", "movie", "discover/movie?with_keywords=3335&sort_by=popularity.desc"),
+        tm("Date Night", "movie", "discover/movie?with_genres=10749,35&sort_by=popularity.desc&vote_count.gte=200",
+           tv: "discover/tv?with_genres=35&sort_by=popularity.desc&vote_count.gte=100"),
+        tm("Superheroes", "movie", "discover/movie?with_keywords=9715&sort_by=popularity.desc&vote_count.gte=100",
+           tv: "discover/tv?with_keywords=9715&sort_by=popularity.desc&vote_count.gte=20"),
+        tm("Zombies", "movie", "discover/movie?with_keywords=12377&sort_by=popularity.desc&vote_count.gte=50",
+           tv: "discover/tv?with_keywords=12377&sort_by=popularity.desc&vote_count.gte=15"),
+        tm("Time Travel", "movie", "discover/movie?with_keywords=4379&sort_by=popularity.desc&vote_count.gte=100",
+           tv: "discover/tv?with_keywords=4379&sort_by=popularity.desc&vote_count.gte=15"),
+        tm("Feel-Good", "movie", "discover/movie?with_genres=35,10751&sort_by=popularity.desc&vote_count.gte=300",
+           tv: "discover/tv?with_genres=35,10751&sort_by=popularity.desc&vote_count.gte=100"),
+        tm("Tearjerkers", "movie", "discover/movie?with_genres=18,10749&sort_by=vote_average.desc&vote_count.gte=500",
+           tv: "discover/tv?with_genres=18&sort_by=vote_average.desc&vote_count.gte=200"),
+        tm("Summer Blockbusters", "movie", "discover/movie?with_genres=28,12&sort_by=popularity.desc&vote_count.gte=1000",
+           tv: "discover/tv?with_genres=10759&sort_by=popularity.desc&vote_count.gte=200"),
+        tm("Fantasy Worlds", "movie", "discover/movie?with_genres=14&sort_by=popularity.desc&vote_count.gte=300",
+           tv: "discover/tv?with_genres=10765&sort_by=popularity.desc&vote_count.gte=100"),
+        tm("War Movies", "movie", "discover/movie?with_genres=10752&sort_by=popularity.desc&vote_count.gte=200"),
+        tm("Musicals", "movie", "discover/movie?with_genres=10402&sort_by=popularity.desc&vote_count.gte=100"),
+        tm("Cozy Mystery Series", "series", "discover/tv?with_genres=9648&sort_by=popularity.desc&vote_count.gte=50"),
+        tm("True Crime", "series", "discover/tv?with_genres=99,80&sort_by=popularity.desc"),
+        tm("Based on a True Story", "movie", "discover/movie?with_keywords=9672&sort_by=popularity.desc"),
+        tm("Classics", "movie", "discover/movie?primary_release_date.lte=1989-12-31&sort_by=vote_count.desc"),
+        tm("90s Throwbacks", "movie", "discover/movie?primary_release_date.gte=1990-01-01&primary_release_date.lte=1999-12-31&sort_by=vote_count.desc"),
+        tm("Kids Movies", "movie", "discover/movie?with_genres=16,10751&sort_by=popularity.desc&certification_country=US&certification.lte=PG"),
+        cine("Westerns", "movie", "top", "Western"),
+        cine("Mystery", "movie", "top", "Mystery"),
+        tm("Kids TV", "series", "discover/tv?with_genres=10762&sort_by=popularity.desc"),
+        cine("Popular Movies", "movie", "top"),
+        cine("Popular Series", "series", "top"),
+        tm("New in Theaters", "movie", nowPlaying()),
+        tm("🍅 Certified Fresh", "movie", "discover/movie?vote_average.gte=7.4&vote_count.gte=300&sort_by=popularity.desc"),
+        tm("🍅 Certified Fresh Series", "series", "discover/tv?vote_average.gte=7.7&vote_count.gte=200&sort_by=popularity.desc"),
+        tm("Trending Movies", "movie", "trending/movie/week"),
+        tm("Trending Series", "series", "trending/tv/week"),
+        tm("New Shows", "series", "discover/tv?sort_by=first_air_date.desc&vote_count.gte=25"),
+        cine("Top Rated Movies", "movie", "imdbRating"),
+        cine("Top Rated Series", "series", "imdbRating"),
+        tm("Anime", "series", "discover/tv?with_genres=16&with_origin_country=JP&sort_by=popularity.desc"),
+        tm("Anime Movies", "movie", "discover/movie?with_genres=16&with_origin_country=JP&sort_by=popularity.desc"),
+        tm("Hallmark", "movie", "discover/movie?with_companies=53015|304438&sort_by=popularity.desc"),
+        tm("Hallmark New", "movie", "discover/movie?with_companies=53015|304438&sort_by=primary_release_date.desc&vote_count.gte=1"),
+        tm("Hallmark Series", "series", "discover/tv?with_networks=384&sort_by=popularity.desc"),
+        tm("Hallmark Christmas Movies", "movie", "discover/movie?with_companies=53015|304438&with_keywords=207317&sort_by=popularity.desc"),
+        Shelf(label: "Marvel: Release Order", type: "movie", ids: Curated.mcuRelease),
+        Shelf(label: "Marvel: Chronological", type: "movie", ids: Curated.mcuChrono),
+        tm("Marvel Movies", "movie", "discover/movie?with_companies=420&sort_by=popularity.desc"),
+        tm("Marvel Series", "series", "discover/tv?with_companies=420|7505&sort_by=popularity.desc"),
+        Shelf(label: "X-Men Movies", type: "movie", ids: Curated.xmen),
+        tm("Netflix", "series", prov("tv", "8")),
+        tm("Hulu", "series", prov("tv", "15")),
+        tm("Disney+", "series", prov("tv", "337")),
+        tm("Max", "series", prov("tv", "1899")),
+        tm("Prime Video", "movie", prov("movie", "9")),
+        tm("Apple TV+", "series", prov("tv", "350")),
+        tm("Paramount+", "series", prov("tv", "2303|2616|531")),
+        tm("Peacock", "series", prov("tv", "386")),
+        cine("Action", "movie", "top", "Action"),
+        cine("Comedy", "movie", "top", "Comedy"),
+        cine("Horror", "movie", "top", "Horror"),
+        cine("Sci-Fi", "movie", "top", "Sci-Fi"),
+        cine("Romance", "movie", "top", "Romance"),
+        cine("Thriller", "movie", "top", "Thriller"),
+        cine("Drama Series", "series", "top", "Drama"),
+        cine("Crime Series", "series", "top", "Crime"),
+        cine("Reality", "series", "top", "Reality-TV"),
+        cine("Documentary", "movie", "top", "Documentary"),
+        cine("Family", "movie", "top", "Family"),
+    ]
+
+    /// Default Home (Android DEFAULT_SHELVES): trending/popular basics, every streaming
+    /// service row, and a couple of broad crowd-pleasers.
+    static let defaults = ["Trending Today", "Trending Series", "Popular Movies", "Popular Series",
+                           "New in Theaters", "Coming Soon",
+                           "Netflix", "Hulu", "Disney+", "Max", "Prime Video", "Apple TV+", "Paramount+", "Peacock",
+                           "Top Rated Movies", "Top Rated Series", "True Crime"]
+
+    /// Shelf-picker groups (Android showShelfPicker sections).
+    static let providers = ["Netflix", "Hulu", "Disney+", "Max", "Prime Video", "Apple TV+", "Paramount+", "Peacock"]
+    static let channels = ["Hallmark", "Hallmark New", "Hallmark Series", "Hallmark Christmas Movies",
+                           "Anime", "Anime Movies",
+                           "Marvel: Release Order", "Marvel: Chronological", "Marvel Movies", "Marvel Series", "X-Men Movies"]
+    static let moods = ["Christmas Movies", "Halloween Movies", "Date Night", "True Crime",
+                        "Based on a True Story", "Classics", "90s Throwbacks", "Kids Movies", "Kids TV",
+                        "Superheroes", "Zombies", "Time Travel", "Feel-Good", "Tearjerkers",
+                        "Summer Blockbusters", "Fantasy Worlds", "War Movies", "Musicals", "Cozy Mystery Series"]
+    static let genres = ["Action", "Comedy", "Horror", "Sci-Fi", "Romance", "Thriller",
+                         "Drama Series", "Crime Series", "Reality", "Documentary", "Family"]
+    /// (section title, shelves) in picker order: POPULAR & NEW · MOODS & SEASONS · STREAMING
+    /// SERVICES · CHANNELS & ANIME · GENRES.
+    static var groups: [(String, [Shelf])] {
+        let grouped = Set(providers + channels + moods + genres)
+        return [("POPULAR & NEW", all.filter { !grouped.contains($0.label) }),
+                ("MOODS & SEASONS", all.filter { moods.contains($0.label) }),
+                ("STREAMING SERVICES", all.filter { providers.contains($0.label) }),
+                ("CHANNELS & ANIME", all.filter { channels.contains($0.label) }),
+                ("GENRES", all.filter { genres.contains($0.label) })].filter { !$0.1.isEmpty }
+    }
+}
+
 // Curated watch-order rows (IOS_CONTRACTS §3 / Android Discovery.SHELF_CATALOG `ids` rows):
 // exact ordered IMDb id lists, resolved to Cinemeta metas, rendered UNSHUFFLED.
 enum Curated {
     static func ids(_ s: String) -> [String] { s.split(whereSeparator: { $0 == " " || $0 == "\n" }).map(String.init) }
+    static var mcuRelease: [String] { shelves[0].curated }
+    static var mcuChrono: [String] { shelves[1].curated }
+    static var xmen: [String] { shelves[2].curated }
     static let shelves: [AddonCatalog] = [
         AddonCatalog(curated: "Marvel: Release Order", cid: "ck-order-marvel-release", ids: ids("""
         tt0371746 tt0800080 tt1228705 tt0800369 tt0458339 tt0848228 tt1300854 tt1981115 tt1843866
@@ -170,8 +319,74 @@ struct Catalog {
     /// A shelf's row: curated lists resolve through Cinemeta; everything else hits the addon.
     @MainActor
     static func shelf(session: Session, _ c: AddonCatalog) async -> [Meta] {
+        if let sh = c.shelf { return await shelfRow(session: session, sh) }
         if !c.curated.isEmpty { return await Curated.row(c) }
         return await fetch(session: session, type: c.type, cid: c.cid)
+    }
+
+    /// One Home shelf exactly as Android buildShelvesInto fills it: curated ids in order; a
+    /// theme shelf = movies + shows interleaved (2 pages each); a TMDB shelf = 3 pages; a
+    /// Cinemeta shelf = 2 pages (TMDB stands in when Cinemeta can't be reached). Category
+    /// rows get the per-profile daily shuffle; curated lists never do.
+    @MainActor
+    static func shelfRow(session: Session, _ sh: Shelf) async -> [Meta] {
+        if !sh.ids.isEmpty {
+            return await Curated.row(AddonCatalog(curated: sh.label, cid: sh.cine, ids: sh.ids))
+        }
+        let items: [Meta]
+        if let q = sh.tmdb, let tvq = sh.tmdbTv {
+            items = await TMDB.both(q, tvq, pages: 2)
+        } else if let q = sh.tmdb {
+            items = await TMDB.row(kind: sh.tmdbKind, q, pages: 3)
+        } else {
+            items = await cinemeta(type: sh.type, id: sh.cine.isEmpty ? "top" : sh.cine, genre: sh.genre, pages: 2)
+        }
+        return mix(items, session: session, salt: sh.label)
+    }
+
+    /// Cinemeta catalog pages (100 per page, `skip=N`), TMDB fallback when Cinemeta is
+    /// unreachable — an EMPTY Cinemeta answer stays empty (Android Discovery.catalog).
+    static func cinemeta(type: String, id: String, genre: String? = nil, pages: Int = 1) async -> [Meta] {
+        var reached = false
+        var out: [Meta] = []
+        var seen = Set<String>()
+        await withTaskGroup(of: (Int, [Meta]?).self) { g in
+            for pg in 0..<pages {
+                g.addTask {
+                    var seg = ""
+                    if let genre, pg == 0 { seg = "/genre=" + enc(genre) }
+                    else if pg > 0 { seg = "/" + (genre.map { "genre=\(enc($0))&" } ?? "") + "skip=\(pg * 100)" }
+                    guard let r = try? await API.json("/catalog/\(type)/\(id)\(seg).json", base: cinemeta) else { return (pg, nil) }
+                    return (pg, metas(r, type: type))
+                }
+            }
+            var pagesOut: [(Int, [Meta])] = []
+            for await (pg, m) in g { if let m { reached = true; pagesOut.append((pg, m)) } }
+            for (_, m) in pagesOut.sorted(by: { $0.0 < $1.0 }) {
+                for x in m where !seen.contains(x.id) { seen.insert(x.id); out.append(x) }
+            }
+        }
+        if reached { return out }
+        let kind = type == "series" ? "tv" : "movie"
+        let path: String
+        if let genre {
+            let gid = TMDB.genreId(genre, kind: kind).map { "&with_genres=\($0)" } ?? ""
+            path = "discover/\(kind)?sort_by=popularity.desc&vote_count.gte=40" + gid
+        } else if id == "imdbRating" { path = "\(kind)/top_rated" }
+        else { path = "\(kind)/popular" }
+        return await TMDB.row(kind: kind, path, pages: pages)
+    }
+
+    static func enc(_ s: String) -> String {
+        s.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? s
+    }
+
+    /// One Cinemeta catalog page (`skip = page × 100`), for Discover's load-more.
+    static func cinemetaPage(type: String, id: String, genre: String?, page: Int) async -> [Meta] {
+        var seg = ""
+        if let genre, page == 0 { seg = "/genre=" + enc(genre) }
+        else if page > 0 { seg = "/" + (genre.map { "genre=\(enc($0))&" } ?? "") + "skip=\(page * 100)" }
+        return metas(try? await API.json("/catalog/\(type)/\(id)\(seg).json", base: cinemeta), type: type)
     }
 
     @MainActor
@@ -233,16 +448,41 @@ struct Catalog {
     /// for guests. Feeds Top 10 Today + the hero carousel.
     @MainActor
     static func trending(session: Session) async -> ([Meta], [Meta]) {
-        if session.addonBase() != nil {
-            let mc = session.catalogs.first { $0.type == "movie" && $0.isShelf && $0.name.lowercased().contains("trending") }
-            let sc = session.catalogs.first { $0.type == "series" && $0.isShelf && $0.name.lowercased().contains("trending") }
-            async let m = fetch(session: session, type: "movie", cid: mc?.cid ?? "couchking-movies")
-            async let s = fetch(session: session, type: "series", cid: sc?.cid ?? "couchking-series")
-            return (await m, await s)
+        // Android Home: TODAY's trending movies + shows from TMDB (hero carousel + Top 10),
+        // independent of whichever shelf is first; Cinemeta `top` if TMDB is unreachable.
+        async let m = TMDB.row(kind: "movie", "trending/movie/day", pages: 1)
+        async let s = TMDB.row(kind: "tv", "trending/tv/day", pages: 1)
+        var (mv, sv) = (await m, await s)
+        if mv.isEmpty && sv.isEmpty {
+            async let gm = guestRow("movie", "top")
+            async let gs = guestRow("series", "top")
+            (mv, sv) = (await gm, await gs)
         }
-        async let m = guestRow("movie", "top")
-        async let s = guestRow("series", "top")
-        return (await m, await s)
+        return (mv, sv)
+    }
+
+    /// Android forYouRows: the addon's own For You catalog per type first, else the TMDB rec
+    /// graph seeded by the person's library, else this week's trending.
+    @MainActor
+    static func forYouRows(session: Session) async -> ([Meta], [Meta]) {
+        var mv: [Meta] = [], sv: [Meta] = []
+        if session.hasAddon {
+            if let fy = session.catalogs.first(where: { $0.isForYou && $0.type == "movie" }) { mv = await fetch(session: session, type: "movie", cid: fy.cid) }
+            if let fy = session.catalogs.first(where: { $0.isForYou && $0.type == "series" }) { sv = await fetch(session: session, type: "series", cid: fy.cid) }
+        }
+        if mv.isEmpty || sv.isEmpty {
+            let seeds = session.librarySeeds()
+            let mine = session.libraryIds()
+            if mv.isEmpty {
+                mv = await TMDB.recommendations(seeds: seeds, exclude: mine, kind: "movie")
+                if mv.isEmpty { mv = await TMDB.row(kind: "movie", "trending/movie/week", pages: 1) }
+            }
+            if sv.isEmpty {
+                sv = await TMDB.recommendations(seeds: seeds, exclude: mine, kind: "tv")
+                if sv.isEmpty { sv = await TMDB.row(kind: "tv", "trending/tv/week", pages: 1) }
+            }
+        }
+        return (mv, sv)
     }
 
     /// Top 10 Today (Android addTop10Row): trending movies + shows interleaved, first 10.

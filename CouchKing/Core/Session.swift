@@ -25,12 +25,40 @@ final class Session: ObservableObject {
     // account card + the play-time expiry banner. Browsing never blocks on it.
     @Published var accessExpiry: String = UserDefaults.standard.string(forKey: "accessExpiry") ?? ""
     @Published var accessDaysLeft: Int = UserDefaults.standard.object(forKey: "accessDaysLeft") as? Int ?? -1
+    /// The /tvapp/access verdict (`allowed`), cached across launches. Streams and Live TV exist
+    /// only while this is true — an expired or revoked key silently degrades the app to the
+    /// tracker shell (no tab, no rows, no "no streams" message; nothing that opens onto an error).
+    @Published var accessAllowed: Bool = UserDefaults.standard.bool(forKey: "accessAllowed")
+    /// Android Sync.pulledOk: one successful /tvapp/state pull this process — until then an
+    /// empty profile list means "couldn't ask", never "brand-new account".
+    @Published var pulledOk = false
+    /// Android profilePicked: "Who's watching?" is answered once per process (cold open always
+    /// asks, even with a single profile).
+    @Published var profilePicked = false
+    /// Onboarding done (signed in once, or chose "Continue as guest") — the login screen is the
+    /// front door until then, and again after sign-out.
+    @Published var onboarded = UserDefaults.standard.bool(forKey: "onboarded")
 
     static let appVer = "ios-" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
 
     var signedIn: Bool { !email.isEmpty && !token.isEmpty }
+    /// The account's synced state carries a user-added addon (any device).
     var hasAddon: Bool { !addons.isEmpty }
-    var needsProfilePick: Bool { signedIn && profiles.count > 1 && currentProfile.isEmpty }
+    /// A service account: signed in with an addon attached (on any device — it rides the synced
+    /// state). Stream rows, Continue Watching and Live TV exist for these accounts, exactly like
+    /// Android; an expired key shows the expiry banner where streams would be, Live TV outside
+    /// the plan shows the locked panel. Everyone else is the pure tracker shell.
+    var canStream: Bool { signedIn && hasAddon }
+    /// Android profileGate: signed in, profiles known, nobody picked yet this process.
+    var needsProfilePick: Bool { signedIn && !profiles.isEmpty && !profilePicked }
+    /// Android profileGate → showProfileCreate(first): an account whose synced state has NO
+    /// profiles (only once a pull actually succeeded) names its first profile.
+    var needsProfileCreate: Bool { signedIn && profiles.isEmpty && pulledOk && !profilePicked }
+
+    func setOnboarded(_ on: Bool) {
+        onboarded = on
+        UserDefaults.standard.set(on, forKey: "onboarded")
+    }
 
     /// Which account the on-device library belongs to. Survives sign-out (unlike email/token)
     /// so a later sign-in by a DIFFERENT email still knows the local state isn't theirs.
@@ -65,21 +93,33 @@ final class Session: ObservableObject {
         }
     }
 
-    /// Same contract as Android: POST /tvapp/auth {email,password,mode,name}.
+    /// Same contract as Android Sync.auth / desktop auth(): POST /tvapp/auth
+    /// {email, password, mode: "signin"|"signup", name?, appVer} → {ok, token, error?, created?}.
     /// NOTHING commits until the credentials are accepted (Android Sync.auth order) — a
     /// typo'd or abandoned sign-in must never wipe the real owner's library or leave the
-    /// device half signed-in as a garbage account.
-    func signIn(email: String, password: String, create: Bool, name: String = "") async -> String? {
+    /// device half signed-in as a garbage account. Returns the error to show, nil on success.
+    func signIn(email rawEmail: String, password: String, create: Bool, name: String = "") async -> String? {
+        let email = rawEmail.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard email.contains("@"), email.contains(".") else { return "Enter a valid email" }
+        guard !password.isEmpty else { return "Enter email and password" }
+        if create && password.count < 4 { return "Password needs 4+ characters" }
         do {
-            var body: [String: Any] = ["email": email, "password": password, "appVer": Self.appVer]
-            if create { if !name.isEmpty { body["name"] = name } } else { body["mode"] = "signin" }
-            let r = try await API.postJSON("/tvapp/auth", body: body)
-            guard let t = r["token"] as? String, !t.isEmpty else {
-                return (r["error"] as? String) ?? "Sign-in failed"
+            var body: [String: Any] = ["email": email, "password": password,
+                                       "mode": create ? "signup" : "signin", "appVer": Self.appVer]
+            if create { body["name"] = name.trimmingCharacters(in: .whitespaces) }
+            let (r, code) = try await API.postStatus("/tvapp/auth", body: body)
+            let ok = (r["ok"] as? Bool) ?? false
+            guard ok || code == 200, let t = r["token"] as? String, !t.isEmpty else {
+                if let e = r["error"] as? String, !e.isEmpty { return e }
+                switch code {
+                case 401, 403: return create ? "Couldn't create the account" : "Wrong email or password"
+                case 0: return "Can't reach CouchKing — check your connection"
+                default: return create ? "Couldn't create the account" : "Sign-in failed"
+                }
             }
             // verified — NOW commit. A DIFFERENT account than the one this device's library
             // belongs to: start clean (content-owner guard, Store.contentOwner parity).
-            if !contentOwner.isEmpty && contentOwner.lowercased() != email.lowercased() {
+            if !contentOwner.isEmpty && contentOwner.lowercased() != email {
                 clearContentState()
             }
             contentOwner = email
@@ -90,11 +130,41 @@ final class Session: ObservableObject {
             unstashAccount(email)
             self.token = t
             UserDefaults.standard.set(t, forKey: "token")
-            await pull()
-            await checkAccess()
+            profilePicked = false
+            pulledOk = false
+            setOnboarded(true)
+            // Android finishAuth: restore the account BEFORE the who's-watching gate, with
+            // retries — one dropped request must never read as "brand-new account"
+            var pulled = false, acc = false
+            for _ in 0..<3 {
+                if !pulled { pulled = await pull() }
+                if !acc { acc = await checkAccess() }
+                if pulled && acc { break }
+                try? await Task.sleep(for: .milliseconds(1200))
+            }
             await detectLiveTv()
             return nil
-        } catch { return "Can't reach the service — check the address in Settings → Addons." }
+        } catch { return "Can't reach CouchKing — check your connection" }
+    }
+
+    /// Forgot password (Android showForgotPassword): POST /tvapp/reset-request {email} — the
+    /// service always answers the same way so nobody can probe for accounts.
+    func requestReset(email: String) async -> Bool {
+        let e = email.trimmingCharacters(in: .whitespaces).lowercased()
+        return (try? await API.postJSON("/tvapp/reset-request", body: ["email": e])) != nil
+    }
+
+    /// POST /tvapp/reset {email, code, password} → {ok} then a normal sign-in with the new
+    /// password. Returns the error to show, nil when signed in.
+    func resetPassword(email: String, code: String, password: String) async -> String? {
+        let e = email.trimmingCharacters(in: .whitespaces).lowercased()
+        guard let r = try? await API.postJSON("/tvapp/reset", body: ["email": e, "code": code.trimmingCharacters(in: .whitespaces), "password": password]) else {
+            return "Can't reach CouchKing — check your connection"
+        }
+        guard r["ok"] as? Bool == true else {
+            return (r["error"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Wrong or expired code"
+        }
+        return await signIn(email: e, password: password, create: false)
     }
 
     /// Android sign-out semantics: park the WHOLE account state under its email (device-local
@@ -107,7 +177,9 @@ final class Session: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "email")
         UserDefaults.standard.removeObject(forKey: "token")
         clearContentState()
-        setAccessStatus(expires: "", daysLeft: -1)
+        setAccessStatus(expires: "", daysLeft: -1, allowed: false)
+        profilePicked = false; pulledOk = false
+        setOnboarded(false)   // the login screen is the front door again
     }
 
     /// Wipe everything an ACCOUNT owns from memory + device: library, profiles, addons,
@@ -154,14 +226,18 @@ final class Session: ObservableObject {
         UserDefaults.standard.removeObject(forKey: "token")
         contentOwner = ""
         clearContentState()
-        setAccessStatus(expires: "", daysLeft: -1)
+        setAccessStatus(expires: "", daysLeft: -1, allowed: false)
         return true
     }
 
-    func setAccessStatus(expires: String, daysLeft: Int) {
+    func setAccessStatus(expires: String, daysLeft: Int, allowed: Bool? = nil) {
         accessExpiry = expires; accessDaysLeft = daysLeft
         UserDefaults.standard.set(expires, forKey: "accessExpiry")
         UserDefaults.standard.set(daysLeft, forKey: "accessDaysLeft")
+        if let allowed {
+            accessAllowed = allowed
+            UserDefaults.standard.set(allowed, forKey: "accessAllowed")
+        }
     }
 
     /// Every foreground (Android onResume parity): pull cross-device state, refresh the
@@ -175,38 +251,36 @@ final class Session: ObservableObject {
         await detectLiveTv()
     }
 
-    func pull() async {
-        guard signedIn else { return }
+    @discardableResult
+    func pull() async -> Bool {
+        guard signedIn else { return false }
         // upgrade migration: devices from before contentOwner existed — the signed-in
         // account claims the local library so a future different-email sign-in wipes it
         if contentOwner.isEmpty { contentOwner = email }
         let e = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        if let st = try? await API.json("/tvapp/state?e=\(e)&t=\(token)") {
-            apply(st)
-            push()   // push the union straight back (Android Sync.pullMerge: merge, then push)
-        }
+        let t = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? token
+        guard let r = try? await API.jsonStatus("/tvapp/state?e=\(e)&t=\(t)"), r.1 == 200 else { return false }
+        apply(r.0)
+        pulledOk = true
+        push()   // push the union straight back (Android Sync.pullMerge: merge, then push)
+        return true
     }
 
-    /// Store-channel flow (identical to Android store flavor): after sign-in, ask the
-    /// user-entered service whether this account has an assigned addon → auto-install.
-    /// Also caches expires/daysLeft for the Settings card + play-time expiry banner.
-    func checkAccess() async {
-        guard signedIn else { return }
+    /// GET /tvapp/access → caches expires/daysLeft for the Settings card + the play-time expiry
+    /// banner. That is ALL it does: nothing in the reply can attach an addon or flip the app
+    /// into streaming — addons are user data that arrive with the synced account state only.
+    @discardableResult
+    func checkAccess() async -> Bool {
+        guard signedIn else { return false }
         let e = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        let k = subKey.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        guard let r = try? await API.json("/tvapp/access?e=\(e)&t=\(token)&k=\(k)") else { return }
+        let t = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? token
+        guard let r = try? await API.json("/tvapp/access?e=\(e)&t=\(t)") else { return false }
+        // `allowed` absent (older service) = the service didn't say no
+        let allowed = (r["allowed"] as? Bool) ?? true
         setAccessStatus(expires: r["expires"] as? String ?? "",
-                        daysLeft: r["daysLeft"] as? Int ?? -1)
-        if let allowed = r["allowed"] as? Bool, allowed,
-           let addonUrl = r["addon"] as? String, !addonUrl.isEmpty,
-           !addons.contains(where: { $0.url == addonUrl }) {
-            addons.append(Addon(url: addonUrl, name: "CouchKing"))
-            var st = state
-            st["addons"] = addons.map { ["url": $0.url, "name": $0.name] }
-            state = st
-            push()
-            await detectLiveTv()
-        }
+                        daysLeft: r["daysLeft"] as? Int ?? -1,
+                        allowed: allowed)
+        return true
     }
 
     func push() {
@@ -223,9 +297,21 @@ final class Session: ObservableObject {
     private func apply(_ st: [String: Any]) {
         state = StateMerge.merge(local: state, remote: st)
         profiles = (state["profiles"] as? [[String: Any]] ?? []).compactMap(Profile.init)
-        if profiles.count == 1 { currentProfile = profiles[0].id }
-        addons = (state["addons"] as? [[String: Any]] ?? []).compactMap {
-            guard let u = $0["url"] as? String else { return nil }
+        if !currentProfile.isEmpty, !profiles.contains(where: { $0.id == currentProfile }) {
+            currentProfile = ""; profilePicked = false   // the picked profile was deleted elsewhere
+        }
+        // addons follow the ACCOUNT (Android Store.addons / desktop S.state.addons): an addon
+        // attached on any device is just there after sign-in — no paste step. The desktop app
+        // stores its copy inside the active profile's blob, so fall back to any profile's list
+        // when the account level has none.
+        var list = state["addons"] as? [[String: Any]] ?? []
+        if list.isEmpty, let states = state["states"] as? [String: Any] {
+            for (_, v) in states {
+                if let a = (v as? [String: Any])?["addons"] as? [[String: Any]], !a.isEmpty { list = a; break }
+            }
+        }
+        addons = list.compactMap {
+            guard let u = $0["url"] as? String, !u.isEmpty else { return nil }
             return Addon(url: u, name: $0["name"] as? String ?? "Addon")
         }
         objectWillChange.send()
@@ -298,7 +384,9 @@ final class Session: ObservableObject {
             }
         }
         catalogs = found
-        liveTvOn = found.contains { $0.isLive }
+        // the Live TV tab exists when the attached addon carries a `tv` catalog (Android
+        // detectLiveTv); a plan without Live TV sees the locked panel inside the tab
+        liveTvOn = canStream && found.contains { $0.isLive }
     }
 
     /// Switch the active person: per-profile content leaves memory immediately (rows,
@@ -307,6 +395,7 @@ final class Session: ObservableObject {
     func switchProfile(_ id: String) {
         currentProfile = id
         UserDefaults.standard.set(id, forKey: "curProfile")
+        profilePicked = !id.isEmpty
         homeStale += 1
         objectWillChange.send()
     }
@@ -343,31 +432,36 @@ final class Session: ObservableObject {
     }
 
     // ---- customizable shelves (Android Store.enabledShelves / persistShelves) ----
-    /// Shelf keys ("type/id") the person enabled, in their order; nil = never customized.
-    func shelfKeys() -> [String]? { pstate()["shelves"] as? [String] }
+    // The synced `shelves` array holds SHELF LABELS ("Netflix", "Trending Today"…) from the shared
+    // Discovery.SHELF_CATALOG — the same blob the Firestick, web and desktop read, so the Home
+    // line-up (and its order) is identical on every device. nil = never customised → defaults.
+    func shelfLabels() -> [String] {
+        let saved = (pstate()["shelves"] as? [String]) ?? []
+        let valid = saved.filter { l in ShelfCatalog.all.contains { $0.label == l } }
+        return valid.isEmpty && saved.isEmpty ? ShelfCatalog.defaults : valid
+    }
 
-    /// The Home shelf lineup: the saved order (dropping catalogs the manifest no longer has),
-    /// or every browsable catalog in manifest order when never customized.
-    /// Every shelf that can go on Home: the manifest's browsable catalogs + the curated
-    /// watch-order rows (available to guests too — they resolve through Cinemeta).
-    func allShelves() -> [AddonCatalog] { catalogs.filter { $0.isShelf } + Curated.shelves }
+    /// Every shelf that can go on Home (the shared catalog), as AddonCatalog rows.
+    func allShelves() -> [AddonCatalog] { ShelfCatalog.all.map { AddonCatalog(shelf: $0) } }
 
+    /// The Home shelf lineup in the person's order.
     func enabledShelves() -> [AddonCatalog] {
         let all = allShelves()
-        guard let keys = shelfKeys() else { return all }
-        return keys.compactMap { k in all.first { $0.id == k } }
+        return shelfLabels().compactMap { l in all.first { $0.name == l } }
     }
 
     private static var shelfPushTask: Task<Void, Never>?
-    /// Save the lineup (order = user order). Debounced push so the 60s pull can't revert a
-    /// half-finished reorder (Android persistShelves).
+    /// Save the lineup (order = user order); accepts labels or catalog ids. Debounced push so
+    /// the 60s pull can't revert a half-finished reorder (Android persistShelves).
     func setShelves(_ keys: [String]) {
+        let all = allShelves()
+        let labels = keys.compactMap { k in all.first { $0.name == k || $0.id == k }?.name }
         var ps = pstate()
-        ps["shelves"] = keys
+        ps["shelves"] = labels
         setPstate(ps, push: false)
         Session.shelfPushTask?.cancel()
         Session.shelfPushTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1.2))
+            try? await Task.sleep(for: .milliseconds(500))
             guard !Task.isCancelled else { return }
             self?.push()
         }
@@ -398,12 +492,11 @@ struct Profile: Identifiable {
         guard let id = o["id"] as? String, !id.isEmpty else { return nil }
         self.id = id
         name = o["name"] as? String ?? "Profile"
-        avatar = o["avatar"] as? String ?? "🍿"
+        avatar = o["avatar"] as? String ?? ""
         color = o["color"] as? String ?? ""
     }
-    /// Android addAvatarColorPicker palette — the hue drives the avatar tile everywhere.
-    static let colors = ["#7B5BF5", "#E6467A", "#F28C28", "#2BB673", "#2F9BE8", "#F2C94C",
-                         "#9B59B6", "#1ABC9C", "#E74C3C", "#95A5A6"]
+    /// The pickable avatar background colours (Android colorChoices / desktop COLOR_CHOICES).
+    static var colors: [String] { ProfileChoices.colors }
     static func tint(_ hex: String) -> Color {
         var h = hex.trimmingCharacters(in: .whitespaces)
         if h.hasPrefix("#") { h.removeFirst() }
@@ -411,6 +504,25 @@ struct Profile: Identifiable {
         return Color(red: Double((v >> 16) & 0xFF) / 255, green: Double((v >> 8) & 0xFF) / 255,
                      blue: Double(v & 0xFF) / 255)
     }
+    /// Android profileHue: the chosen colour, else one derived from the id (Java hashCode over
+    /// the 6-colour palette) so an old profile looks identical on every device.
+    static func hue(_ p: Profile?) -> Color {
+        if let c = p?.color, !c.isEmpty { return tint(c) }
+        guard let id = p?.id, !id.isEmpty else { return tint("#241F3D") }
+        var h: Int32 = 0
+        for u in id.utf16 { h = h &* 31 &+ Int32(u) }
+        let palette = ["#7B5BF5", "#E2574C", "#4CAF7D", "#E2A54C", "#4C9DE2", "#C24CE2"]
+        return tint(palette[Int(abs(Int(h))) % palette.count])
+    }
+    /// The face glyph: the emoji, else the name's initial (Android avatarView).
+    var glyph: String { avatar.isEmpty ? String(name.prefix(1)).uppercased() : avatar }
+}
+
+/// Avatar + colour choices — the SAME sets as the Firestick / web / desktop apps.
+enum ProfileChoices {
+    static let avatars = ["👑", "🦁", "🦊", "🐼", "🐸", "🚀", "🌸", "🎮", "🐱", "🐶", "🐰", "🐻",
+                          "🐧", "🦄", "⚽", "🍕", "🤖", "👽", "🦸", "🍿", "⭐", "🌟", "🎈", "🎸"]
+    static let colors = ["#7B5BF5", "#E2574C", "#4CAF7D", "#E2A54C", "#4C9DE2", "#C24CE2", "#E24C9D", "#3FB6B0"]
 }
 
 struct Addon: Identifiable {
@@ -463,8 +575,9 @@ extension Session {
     }
 
     // ---- profiles CRUD (Android parity: max 5, tombstoned deletes) ----
-    func addProfile(name: String, avatar: String, color: String = "") {
-        guard profiles.count < 5 else { return }
+    @discardableResult
+    func addProfile(name: String, avatar: String, color: String = "") -> String? {
+        guard profiles.count < 5 else { return nil }
         let id = "p" + String(Int(Date().timeIntervalSince1970 * 1000), radix: 36)
         var profs = state["profiles"] as? [[String: Any]] ?? []
         profs.append(["id": id, "name": name, "avatar": avatar, "color": color,
@@ -475,6 +588,7 @@ extension Session {
         state["states"] = states
         profiles = profs.compactMap(Profile.init)
         push()
+        return id
     }
     func renameProfile(_ id: String, name: String, avatar: String, color: String? = nil) {
         var profs = state["profiles"] as? [[String: Any]] ?? []
@@ -501,6 +615,27 @@ extension Session {
         if currentProfile == id { currentProfile = "" ; UserDefaults.standard.set("", forKey: "curProfile") }
         push()
     }
+    /// Settings → Addons "Add": the pasted addon code / URL is probed as a Stremio-style manifest
+    /// (`<url>/manifest.json`); nothing is added until it answers, its own name is taken, and the
+    /// entry goes into the synced account state so every signed-in device gets it. This is the
+    /// ONLY way an addon ever enters the app — never from code, never from a server flag.
+    func addAddon(_ raw: String) async -> String? {
+        let u = API.normalizeAddress(raw)
+        guard !u.isEmpty else { return "Enter your addon code or URL" }
+        guard signedIn else { return "Sign in first — addons belong to your account" }
+        guard let m = try? await API.json("/manifest.json", base: u),
+              (m["id"] != nil || m["catalogs"] is [[String: Any]] || m["resources"] != nil) else {
+            return "Couldn't add that — check the code or URL"
+        }
+        if addons.contains(where: { $0.url == u }) { return "Already added" }
+        let name = (m["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Addon"
+        addons.append(Addon(url: u, name: name))
+        state["addons"] = addons.map { ["url": $0.url, "name": $0.name] }
+        push()
+        await detectLiveTv()
+        return nil
+    }
+
     func removeAddon(_ url: String) {
         addons.removeAll { $0.url == url }
         state["addons"] = addons.map { ["url": $0.url, "name": $0.name] }
