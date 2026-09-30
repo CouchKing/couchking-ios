@@ -293,9 +293,10 @@ final class Session: ObservableObject {
         return true
     }
 
-    /// GET /tvapp/access → caches expires/daysLeft for the Settings card + the play-time expiry
-    /// banner. That is ALL it does: nothing in the reply can attach an addon or flip the app
-    /// into streaming — addons are user data that arrive with the synced account state only.
+    /// GET /tvapp/access (Android Addons.access / checkAccessThen, desktop bootstrap): caches
+    /// expires/daysLeft for the Settings card + the play-time expiry banner, and when the account
+    /// is allowed and has an ASSIGNED addon that isn't attached yet, attaches it as account data
+    /// — the addon then rides the synced state to every device; nobody pastes anything.
     @discardableResult
     func checkAccess() async -> Bool {
         guard signedIn else { return false }
@@ -307,6 +308,16 @@ final class Session: ObservableObject {
         setAccessStatus(expires: r["expires"] as? String ?? "",
                         daysLeft: r["daysLeft"] as? Int ?? -1,
                         allowed: allowed)
+        if allowed, addons.isEmpty, let assigned = r["addon"] as? String, !assigned.isEmpty {
+            let u = API.normalizeAddress(assigned)
+            // the probe only gives a prettier name, never a gate (Android finishAuth)
+            let name = ((try? await API.json("/manifest.json", base: u))?["name"] as? String)
+                .flatMap { $0.isEmpty ? nil : $0 } ?? "CouchKing"
+            addons.append(Addon(url: u, name: name))
+            state["addons"] = addons.map { ["url": $0.url, "name": $0.name] }
+            push()
+            await detectLiveTv()   // the tab appears now, not on the next relaunch
+        }
         return true
     }
 
@@ -644,10 +655,11 @@ extension Session {
         if currentProfile == id { currentProfile = "" ; UserDefaults.standard.set("", forKey: "curProfile") }
         push()
     }
-    /// Settings → Addons "Add": the pasted addon code / URL is probed as a Stremio-style manifest
+    /// Settings → Addons "Add" (Android showAddons, power users / accounts that never attached a
+    /// service anywhere): the pasted addon code / URL is probed as a Stremio-style manifest
     /// (`<url>/manifest.json`); nothing is added until it answers, its own name is taken, and the
-    /// entry goes into the synced account state so every signed-in device gets it. This is the
-    /// ONLY way an addon ever enters the app — never from code, never from a server flag.
+    /// entry goes into the synced account state so every signed-in device gets it. Addons enter
+    /// the app only as account data — from here or from the account's assignment — never from code.
     func addAddon(_ raw: String) async -> String? {
         let u = API.normalizeAddress(raw)
         guard !u.isEmpty else { return "Enter your addon code or URL" }
