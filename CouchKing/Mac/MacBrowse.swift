@@ -125,7 +125,7 @@ struct MacDiscover: View {
     @State private var loading = false
 
     private var catalogs: [AddonCatalog] {
-        if session.hasAddon { return session.catalogs.filter { $0.type == type && !$0.isLive && !$0.searchOnly } }
+        if session.canStream { return session.catalogs.filter { $0.type == type && !$0.isLive && !$0.searchOnly } }
         return [AddonCatalog(["type": type, "id": "top", "name": "Popular"]),
                 AddonCatalog(["type": type, "id": "year", "name": "New"])].compactMap { $0 }
     }
@@ -196,7 +196,7 @@ struct MacDiscover: View {
                 if !genre.isEmpty { extras.append("genre=" + (genre.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? genre)) }
                 if skip > 0 { extras.append("skip=\(skip)") }
                 let extra = extras.joined(separator: "&")
-                let batch = session.hasAddon
+                let batch = session.canStream
                     ? await Catalog.fetch(session: session, type: type, cid: c.cid, extra: extra)
                     : await Catalog.guestRow(type, extra.isEmpty ? c.cid : c.cid + "/" + extra)
                 if batch.isEmpty { break }

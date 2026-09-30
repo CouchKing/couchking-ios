@@ -738,7 +738,8 @@ struct PlayerView: View {
     }
 
     func posKey() -> String {
-        request.season != nil ? "\(request.meta.id):\(request.season!):\(request.episode!)" : request.meta.id
+        if let s = request.season, let e = request.episode { return "\(request.meta.id):\(s):\(e)" }
+        return request.meta.id
     }
 
     // MARK: ticker

@@ -27,18 +27,15 @@ struct DetailView: View {
                     header
                     genreChips
                     actionRow
-                    if meta.type == "movie", session.hasAddon {
-                        Text("Streams").font(.headline)
-                        StreamList(meta: meta)
-                    }
-                    if !session.hasAddon { whereToWatch }
                     castRow
+                    if !session.canStream { whereToWatch }
                     if meta.type == "series" {
                         EpisodesView(meta: meta, videos: full["videos"] as? [[String: Any]] ?? [])
                     }
-                    if !session.hasAddon {
-                        Text("Sign in with an enabled account to watch — tracking works for everyone.")
-                            .font(.caption).foregroundStyle(.secondary)
+                    // STREAMS APPEAR AUTOMATICALLY (Stremio behavior) — only with a valid key.
+                    if meta.type == "movie", session.canStream {
+                        Text("Streams").font(.headline)
+                        StreamList(meta: meta)
                     }
                 }
                 .padding(.horizontal, Platform.gutter).padding(.bottom, 20)
@@ -62,7 +59,8 @@ struct DetailView: View {
     @ViewBuilder private var whereToWatch: some View {
         if let p = providers, !p.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                Text("▶ Where to watch").font(.headline)
+                Text("▶ Where to watch").font(.system(size: 20, weight: .bold)).padding(.top, 6)
+                Text("Stream, rent, or buy from these services:").font(.footnote).foregroundStyle(.secondary)
                 let rent = Array(p.rent.prefix(4))
                 let buy = Array(p.buy.filter { !rent.contains($0) }.prefix(4))
                 let chips: [(String, Bool)] = p.stream.prefix(4).map { ($0, true) }
@@ -138,7 +136,7 @@ struct DetailView: View {
 
     /// Genres as chips → Discover pre-filtered to that genre (Android genre chips deep-link).
     @ViewBuilder private var genreChips: some View {
-        let genres = rich.genres.prefix(6)
+        let genres = rich.genres.prefix(4)
         if !genres.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
@@ -210,7 +208,7 @@ struct DetailView: View {
         if meta.type == "series", let v = full["videos"] as? [[String: Any]] {
             MetaCache.shared.put(meta.id, videos: v)
         }
-        if !session.hasAddon {
+        if !session.canStream {
             providers = await TMDB.providers(imdb: meta.id, kind: meta.type == "series" ? "tv" : "movie")
             providersLoaded = true
         }
@@ -251,21 +249,21 @@ struct TrailerView: View {
     }
 }
 
-/// YouTube embed player in a web view (iPhone + Mac). Apple TV has no WKWebView; the trailer
-/// button is hidden there.
+/// YouTube embed player in a web view (iPhone + Mac) — Android TrailerActivity: the
+/// youtube-nocookie embed, inline playback, autoplay without a tap. The embed URL is loaded
+/// directly (an about:blank-hosted iframe gets "Video unavailable"). Apple TV has no WKWebView;
+/// the trailer button is hidden there.
 struct YouTubeEmbed {
     let ytId: String
-    private var html: String { """
-        <html><body style="margin:0;background:#000">
-        <iframe width="100%" height="100%" src="https://www.youtube.com/embed/\(ytId)?autoplay=1&playsinline=1&rel=0&modestbranding=1"
-        frameborder="0" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
-        </body></html>
-        """ }
+    private var url: URL? {
+        URL(string: "https://www.youtube-nocookie.com/embed/\(ytId)?autoplay=1&playsinline=1&rel=0&modestbranding=1&fs=1")
+    }
     #if !os(tvOS)
     fileprivate func makeWeb() -> WKWebView {
         let cfg = WKWebViewConfiguration()
         #if os(iOS)
         cfg.allowsInlineMediaPlayback = true
+        cfg.allowsPictureInPictureMediaPlayback = true
         #endif
         cfg.mediaTypesRequiringUserActionForPlayback = []
         let v = WKWebView(frame: .zero, configuration: cfg)
@@ -274,7 +272,7 @@ struct YouTubeEmbed {
         v.backgroundColor = .black
         v.scrollView.isScrollEnabled = false
         #endif
-        v.loadHTMLString(html, baseURL: URL(string: "https://www.youtube.com"))
+        if let url { v.load(URLRequest(url: url)) }
         return v
     }
     #endif
@@ -301,10 +299,9 @@ struct PersonView: View {
     let person: TMDB.Person
     @State private var credits: [Meta] = []
     @State private var loading = true
-    private let cols = [GridItem(.adaptive(minimum: Platform.gridMin), spacing: Platform.isTV ? 40 : 10)]
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 14) {
                     AsyncImage(url: URL(string: person.profile ?? "")) { img in
                         img.resizable().aspectRatio(contentMode: .fill)
@@ -315,15 +312,16 @@ struct PersonView: View {
                         if !person.known.isEmpty { Text(person.known).font(.caption).foregroundStyle(.secondary) }
                     }
                 }
-                Text("Filmography").font(.headline)
-                LazyVGrid(columns: cols, spacing: 12) {
-                    ForEach(credits) { m in
-                        NavigationLink(value: m) { PosterCard(meta: m) }.ckTile()
-                    }
-                }
-                if loading { ProgressView().frame(maxWidth: .infinity) }
             }
             .padding(14)
+            VStack(alignment: .leading, spacing: 4) {
+                let movies = credits.filter { $0.type != "series" }
+                let shows = credits.filter { $0.type == "series" }
+                if !movies.isEmpty { PosterRow(title: "Movies", metas: movies) }
+                if !shows.isEmpty { PosterRow(title: "Shows", metas: shows) }
+                if loading { ProgressView().frame(maxWidth: .infinity) }
+            }
+            .padding(.bottom, 28)
         }
         .background(Theme.bg)
         .navigationTitle(person.name)

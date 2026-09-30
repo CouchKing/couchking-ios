@@ -2,7 +2,7 @@ import SwiftUI
 
 // CouchKing iOS — mirror of the Android app (2.0.93 feature line).
 // Tracker-mode for guests; streaming appears only when the signed-in account
-// has an addon assigned server-side (nothing baked into the binary).
+// has an addon attached (on any device — it syncs down with the account state).
 @main
 struct CouchKingApp: App {
     @StateObject private var session = Session.shared
@@ -41,60 +41,53 @@ struct CouchKingApp: App {
     }
 }
 
+/// Android profileGate, as a view tree:
+/// update gate → LOGIN (nobody signed in, nobody chose guest) → first profile ("Create your
+/// profile" → "Pick your shelves") → "Who's watching?" → the app.
 struct RootView: View {
     @EnvironmentObject var session: Session
-    @AppStorage("onboarded") private var onboarded = false
-    var body: some View {
-        if let gate = session.updateRequired {
-            UpdateGateView(info: gate)   // below the service's minVersion: nothing else opens
-        } else if !onboarded {
-            OnboardingView { onboarded = true }
-        } else if session.needsProfilePick {
-            ProfilePickerView()
-        } else {
-            MainTabs()
-        }
-    }
-}
+    enum FirstRun { case none, shelves }
+    @State private var firstRun: FirstRun = .none
 
-// First-launch welcome + Terms/Privacy acceptance (Apple requires a clear terms gate; guest mode
-// starts only after accepting) — Android showOnboarding/gate parity.
-struct OnboardingView: View {
-    let done: () -> Void
     var body: some View {
-        NavigationStack { onboarding }
-    }
-    private var onboarding: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            Text("👑").font(.system(size: 64))
-            Text("CouchKing").font(.largeTitle.bold())
-            Text("Movies, shows, and live TV — synced across your devices.")
-                .font(.callout).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center).padding(.horizontal, 32)
-            Spacer()
-            VStack(spacing: 12) {
-                Button {
-                    UserDefaults.standard.set(true, forKey: "onboarded")
-                    done()
-                } label: {
-                    Text("Get Started").font(.headline).frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(Theme.accent, in: RoundedRectangle(cornerRadius: 14))
-                        .foregroundStyle(.white)
-                }
-                Text("By continuing you agree to our")
-                    .font(.caption2).foregroundStyle(.secondary)
-                HStack(spacing: 4) {
-                    NavigationLink("Terms") { LegalTextView(title: "Terms of Service", text: Legal.terms) }
-                    Text("·").foregroundStyle(.secondary)
-                    NavigationLink("Privacy Policy") { LegalTextView(title: "Privacy Policy", text: Legal.privacy) }
-                }.font(.caption2)
+        Group {
+            if let gate = session.updateRequired {
+                UpdateGateView(info: gate)   // below the service's minVersion: nothing else opens
+            } else if !session.signedIn && !session.onboarded {
+                LoginView()
+            } else if session.needsProfileCreate {
+                firstProfile
+            } else if firstRun == .shelves {
+                firstShelves
+            } else if session.needsProfilePick {
+                ProfilePickerView()
+            } else {
+                MainTabs()
             }
-            .padding(.horizontal, 28).padding(.bottom, 40)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.bg)
+        .onChange(of: session.signedIn) { on in if !on { firstRun = .none } }
+    }
+
+    // "Create your profile" (Android showProfileCreate(first = true)): THEY name it, then pick
+    // their Home shelves, then land on Home.
+    private var firstProfile: some View {
+        NavigationStack {
+            #if os(tvOS) || os(macOS)
+            ProfileFormHub(profile: nil, first: true) { firstRun = .shelves }
+            #else
+            ProfileEditView(profile: nil, first: true) { firstRun = .shelves }
+            #endif
+        }
+    }
+
+    private var firstShelves: some View {
+        NavigationStack {
+            #if os(tvOS) || os(macOS)
+            HubShelves(onDone: { session.push(); firstRun = .none })
+            #else
+            ShelfPickerView(onDone: { session.push(); firstRun = .none })
+            #endif
+        }
     }
 }
 
@@ -119,7 +112,9 @@ struct MainTabs: View {
             HomeView().tabItem { Label("Home", systemImage: "house.fill") }.tag(1)
             DiscoverTab().tabItem { Label("Discover", systemImage: "square.grid.2x2.fill") }.tag(2)
             LibraryView().tabItem { Label("Library", systemImage: "books.vertical.fill") }.tag(3)
-            if session.liveTvOn {
+            // Live TV exists ONLY once an addon with a `tv` catalog is attached — the shell
+            // itself never mentions it (Android navTabs / desktop livetvDetect)
+            if session.liveTvOn && session.canStream {
                 LiveTVView().tabItem { Label("Live TV", systemImage: "dot.radiowaves.left.and.right") }.tag(4)
             }
             SettingsView().tabItem { Label("Settings", systemImage: "gearshape.fill") }.tag(5)
@@ -128,26 +123,34 @@ struct MainTabs: View {
     #endif
 }
 
-
-
-// Palette aligned with Android + the Sheets.kt components: accent #7B5BF5, panel #1B1830,
-// card #2C2649 (the iOS-only #A855F7 accent is gone so every surface reads the same).
+// Palette = the Android app's (res/colors.xml brand_bg + MainActivity fg/dim/card/accent):
+// bg #0C0B14, panel #1B1830, card #2C2649, accent #7B5BF5, dim #A9A5C0.
 enum Theme {
     static let accent = Color(red: 0x7B / 255.0, green: 0x5B / 255.0, blue: 0xF5 / 255.0)   // #7B5BF5
-    static let bg = Color(red: 0.03, green: 0.03, blue: 0.06)
+    static let bg = Color(red: 0x0C / 255.0, green: 0x0B / 255.0, blue: 0x14 / 255.0)       // brand_bg
     static let panel = Color(red: 0x1B / 255.0, green: 0x18 / 255.0, blue: 0x30 / 255.0)    // #1B1830
     static let card = Color(red: 0x2C / 255.0, green: 0x26 / 255.0, blue: 0x49 / 255.0)     // #2C2649
+    static let card2 = Color(red: 0x24 / 255.0, green: 0x1F / 255.0, blue: 0x3D / 255.0)    // #241F3D
+    static let dim = Color(red: 0xA9 / 255.0, green: 0xA5 / 255.0, blue: 0xC0 / 255.0)      // #A9A5C0
+    static let gold = Color(red: 0xF5 / 255.0, green: 0xC5 / 255.0, blue: 0x18 / 255.0)     // #F5C518
+    static let couch = Color(red: 0xA8 / 255.0, green: 0x55 / 255.0, blue: 0xF7 / 255.0)    // brandSpan "Couch"
+    static let king = Color(red: 0xF0 / 255.0, green: 0xF0 / 255.0, blue: 0xF5 / 255.0)     // brandSpan "King"
     /// Brand gradient (Android's crown/gradient span on "CouchKing").
     static let brand = LinearGradient(colors: [accent, Color(red: 0.93, green: 0.45, blue: 0.85)],
                                       startPoint: .leading, endPoint: .trailing)
 }
 
-/// "👑 CouchKing" — the brand span Android draws on every title bar (~L5991).
+/// The title-bar brand: logo + "CouchKing TV" (Android brandSpan: "Couch" purple, "King" white).
 struct BrandTitle: View {
     var body: some View {
         HStack(spacing: 6) {
-            Text("👑")
-            Text("CouchKing").font(.headline.bold()).foregroundStyle(Theme.brand)
+            Image("Logo").resizable().aspectRatio(contentMode: .fit)
+                .frame(width: 22, height: 22).clipShape(RoundedRectangle(cornerRadius: 5))
+            HStack(spacing: 0) {
+                Text("Couch").foregroundStyle(Theme.couch)
+                Text("King TV").foregroundStyle(Theme.king)
+            }
+            .font(.headline.bold())
         }
     }
 }

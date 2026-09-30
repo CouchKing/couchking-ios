@@ -14,24 +14,6 @@ import SwiftUI
 // Both use the reference apps' shared avatar + colour choices (catalog.js AVATAR_CHOICES /
 // COLOR_CHOICES); iPhone keeps its own picker.
 
-enum ProfileChoices {
-    static let avatars = ["👑", "🦁", "🦊", "🐼", "🐸", "🚀", "🌸", "🎮", "🐱", "🐶", "🐰", "🐻",
-                          "🐧", "🦄", "⚽", "🍕", "🤖", "👽", "🦸", "🍿", "⭐", "🌟", "🎈", "🎸"]
-    static let colors = ["#7B5BF5", "#E2574C", "#4CAF7D", "#E2A54C", "#4C9DE2", "#C24CE2", "#E24C9D", "#3FB6B0"]
-}
-
-/// Firestick avatarView: a circle in the profile hue with the emoji (or the name's initial).
-struct FaceCircle: View {
-    let profile: Profile?
-    let size: CGFloat
-    var body: some View {
-        let glyph = (profile?.avatar).flatMap { $0.isEmpty ? nil : $0 } ?? String((profile?.name ?? "P").prefix(1)).uppercased()
-        Text(glyph).font(.system(size: size * 0.42)).foregroundStyle(.white)
-            .frame(width: size, height: size)
-            .background(Profile.tint(profile?.color ?? ""), in: Circle())
-    }
-}
-
 #if os(tvOS)
 enum ProfileRoute: Hashable { case create, edit(String) }
 
@@ -113,24 +95,27 @@ struct ProfileFormHub: View {
     @EnvironmentObject var session: Session
     @Environment(\.dismiss) private var dismiss
     let profile: Profile?
+    /// First run (Android showProfileCreate(first = true)): the new profile becomes active and
+    /// `onDone` continues to the shelves picker.
+    var first = false
+    var onDone: (() -> Void)? = nil
     @State private var name = ""
-    @State private var avatar = "👑"
-    @State private var color = ProfileChoices.colors[0]
+    @State private var avatar = ""
+    @State private var color = ""
 
     var body: some View {
-        HubPage(title: profile == nil ? "Add a profile" : "Edit profile") {
+        HubPage(title: first ? "Create your profile" : (profile == nil ? "Add a profile" : "Edit profile"), root: first) {
             HubDim(text: profile == nil ? "Your watchlist, progress, and picks stay yours."
                                         : "Change the name, picture, or color — or remove this profile.")
             HubField(hint: "Name", text: $name)
             ProfilePickers(avatar: $avatar, color: $color)
-            HubPill(text: profile == nil ? "Create" : "Save") { save() }
+            HubPill(text: first ? "Start watching" : (profile == nil ? "Create" : "Save")) { save() }
             if let p = profile, session.profiles.count > 1 {
                 HubRow(label: "Delete profile") { session.deleteProfile(p.id); dismiss() }
             }
         }
         .onAppear {
-            if let p = profile { name = p.name; avatar = p.avatar.isEmpty ? avatar : p.avatar; if !p.color.isEmpty { color = p.color } }
-            else { color = ProfileChoices.colors[session.profiles.count % ProfileChoices.colors.count] }
+            if let p = profile { name = p.name; avatar = p.avatar; color = p.color }
         }
     }
 
@@ -138,8 +123,11 @@ struct ProfileFormHub: View {
         let n = name.trimmingCharacters(in: .whitespaces)
         guard !n.isEmpty else { return }
         if let p = profile { session.renameProfile(p.id, name: n, avatar: avatar, color: color) }
-        else { session.addProfile(name: n, avatar: avatar, color: color) }
-        dismiss()
+        else {
+            let id = session.addProfile(name: n, avatar: avatar, color: color)
+            if first, let id { session.switchProfile(id) }
+        }
+        if first { onDone?() } else { dismiss() }
     }
 }
 

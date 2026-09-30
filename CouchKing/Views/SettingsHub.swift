@@ -549,44 +549,45 @@ struct HubText: View {
 /// on, #241F3D / muted when off. Firestick: two per line; desktop: wrapping chip grid.
 struct HubShelves: View {
     @EnvironmentObject var session: Session
+    var onDone: (() -> Void)? = nil     // first run: "Start watching"
     var body: some View {
-        let order = session.enabledShelves().map(\.id)
-        HubPage(title: "Shelves") {
-            HubDim(text: "Turn rows on or off — the number shows where each one lands on Home. For You is always on. Reorder them in Settings → Reorder shelves.")
-            ForEach([("movie", "MOVIES"), ("series", "SHOWS")], id: \.0) { t, title in
-                let cats = session.allShelves().filter { $0.type == t }
-                if !cats.isEmpty {
-                    HubSection(text: title)
-                    #if os(tvOS)
-                    LazyVGrid(columns: [GridItem(.flexible(), spacing: TV.dp(6)), GridItem(.flexible(), spacing: TV.dp(6))],
-                              spacing: TV.dp(6)) {
-                        ForEach(cats) { c in chip(c, order) }
-                    }
-                    #else
-                    FlowRow(spacing: 8) { ForEach(cats) { c in chip(c, order) } }
-                    #endif
+        let order = session.shelfLabels()
+        HubPage(title: onDone != nil ? "Pick your shelves" : "Shelves", root: onDone != nil) {
+            HubDim(text: "Turn rows on or off — the number shows where each one lands on Home. For You is always on."
+                   + (onDone != nil ? " You can reorder them later in Settings." : " Reorder them in Settings → Reorder shelves."))
+            ForEach(ShelfCatalog.groups, id: \.0) { title, shelves in
+                HubSection(text: title)
+                #if os(tvOS)
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: TV.dp(6)), GridItem(.flexible(), spacing: TV.dp(6))],
+                          spacing: TV.dp(6)) {
+                    ForEach(shelves, id: \.label) { sh in chip(sh.label, order) }
                 }
+                #else
+                FlowRow(spacing: 8) { ForEach(shelves, id: \.label) { sh in chip(sh.label, order) } }
+                #endif
             }
-            HubLink(label: "Reorder shelves", value: "Arrange the order they show on Home", route: .reorder)
+            if let onDone { HubPill(text: "Start watching", action: onDone) }
+            else { HubLink(label: "Reorder shelves", value: "Arrange the order they show on Home", route: .reorder) }
         }
     }
 
-    private func chip(_ c: AddonCatalog, _ order: [String]) -> some View {
-        let i = order.firstIndex(of: c.id)
+    private func chip(_ label: String, _ order: [String]) -> some View {
+        let i = order.firstIndex(of: label)
         let on = i != nil
+        let text = i.map { "\($0 + 1). " + label } ?? label
         return Button {
             var keys = order
-            if on { keys.removeAll { $0 == c.id } } else { keys.append(c.id) }
+            if on { keys.removeAll { $0 == label } } else { keys.append(label) }
             session.setShelves(keys)
         } label: {
             #if os(tvOS)
-            Text(on ? "\(i! + 1). \(c.name)" : c.name)
+            Text(text)
                 .font(.system(size: TV.sp(14.5), weight: on ? .bold : .regular)).foregroundStyle(on ? .white : TV.dim)
                 .lineLimit(1).frame(maxWidth: .infinity)
                 .padding(.horizontal, TV.dp(10)).padding(.vertical, TV.dp(12))
                 .background(on ? TV.accent : TV.card2, in: RoundedRectangle(cornerRadius: TV.dp(14)))
             #else
-            Text(on ? "\(i! + 1). \(c.name)" : c.name)
+            Text(text)
                 .font(.system(size: 14.4, weight: .bold)).foregroundStyle(on ? .white : Desk.muted)
                 .padding(.horizontal, 16).padding(.vertical, 8)
                 .background(on ? Desk.accent : Desk.chip, in: RoundedRectangle(cornerRadius: 16))

@@ -12,25 +12,58 @@ struct ProfilePickerView: View {
         #endif
     }
 
+    // Android showProfilePicker: "Who's watching?", a row of 92dp faces with the name under
+    // each, "＋ Add profile" while < 5, long-press a face to edit or remove it.
+    @State private var edit: Profile?
+    @State private var adding = false
     private var phonePicker: some View {
-        VStack(spacing: 24) {
-            BrandTitle()
-            Text("Who's watching?").font(.title2.bold())
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 96))], spacing: 20) {
-                ForEach(session.profiles) { p in
-                    Button { session.switchProfile(p.id) } label: {
-                        VStack(spacing: 8) {
-                            ProfileAvatar(profile: p)
-                            Text(p.name).font(.subheadline)
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 0) {
+                    BrandLockup(size: 64).padding(.top, 24)
+                    Text("Who's watching?").font(.system(size: 28, weight: .bold)).padding(.top, 26).padding(.bottom, 26)
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 8)], spacing: 8) {
+                        ForEach(session.profiles) { p in
+                            Button { session.switchProfile(p.id); session.push() } label: {
+                                VStack(spacing: 8) {
+                                    FaceCircle(profile: p, size: 92)
+                                    Text(p.name).font(.system(size: 15)).foregroundStyle(.primary).lineLimit(1)
+                                }
+                                .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 12)
+                            }
+                            .buttonStyle(.plain)
+                            .contextMenu {
+                                Button("Edit profile", systemImage: "pencil") { edit = p }
+                                if session.profiles.count > 1 {
+                                    Button("Delete profile", systemImage: "trash", role: .destructive) { session.deleteProfile(p.id) }
+                                }
+                            }
+                        }
+                        if session.profiles.count < 5 {
+                            Button { adding = true } label: {
+                                VStack(spacing: 8) {
+                                    Text("＋").font(.system(size: 38)).foregroundStyle(Theme.dim)
+                                        .frame(width: 92, height: 92)
+                                        .background(Theme.card2, in: Circle())
+                                        .overlay(Circle().stroke(Color(red: 0x4A / 255.0, green: 0x44 / 255.0, blue: 0x70 / 255.0), lineWidth: 2))
+                                    Text("Add profile").font(.system(size: 15)).foregroundStyle(Theme.dim)
+                                }
+                                .padding(.horizontal, 14).padding(.top, 14).padding(.bottom, 12)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
-                    .ckTile()
+                    .padding(.horizontal, 28)
+                    Text("Hold a profile to edit or remove it.").font(.footnote).foregroundStyle(.secondary)
+                        .padding(.top, 10)
                 }
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 40)
             }
-            .padding(.horizontal, 24)
+            .background(Theme.bg)
+            .sheet(item: $edit) { p in NavigationStack { ProfileEditView(profile: p) } }
+            .sheet(isPresented: $adding) { NavigationStack { ProfileEditView(profile: nil) } }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.bg)
     }
 }
 

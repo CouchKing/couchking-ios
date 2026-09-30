@@ -27,7 +27,7 @@ struct MacDetail: View {
                 VStack(alignment: .leading, spacing: 0) {
                     DeskBack()
                     head.padding(.vertical, 16)
-                    if meta.type == "movie" && session.hasAddon {
+                    if meta.type == "movie" && session.canStream {
                         DeskRowLabel(text: "Streams")
                         StreamList(meta: meta, autoplay: autoplay)
                     }
@@ -64,7 +64,7 @@ struct MacDetail: View {
                     .lineSpacing(8.8).frame(maxWidth: 660, alignment: .leading)
                 buttons.padding(.top, 16)
                 castRow.padding(.vertical, 8)
-                if !session.hasAddon { whereToWatch }
+                if !session.canStream { whereToWatch }
             }
         }
     }
@@ -171,7 +171,7 @@ struct MacDetail: View {
                let s = Int(last.split(separator: ":").dropLast().last ?? "") { season = s }
             else if let f = episodes.map(\.season).filter({ $0 > 0 }).min() { season = f }
         }
-        if !session.hasAddon {
+        if !session.canStream {
             providers = await TMDB.providers(imdb: meta.id, kind: meta.type == "series" ? "tv" : "movie")
         }
     }
@@ -293,7 +293,7 @@ struct MacEpisodePage: View {
                         }
                         Button(session.isWatched(ep.id) ? "✓ Watched" : "Mark watched") { session.toggleEpisodeWatched(ep.id) }
                             .buttonStyle(DeskButton(kind: .ghost, small: true))
-                        if session.hasAddon {
+                        if session.canStream {
                             DeskRowLabel(text: "Streams")
                             StreamList(meta: meta, season: ep.season, episode: ep.episode, episodes: episodes, autoplay: autoplay)
                                 .frame(maxWidth: 760)

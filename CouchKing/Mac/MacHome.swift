@@ -21,7 +21,7 @@ struct MacHome: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if let hero { heroView(hero).padding(.bottom, 9.6) }
-                if session.hasAddon && !cw.isEmpty {
+                if session.canStream && !cw.isEmpty {
                     DeskRowLabel(text: "Continue Watching")
                     DeskStrip {
                         ForEach(cw) { item in
@@ -99,7 +99,7 @@ struct MacHome: View {
                     Text(h.sub).font(.system(size: 16, weight: .bold)).foregroundStyle(Desk.text2)
                         .padding(.top, 5.6).padding(.bottom, 12.8)
                     HStack(spacing: 9.6) {
-                        if session.hasAddon {
+                        if session.canStream {
                             Button(h.cw != nil ? "▶ Resume" : "▶ Watch") {
                                 resume = h.cw ?? CWItem(meta: h.meta, progress: 0, resumeKey: h.meta.id)
                                 resuming = true
@@ -140,7 +140,7 @@ struct MacHome: View {
     private func load() async {
         loadGen += 1
         let gen = loadGen
-        cw = session.hasAddon ? await session.continueWatchingOrdered() : []
+        cw = session.canStream ? await session.continueWatchingOrdered() : []
         await paintHero()
         // Top 10 Today: TMDB trending movie + tv of the DAY, interleaved, never shuffled
         async let tm = TMDB.trendingDay(kind: "movie")
@@ -150,7 +150,7 @@ struct MacHome: View {
         top10 = t10
         var fresh: [(String, [Meta])] = []
         rows = []
-        if session.hasAddon {
+        if session.canStream {
             for (title, cat) in Catalog.homeLineup(session: session) {
                 var metas = await Catalog.shelf(session: session, cat)
                 guard gen == loadGen else { return }

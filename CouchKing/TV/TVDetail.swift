@@ -28,10 +28,10 @@ struct TVDetail: View {
                         if meta.type == "series" { seriesHeader } else { movieHeader }
                         castStrip.padding(.top, TV.dp(10))
                         actions.padding(.top, TV.dp(12))
-                        if !session.hasAddon { whereToWatch.padding(.top, TV.dp(12)) }
+                        if !session.canStream { whereToWatch.padding(.top, TV.dp(12)) }
                     }
                     .frame(width: TV.dp(480), alignment: .leading)
-                    if meta.type == "movie", session.hasAddon {
+                    if meta.type == "movie", session.canStream {
                         StreamList(meta: meta).padding(.top, TV.dp(16))
                     }
                     if meta.type == "series", !episodes.isEmpty {
@@ -167,7 +167,7 @@ struct TVDetail: View {
     private func load() async {
         full = await Catalog.fullMeta(session: session, type: meta.type, id: meta.id)
         if meta.type == "series", let v = full["videos"] as? [[String: Any]] { MetaCache.shared.put(meta.id, videos: v) }
-        if !session.hasAddon {
+        if !session.canStream {
             providers = await TMDB.providers(imdb: meta.id, kind: meta.type == "series" ? "tv" : "movie") ?? TMDB.Providers()
         }
     }
@@ -416,7 +416,7 @@ struct TVEpisodePage: View {
                 if let pct = resumePct {
                     Text("Resume from \(pct)%").font(.system(size: TV.sp(12.5))).foregroundStyle(TV.accent)
                 }
-                if session.hasAddon {
+                if session.canStream {
                     StreamList(meta: meta, season: ep.season, episode: ep.episode, episodes: episodes)
                         .padding(.top, TV.dp(16))
                 }

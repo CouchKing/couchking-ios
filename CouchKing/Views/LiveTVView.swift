@@ -126,9 +126,10 @@ struct LiveTVView: View {
 
     var lockedPanel: some View {
         VStack(spacing: 10) {
-            Text("🔒").font(.system(size: 54))
-            Text("Live TV — Locked").font(.title3.bold())
-            Text("Live TV isn't part of your plan.").foregroundStyle(.secondary)
+            Text("🔒").font(.system(size: 48))
+            Text("CouchKing Live TV — Locked").font(.system(size: 22, weight: .bold))
+            Text("Live TV isn't part of your plan.\nContact support to unlock it.")
+                .font(.system(size: 14)).foregroundStyle(Theme.dim).multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity).padding(.top, 80)
     }

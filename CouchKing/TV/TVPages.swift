@@ -34,7 +34,7 @@ struct TVHome: View {
     var body: some View {
         TVBoard(model: board) {
             TVRows { page in
-                if session.hasAddon && !cw.isEmpty {
+                if session.canStream && !cw.isEmpty {
                     TVRow(id: "cw", label: "Continue Watching", page: page) {
                         ForEach(Array(cw.enumerated()), id: \.element.id) { i, item in
                             TVTile(meta: item.meta, rowId: "cw", page: page, model: board,
@@ -75,7 +75,7 @@ struct TVHome: View {
         board.session = session
         loadGen += 1
         let gen = loadGen
-        cw = session.hasAddon ? await session.continueWatchingOrdered() : []
+        cw = session.canStream ? await session.continueWatchingOrdered() : []
         // trending movies + tv of the day, interleaved: first 10 = Top 10, first 8 = showcase
         async let tm = TMDB.trendingDay(kind: "movie")
         async let tt = TMDB.trendingDay(kind: "tv")
@@ -85,7 +85,7 @@ struct TVHome: View {
         board.startShowcase(Array(pool.prefix(8)))
         var fresh: [(String, [Meta])] = []
         rows = []
-        if session.hasAddon {
+        if session.canStream {
             for (title, cat) in Catalog.homeLineup(session: session) {
                 var metas = await Catalog.shelf(session: session, cat)
                 guard gen == loadGen else { return }
@@ -232,7 +232,7 @@ struct TVDiscover: View {
     @State private var metas: [Meta] = []
 
     private var catalogs: [AddonCatalog] {
-        if session.hasAddon { return session.catalogs.filter { $0.type == type && !$0.isLive && !$0.searchOnly } }
+        if session.canStream { return session.catalogs.filter { $0.type == type && !$0.isLive && !$0.searchOnly } }
         return [AddonCatalog(["type": type, "id": "top", "name": "Popular"]),
                 AddonCatalog(["type": type, "id": "year", "name": "New"])].compactMap { $0 }
     }
@@ -290,7 +290,7 @@ struct TVDiscover: View {
                 if !genre.isEmpty { extras.append("genre=" + (genre.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? genre)) }
                 if skip > 0 { extras.append("skip=\(skip)") }
                 let extra = extras.joined(separator: "&")
-                let batch = session.hasAddon
+                let batch = session.canStream
                     ? await Catalog.fetch(session: session, type: type, cid: c.cid, extra: extra)
                     : await Catalog.guestRow(type, extra.isEmpty ? c.cid : c.cid + "/" + extra)
                 if batch.isEmpty { break }

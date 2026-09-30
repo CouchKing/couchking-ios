@@ -1,19 +1,16 @@
 import SwiftUI
 
-// Settings — Android parity: Account / Profiles / Addons / Player settings /
-// Look & feel / About. Person-level settings sync per profile (2.0.93 semantics).
+// Settings — item for item the Android app's settings page (MainActivity showSettings /
+// showPlayerSettings / showAddons / showAbout / settingRow2): user card (avatar letter · email or
+// Guest · access line) → Sync library now · Sign out · Delete account → SETTINGS: Profile ·
+// Shelves · Reorder shelves · Blur unwatched episode images · Show titles under posters ·
+// Player · Addons · Legal & About. Apple TV + Mac draw the same hub (SettingsHub.swift).
 struct SettingsView: View {
     @EnvironmentObject var session: Session
-    @State private var email = ""
-    @State private var password = ""
-    @State private var name = ""
-    @State private var creating = false
     @State private var err = ""
-    @State private var addonCode = ""
+    @State private var showLogin = false
     @State private var confirmDelete = false
     @State private var syncMsg = ""
-    @State private var addonMsg = ""
-    @State private var probing = false
 
     /// Apple TV hosts Settings in the shell's own navigation stack (so the Menu button knows
     /// when it's at the root); everywhere else it brings its own.
@@ -24,8 +21,6 @@ struct SettingsView: View {
         if embedded { page } else { NavigationStack { page } }
     }
 
-    /// Apple TV + Mac draw the Firestick / desktop settings hub (SettingsHub.swift); iPhone keeps
-    /// its grouped form.
     @ViewBuilder private var page: some View {
         #if os(tvOS) || os(macOS)
         SettingsHub()
@@ -34,39 +29,104 @@ struct SettingsView: View {
         #endif
     }
 
+    #if os(iOS)
     private var content: some View {
-            Form {
-                accountSection
-                if session.signedIn { profilesSection }
-                addonsSection
-                shelvesSection
-                playerSection
-                lookSection
-                aboutSection
-            }
-            .navigationTitle("Settings")
-            // silent service-assignment refresh on open (Android showAddons / onResume)
-            .task { await session.checkAccess() }
-            // CouchKing-styled centered confirm card instead of the system alert (Sheets.kt)
-            .overlay {
-                if confirmDelete {
-                    ConfirmCard(title: "Delete account?",
-                                text: "This permanently deletes your account and synced library on the server.",
-                                confirm: "Delete") {
-                        confirmDelete = false
+        List {
+            Section {
+                userCard
+                if session.signedIn {
+                    SettingRow(label: syncMsg.isEmpty ? "Sync library now" : syncMsg) {
+                        syncMsg = "Syncing…"
                         Task {
-                            if !(await session.deleteAccount()) {
-                                err = "Couldn't delete — check your connection"
-                            }
+                            await session.pull(); await session.checkAccess(); await session.detectLiveTv()
+                            syncMsg = "Library synced"
+                            try? await Task.sleep(for: .seconds(2))
+                            syncMsg = ""
                         }
-                    } cancel: { confirmDelete = false }
+                    }
+                    SettingRow(label: "Sign out") { session.signOut() }
+                    SettingRow(label: "Delete account") { confirmDelete = true }
+                    if !err.isEmpty { Text(err).font(.caption).foregroundStyle(.red) }
                 }
             }
+            Section("SETTINGS") {
+                if session.signedIn, let p = session.profiles.first(where: { $0.id == session.currentProfile }) {
+                    SettingRow(label: "Profile", value: p.name) { session.switchProfile("") }   // "Who's watching?" — switch, edit, add
+                }
+                NavigationLink { ShelfPickerView() } label: {
+                    SettingRowLabel(label: "Shelves", value: "\(session.shelfLabels().count) shelves")
+                }
+                NavigationLink { ShelfReorderView() } label: {
+                    SettingRowLabel(label: "Reorder shelves", value: "Set the order they show on Home")
+                }
+                SettingRow(label: "Blur unwatched episode images", value: session.pref("blurUnwatched", false) ? "On" : "Off") {
+                    session.setPref("blurUnwatched", !session.pref("blurUnwatched", false))
+                }
+                SettingRow(label: "Show titles under posters", value: session.pref("showTitles", true) ? "On" : "Off") {
+                    session.setPref("showTitles", !session.pref("showTitles", true))
+                }
+                // Player settings only exist when there's something to PLAY
+                if session.hasAddon {
+                    NavigationLink { PlayerSettingsView() } label: { SettingRowLabel(label: "Player", value: "") }
+                }
+                NavigationLink { AddonsView() } label: {
+                    SettingRowLabel(label: "Addons", value: session.signedIn ? "\(session.addons.count) added" : "sign in to add")
+                }
+                NavigationLink { LegalView() } label: { SettingRowLabel(label: "Legal & About", value: "") }
+            }
         }
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        .background(Theme.bg)
+        .navigationTitle("Settings")
+        // silent service-assignment refresh on open (Android showSettings)
+        .task { await session.checkAccess() }
+        .fullScreenCover(isPresented: $showLogin) {
+            LoginView { showLogin = false }.environmentObject(session)
+        }
+        // CouchKing-styled centered confirm card instead of the system alert (Sheets.kt)
+        .overlay {
+            if confirmDelete {
+                ConfirmCard(title: "Delete account?",
+                            text: "This permanently deletes your account and synced library on the server.",
+                            confirm: "Delete") {
+                    confirmDelete = false
+                    Task {
+                        if !(await session.deleteAccount()) {
+                            err = "Couldn't delete — check your connection"
+                        }
+                    }
+                } cancel: { confirmDelete = false }
+            }
+        }
+    }
+
+    /// Android user card: 52dp avatar circle with the first letter, email (or Guest), the
+    /// access line; a guest taps it to sign in.
+    private var userCard: some View {
+        let letter = String((session.email.first ?? "G")).uppercased()
+        let expired = session.signedIn && !session.accessExpiry.isEmpty && session.accessDaysLeft <= 0
+        return Button { if !session.signedIn { showLogin = true } } label: {
+            HStack(spacing: 14) {
+                Text(letter).font(.system(size: 22, weight: .bold)).foregroundStyle(.white)
+                    .frame(width: 52, height: 52).background(Theme.accent, in: Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(session.signedIn ? session.email : "Guest").font(.system(size: 17, weight: .bold)).foregroundStyle(.primary)
+                    Text(accessLine).font(.system(size: 13))
+                        .foregroundStyle(expired ? Color(red: 0xE2 / 255.0, green: 0x57 / 255.0, blue: 0x4C / 255.0) : Theme.dim)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 4)
+        }
+        .buttonStyle(.plain)
+    }
+    #endif
 
     /// Account card status line — Android Settings card parity: lifetime / expired /
     /// "Access through … · N days left" / plain signed-in.
     private var accessLine: String {
+        if !session.signedIn { return "Tap to sign in" }
         if session.accessDaysLeft > 3650 { return "Lifetime access" }
         // ≤ 0 days = EXPIRED/REVOKED — no ambiguous "expires today" (revoked should read
         // as gone, not like they still have access today)
@@ -78,168 +138,140 @@ struct SettingsView: View {
         }
         return "Signed in"
     }
+}
 
-    private var accountSection: some View {
-        Section("Account") {
-            if session.signedIn {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(session.email).font(.body.bold())
-                    Text(accessLine).font(.caption)
-                        .foregroundStyle(session.isExpired ? .red : .secondary)
-                }
-                Button(syncMsg.isEmpty ? "Sync library now" : syncMsg) {
-                    syncMsg = "Syncing…"
-                    Task {
-                        await session.pull(); await session.checkAccess()
-                        syncMsg = "Library synced"
-                        try? await Task.sleep(for: .seconds(2))
-                        syncMsg = ""
-                    }
-                }
-                Button("Sign out", role: .destructive) { session.signOut() }
-                Button("Delete account", role: .destructive) { confirmDelete = true }
-                if !err.isEmpty { Text(err).font(.caption).foregroundStyle(.red) }
-            } else {
-                TextField("Email", text: $email)
-                    .ckEmailField()
-                SecureField("Password", text: $password)
-                if creating { TextField("Your name", text: $name) }
-                if !err.isEmpty { Text(err).font(.caption).foregroundStyle(.red) }
-                Button(creating ? "Create account" : "Sign in") {
-                    Task { err = await session.signIn(email: email, password: password,
-                                                     create: creating, name: name) ?? "" }
-                }
-                Button(creating ? "Have an account? Sign in" : "New here? Create one") {
-                    creating.toggle()
-                }.font(.footnote)
-                NavigationLink("Forgot password?") { ForgotPasswordView(prefill: email) }
-                    .font(.footnote)
+/// Android settingRow2: label 16sp · value 14sp dim · ›.
+struct SettingRowLabel: View {
+    let label: String
+    var value = ""
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label).font(.system(size: 16)).foregroundStyle(.primary)
+            Spacer(minLength: 8)
+            if !value.isEmpty {
+                Text(value).font(.system(size: 14)).foregroundStyle(Theme.dim).lineLimit(1).multilineTextAlignment(.trailing)
             }
         }
     }
+}
 
-    private var profilesSection: some View {
-        Section("Profiles") {
-            ForEach(session.profiles) { p in
-                NavigationLink { ProfileEditView(profile: p) } label: {
-                    HStack { ProfileAvatar(profile: p, size: 30); Text(p.name)
-                        if p.id == session.currentProfile {
-                            Spacer(); Text("current").font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
+struct SettingRow: View {
+    let label: String
+    var value = ""
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                SettingRowLabel(label: label, value: value)
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.dim)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Player page (Android showPlayerSettings): SUBTITLES — live sample, Subtitle size, Subtitles
+/// (English / Off); PLAYBACK — Autoplay next episode, Seek step. Keys/values/defaults match
+/// Store.kt so cross-device prefs agree.
+struct PlayerSettingsView: View {
+    @EnvironmentObject var session: Session
+    private let sizes: [(String, Double)] = [("Small", 0.8), ("Normal", 1.0), ("Large", 1.3), ("Huge", 1.6)]
+    var body: some View {
+        let scale: Double = session.pref("subScale", 1.0)
+        let cur: Int = sizes.firstIndex { abs($0.1 - scale) < 0.01 } ?? 1
+        let subLang: String = session.pref("subLang", "off")
+        let autoNext: Bool = session.pref("autoplayNext", true)
+        let seek: Int = session.pref("seekStep", 10)
+        List {
+            Section("SUBTITLES") {
+                SubtitlePreview().listRowInsets(EdgeInsets())
+                SettingRow(label: "Subtitle size", value: sizes[cur].0) {
+                    session.setPref("subScale", sizes[(cur + 1) % sizes.count].1)
+                }
+                SettingRow(label: "Subtitles", value: subLang == "off" ? "Off" : "English") {
+                    session.setPref("subLang", subLang == "off" ? "en" : "off")
                 }
             }
-            if session.profiles.count < 5 {
-                NavigationLink("Add profile") { ProfileEditView(profile: nil) }
-            }
-            if session.profiles.count > 1 {
-                Button("Switch profile") { session.switchProfile("") }
+            Section("PLAYBACK") {
+                SettingRow(label: "Autoplay next episode", value: autoNext ? "On" : "Off") {
+                    session.setPref("autoplayNext", !autoNext)
+                }
+                SettingRow(label: "Seek step", value: "\(seek)s") {
+                    let steps = [5, 10, 15, 30]
+                    let i = steps.firstIndex(of: seek) ?? 1
+                    session.setPref("seekStep", steps[(i + 1) % steps.count])
+                }
             }
         }
+        #if os(iOS)
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        #endif
+        .background(Theme.bg)
+        .navigationTitle("Player")
     }
+}
 
-    /// Addons (Android showAddons): signed-in only — guests get a sign-in prompt; the manifest
-    /// is probed + named before anything is added.
-    private var addonsSection: some View {
-        Section("Addons") {
+/// Addons page (Android showAddons): OFFICIAL — BUILT IN · YOUR ADDONS (tap to remove) · the
+/// code/URL field + Add. Guests get the sign-in pill. Addons are account data: what's added
+/// here syncs to every device, and what any device added shows up here.
+struct AddonsView: View {
+    @EnvironmentObject var session: Session
+    @State private var code = ""
+    @State private var msg = ""
+    @State private var busy = false
+    @State private var showLogin = false
+    @State private var confirmRemove: Addon?
+    var body: some View {
+        List {
             if !session.signedIn {
-                Text("Sign in to add the addon your account was given.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                Section {
+                    Text("Sign in to add addons to your account.").foregroundStyle(.secondary)
+                    Button("Sign in") { showLogin = true }
+                }
             } else {
-                ForEach(session.addons) { a in
-                    HStack {
-                        Text(a.name)
-                        Spacer()
-                        Button(role: .destructive) { session.removeAddon(a.url) } label: {
-                            Image(systemName: "trash")
+                Section("OFFICIAL — BUILT IN") {
+                    SettingRowLabel(label: "Cinemeta", value: "Movie & show info · built in")
+                    SettingRowLabel(label: "OpenSubtitles v3", value: "Subtitles · built in")
+                }
+                Section("YOUR ADDONS") {
+                    if session.addons.isEmpty {
+                        Text("Paste your addon code or URL below.").foregroundStyle(.secondary)
+                    }
+                    ForEach(session.addons) { a in
+                        SettingRow(label: a.name, value: "Tap to remove") { confirmRemove = a }
+                    }
+                    TextField("Addon code or URL", text: $code).ckCodeField()
+                    if !msg.isEmpty { Text(msg).font(.caption).foregroundStyle(.secondary) }
+                    Button(busy ? "Adding…" : "Add") {
+                        busy = true; msg = ""
+                        Task {
+                            let e = await session.addAddon(code)
+                            msg = e ?? "Added"
+                            if e == nil { code = "" }
+                            busy = false
                         }
                     }
+                    .disabled(busy || code.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
-                TextField("Access code", text: $addonCode)
-                    .ckCodeField()
-                if !addonMsg.isEmpty { Text(addonMsg).font(.caption).foregroundStyle(.secondary) }
-                Button(probing ? "Checking…" : "Add addon") { addAddon() }
-                    .disabled(probing || addonCode.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
-    }
-
-    /// Shelves (Android showShelfPicker / showShelfReorder): which catalogs make up Home, in
-    /// what order — synced to the profile with a debounced push.
-    private var shelvesSection: some View {
-        Section("Home shelves") {
-            NavigationLink { ShelfPickerView() } label: {
-                LabeledContent("Choose shelves", value: "\(session.enabledShelves().count) on")
+        #if os(iOS)
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        #endif
+        .background(Theme.bg)
+        .navigationTitle("Addons")
+        #if os(iOS)
+        .fullScreenCover(isPresented: $showLogin) { LoginView { showLogin = false }.environmentObject(session) }
+        #endif
+        .overlay {
+            if let a = confirmRemove {
+                ConfirmCard(title: "Remove \(a.name)?", text: "It leaves your account on every device.", confirm: "Remove") {
+                    session.removeAddon(a.url); confirmRemove = nil
+                } cancel: { confirmRemove = nil }
             }
-            NavigationLink("Reorder shelves") { ShelfReorderView() }
-        }
-    }
-
-    // Keys/values/defaults MATCH Android exactly (Store.kt) so cross-device prefs agree (#148).
-    private var playerSection: some View {
-        Section("Player") {
-            PrefToggle(label: "Autoplay next episode", key: "autoplayNext", def: true)
-            PrefPicker(label: "Skip step", key: "seekStep", def: 10,
-                       options: [(5, "5s"), (10, "10s"), (15, "15s"), (30, "30s")])
-            PrefPicker(label: "Subtitle size", key: "subScale", def: 1.0,
-                       options: [(0.8, "Small"), (1.0, "Normal"), (1.3, "Large"), (1.6, "Huge")])
-            PrefPicker(label: "Subtitles", key: "subLang", def: "off",
-                       options: [("en", "English"), ("off", "Off")])   // Android: English or off only
-            PrefToggle(label: "Subtitle background", key: "subBg", def: false)   // Android default: off
-            PrefToggle(label: "Subtitle outline", key: "subOutline", def: true)
-            PrefPicker(label: "Subtitle position", key: "subPos", def: "normal",
-                       options: [("normal", "Normal"), ("raised", "Raised"), ("high", "High")])
-            PrefPicker(label: "Aspect", key: "scaleMode", def: "fit",
-                       options: [("fit", "Fit"), ("fill", "Fill"), ("zoom", "Zoom")])
-            PrefPicker(label: "Audio language", key: "audioLang", def: "en",
-                       options: [("en", "English"), ("es", "Spanish"), ("fr", "French"), ("de", "German"),
-                                 ("ja", "Japanese"), ("ko", "Korean"), ("any", "Any")])
-            // live preview — shows exactly what the options above produce (Android showPlayerSettings)
-            SubtitlePreview()
-        }
-    }
-
-    private var lookSection: some View {
-        Section("Look & feel") {
-            PrefToggle(label: "Titles under posters", key: "showTitles", def: true)
-            PrefToggle(label: "Blur unwatched episode thumbnails", key: "blurUnwatched", def: false)
-        }
-    }
-
-    private var aboutSection: some View {
-        Section {
-            NavigationLink("Legal & About") { LegalView() }
-            LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
-        }
-    }
-
-    /// Android Addons.probe: fetch the manifest, validate it, take ITS name — nothing is added
-    /// until the addon answers.
-    private func addAddon() {
-        var code = addonCode.trimmingCharacters(in: .whitespaces)
-        if !code.hasPrefix("http") { code = "https://" + code }
-        if code.hasSuffix("/manifest.json") { code = String(code.dropLast("/manifest.json".count)) }
-        probing = true; addonMsg = ""
-        Task {
-            guard let m = try? await API.json("/manifest.json", base: code),
-                  m["catalogs"] is [[String: Any]] || m["resources"] != nil else {
-                addonMsg = "That code doesn't answer as an addon — check it and try again."
-                probing = false; return
-            }
-            if let u = URL(string: code), let host = u.host {
-                API.serviceBase = "https://" + host
-            }
-            let name = (m["name"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "Addon"
-            if !session.addons.contains(where: { $0.url == code }) {
-                session.addons.append(Addon(url: code, name: name))
-                var st = session.state
-                st["addons"] = session.addons.map { ["url": $0.url, "name": $0.name] }
-                session.state = st
-                session.push()
-            }
-            await session.detectLiveTv(); await session.checkAccess()
-            addonMsg = "Added \(name)"
-            addonCode = ""; probing = false
         }
     }
 }
@@ -341,65 +373,89 @@ struct ProfileEditView: View {
     @EnvironmentObject var session: Session
     @Environment(\.dismiss) private var dismiss
     let profile: Profile?
+    /// First run (Android showProfileCreate(first = true)): "Create your profile" → the new
+    /// profile becomes active and `onDone` continues to the shelves picker.
+    var first = false
+    var onDone: (() -> Void)? = nil
     @State private var name = ""
-    @State private var avatar = "🍿"
-    @State private var color = Profile.colors[0]
-    private let avatars = ["🍿", "👑", "🦊", "🐼", "🦄", "🐯", "👻", "🤖", "🌸", "⚡️", "🎮", "🐶"]
+    @State private var avatar = ""
+    @State private var color = ""
 
     var body: some View {
         Form {
-            HStack {
-                Spacer()
-                Text(avatar).font(.system(size: 44)).frame(width: 84, height: 84)
-                    .background(Profile.tint(color), in: RoundedRectangle(cornerRadius: 18))
-                Spacer()
+            Section {
+                HStack {
+                    Spacer()
+                    FaceCircle(profile: nil, size: 84, glyph: avatar.isEmpty ? String(name.prefix(1)).uppercased() : avatar,
+                               tint: color)
+                    Spacer()
+                }
+                .listRowBackground(Color.clear)
+                if first {
+                    Text("Your watchlist, progress, and picks stay yours.")
+                        .font(.footnote).foregroundStyle(.secondary).listRowBackground(Color.clear)
+                }
+                TextField("Name", text: $name)
+                    #if os(iOS)
+                    .textInputAutocapitalization(.words)
+                    #endif
             }
-            TextField("Name", text: $name)
-            // avatar AND color picker (Android addAvatarColorPicker) — the hue drives the tile everywhere
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 52))]) {
-                ForEach(avatars, id: \.self) { a in
-                    // buttons (not tap gestures) so the Siri Remote can focus them
-                    Button { avatar = a } label: {
-                        Text(a).font(.system(size: 32))
-                            .frame(width: 48, height: 48)
-                            .background(a == avatar ? Theme.accent.opacity(0.4) : .clear,
-                                        in: RoundedRectangle(cornerRadius: 10))
+            Section("Pick an avatar") {
+                // avatar AND color picker (Android addAvatarColorPicker) — the hue drives the tile everywhere
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 48), spacing: 6)], spacing: 6) {
+                    ForEach(ProfileChoices.avatars, id: \.self) { a in
+                        Button { avatar = a } label: {
+                            Text(a).font(.system(size: 26))
+                                .frame(width: 44, height: 44)
+                                .background(a == avatar ? Theme.accent.opacity(0.45) : .clear,
+                                            in: RoundedRectangle(cornerRadius: 10))
+                                .opacity(avatar.isEmpty || a == avatar ? 1 : 0.55)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
-            HStack(spacing: 10) {
-                ForEach(Profile.colors, id: \.self) { c in
-                    Button { color = c } label: {
-                        Circle().fill(Profile.tint(c)).frame(width: 28, height: 28)
-                            .overlay(Circle().stroke(.white, lineWidth: c == color ? 3 : 0))
+            Section("Pick a color") {
+                HStack(spacing: 10) {
+                    ForEach(ProfileChoices.colors, id: \.self) { c in
+                        Button { color = c } label: {
+                            RoundedRectangle(cornerRadius: 10).fill(Profile.tint(c)).frame(width: 34, height: 34)
+                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white, lineWidth: c == color ? 2.5 : 0))
+                                .opacity(color.isEmpty || c == color ? 1 : 0.5)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
             }
-            Button(profile == nil ? "Create" : "Save") {
-                if let p = profile { session.renameProfile(p.id, name: name, avatar: avatar, color: color) }
-                else { session.addProfile(name: name, avatar: avatar, color: color) }
-                dismiss()
-            }
-            .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-            if let p = profile, session.profiles.count > 1 {
-                Button("Delete profile", role: .destructive) {
-                    session.deleteProfile(p.id); dismiss()
+            Section {
+                Button(first ? "Start watching" : (profile == nil ? "Create" : "Save")) { save() }
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                if let p = profile, session.profiles.count > 1 {
+                    Button("Delete profile", role: .destructive) {
+                        session.deleteProfile(p.id); dismiss()
+                    }
                 }
             }
         }
-        .navigationTitle(profile == nil ? "New profile" : "Edit profile")
+        .navigationTitle(first ? "Create your profile" : (profile == nil ? "Add a profile" : "Edit profile"))
         .onAppear {
-            if let p = profile { name = p.name; avatar = p.avatar; if !p.color.isEmpty { color = p.color } }
-            else { color = Profile.colors[session.profiles.count % Profile.colors.count] }
+            if let p = profile { name = p.name; avatar = p.avatar; color = p.color }
         }
+    }
+
+    private func save() {
+        let n = name.trimmingCharacters(in: .whitespaces)
+        guard !n.isEmpty else { return }
+        if let p = profile {
+            session.renameProfile(p.id, name: n, avatar: avatar, color: color)
+        } else {
+            let id = session.addProfile(name: n, avatar: avatar, color: color)
+            if first, let id { session.switchProfile(id) }
+        }
+        if first { onDone?() } else { dismiss() }
     }
 }
 
-
-/// Live subtitle preview (Android showPlayerSettings preview box): exactly what the size /
-/// background / outline / position prefs produce in the player.
 struct SubtitlePreview: View {
     @EnvironmentObject var session: Session
     var body: some View {
@@ -434,90 +490,104 @@ struct SubtitleText: View {
     }
 }
 
-/// Shelves picker (Android showShelfPicker): grouped pill chips — Movies then Shows — toggling
-/// a catalog on/off the Home lineup. Order is kept; new picks append.
+/// Shelves picker (Android showShelfPicker): grouped sections of chips that flip IN PLACE and
+/// are NUMBERED in the order you turn them on — that number is where the row lands on Home.
+/// For You is always on (pinned above), so it isn't listed. `onDone` = first run right after
+/// creating a profile ("Start watching").
 struct ShelfPickerView: View {
     @EnvironmentObject var session: Session
-    private let cols = [GridItem(.adaptive(minimum: 120), spacing: 8)]
+    var onDone: (() -> Void)? = nil
+    private let cols = [GridItem(.flexible(), spacing: 6), GridItem(.flexible(), spacing: 6)]
     var body: some View {
-        let enabled = session.enabledShelves().map(\.id)
+        let order = session.shelfLabels()
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                ForEach([("movie", "Movies"), ("series", "Shows")], id: \.0) { t, title in
-                    let cats = session.allShelves().filter { $0.type == t }
-                    if !cats.isEmpty {
-                        Text(title).font(.headline)
-                        LazyVGrid(columns: cols, spacing: 8) {
-                            ForEach(cats) { c in
-                                let on = enabled.contains(c.id)
-                                Button {
-                                    var keys = enabled
-                                    if on { keys.removeAll { $0 == c.id } } else { keys.append(c.id) }
-                                    session.setShelves(keys)
-                                } label: {
-                                    Text((on ? "✓ " : "") + c.name).font(.caption)
-                                        .lineLimit(1).frame(maxWidth: .infinity)
-                                        .padding(.horizontal, 10).padding(.vertical, 8)
-                                        .background(on ? Theme.accent : Theme.card, in: Capsule())
-                                        .foregroundStyle(on ? .white : .primary)
-                                }
-                                .buttonStyle(.plain)
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Turn rows on or off — the number shows where each one lands on Home. For You is always on."
+                     + (onDone != nil ? " You can reorder them later in Settings." : " Reorder them in Settings → Reorder shelves."))
+                    .font(.footnote).foregroundStyle(.secondary)
+                ForEach(ShelfCatalog.groups, id: \.0) { title, shelves in
+                    Text(title).font(.subheadline.bold())
+                    LazyVGrid(columns: cols, spacing: 6) {
+                        ForEach(shelves, id: \.label) { sh in
+                            let idx = order.firstIndex(of: sh.label)
+                            Button {
+                                var keys = order
+                                if let i = idx { keys.remove(at: i) } else { keys.append(sh.label) }
+                                session.setShelves(keys)
+                            } label: {
+                                Text(idx.map { "\($0 + 1). " + sh.label } ?? sh.label)
+                                    .font(.footnote.weight(idx != nil ? .bold : .regular))
+                                    .lineLimit(1).minimumScaleFactor(0.8)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.horizontal, 10).padding(.vertical, 12)
+                                    .background(idx != nil ? Theme.accent : Color(red: 0x24 / 255.0, green: 0x1F / 255.0, blue: 0x3D / 255.0),
+                                                in: RoundedRectangle(cornerRadius: 14))
+                                    .foregroundStyle(idx != nil ? .white : .secondary)
                             }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
-                Button("Reset to default") { 
-                    var ps = session.pstate(); ps["shelves"] = nil; session.setPstate(ps)
+                if let onDone {
+                    Button("Start watching", action: onDone)
+                        .font(.headline).foregroundStyle(.white)
+                        .frame(maxWidth: .infinity).padding(.vertical, 13)
+                        .background(Theme.accent, in: Capsule())
+                        .padding(.top, 8)
+                } else {
+                    NavigationLink { ShelfReorderView() } label: {
+                        HStack { Text("Reorder shelves").bold(); Spacer()
+                            Text("Arrange the order they show on Home").font(.caption).foregroundStyle(.secondary)
+                            Image(systemName: "chevron.right").foregroundStyle(.secondary) }
+                        .padding(14).background(Theme.panel, in: RoundedRectangle(cornerRadius: 10))
+                    }
+                    .buttonStyle(.plain)
                 }
-                .font(.footnote).padding(.top, 8)
             }
             .padding(16)
         }
         .background(Theme.bg)
-        .navigationTitle("Shelves")
+        .navigationTitle(onDone != nil ? "Pick your shelves" : "Shelves")
+        #if os(iOS)
+        .navigationBarBackButtonHidden(onDone != nil)
+        #endif
     }
 }
 
-/// Reorder screen (Android showShelfReorder): drag rows; saved with the debounced push.
+/// Reorder screen (Android showShelfReorder, TV + mobile): numbered rows, ▲ ▼ move a shelf,
+/// saved with the debounced push so every device gets the order.
 struct ShelfReorderView: View {
     @EnvironmentObject var session: Session
     var body: some View {
+        let labels = session.shelfLabels()
         List {
-            #if os(tvOS)
-            // no drag on the remote: move a shelf up / down with the buttons (Firestick reorder screen)
-            let shelves = session.enabledShelves()
-            ForEach(Array(shelves.enumerated()), id: \.element.id) { i, c in
-                HStack {
-                    Text(c.name); Spacer()
-                    Text(c.type == "movie" ? "Movies" : "Shows").font(.caption).foregroundStyle(.secondary)
-                    Button { move(i, by: -1) } label: { Image(systemName: "chevron.up") }
-                        .disabled(i == 0)
-                    Button { move(i, by: 1) } label: { Image(systemName: "chevron.down") }
-                        .disabled(i == shelves.count - 1)
+            Section {
+                Text("Move a shelf with ▲ ▼. This is the order they show on Home.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                if labels.isEmpty { Text("No shelves on yet — add some in Settings → Shelves.").foregroundStyle(.secondary) }
+                ForEach(Array(labels.enumerated()), id: \.element) { i, label in
+                    HStack(spacing: 8) {
+                        Text("\(i + 1).  \(label)").font(.system(size: 15)).lineLimit(1)
+                        Spacer()
+                        Button { move(i, by: -1) } label: { Text("▲").font(.system(size: 18)).padding(.horizontal, 8) }
+                            .buttonStyle(.plain).disabled(i == 0).opacity(i == 0 ? 0.3 : 1)
+                        Button { move(i, by: 1) } label: { Text("▼").font(.system(size: 18)).padding(.horizontal, 8) }
+                            .buttonStyle(.plain).disabled(i == labels.count - 1).opacity(i == labels.count - 1 ? 0.3 : 1)
+                    }
+                    .listRowBackground(Theme.card2)
                 }
             }
-            #else
-            ForEach(session.enabledShelves()) { c in
-                HStack { Text(c.name); Spacer()
-                    Text(c.type == "movie" ? "Movies" : "Shows").font(.caption).foregroundStyle(.secondary) }
-            }
-            .onMove { from, to in
-                var keys = session.enabledShelves().map(\.id)
-                keys.move(fromOffsets: from, toOffset: to)
-                session.setShelves(keys)
-            }
-            #endif
         }
         #if os(iOS)
-        .environment(\.editMode, .constant(.active))
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
         #endif
+        .background(Theme.bg)
         .navigationTitle("Reorder shelves")
     }
-}
 
-extension ShelfReorderView {
-    fileprivate func move(_ i: Int, by d: Int) {
-        var keys = session.enabledShelves().map(\.id)
+    private func move(_ i: Int, by d: Int) {
+        var keys = session.shelfLabels()
         let j = i + d
         guard keys.indices.contains(i), keys.indices.contains(j) else { return }
         keys.swapAt(i, j)
@@ -525,24 +595,23 @@ extension ShelfReorderView {
     }
 }
 
-/// Legal & About (Android showAbout / showTerms / showPrivacy, Legal.kt): the full Terms and
-/// Privacy text reachable in-app (App Store review requirement), plus the version row.
+/// Legal & About (Android showAbout): Terms & Conditions · Privacy Policy · Version.
 struct LegalView: View {
     var body: some View {
         List {
-            Section {
-                HStack { BrandTitle(); Spacer()
-                    Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
-                        .foregroundStyle(.secondary) }
-                Text("Movies, shows and live TV — synced across your devices.")
-                    .font(.footnote).foregroundStyle(.secondary)
+            NavigationLink { LegalTextView(title: "Terms & Conditions", text: Legal.terms) } label: {
+                SettingRowLabel(label: "Terms & Conditions")
             }
-            Section {
-                NavigationLink("Terms of Service") { LegalTextView(title: "Terms of Service", text: Legal.terms) }
-                NavigationLink("Privacy Policy") { LegalTextView(title: "Privacy Policy", text: Legal.privacy) }
-                Link("couchking.app", destination: URL(string: "https://couchking.app")!)
+            NavigationLink { LegalTextView(title: "Privacy Policy", text: Legal.privacy) } label: {
+                SettingRowLabel(label: "Privacy Policy")
             }
+            SettingRowLabel(label: "Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
         }
+        #if os(iOS)
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        #endif
+        .background(Theme.bg)
         .navigationTitle("Legal & About")
     }
 }

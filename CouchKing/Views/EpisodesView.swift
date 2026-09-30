@@ -66,6 +66,7 @@ struct EpisodesView: View {
                 EpisodeRow(meta: meta, ep: ep, current: ep.id == currentId,
                            onPlay: { pick = ep }, onDetail: { detail = ep })
             }
+            if episodes.isEmpty { Text("No episodes listed yet.").font(.footnote).foregroundStyle(.secondary) }
         }
         .onAppear {
             // land on the current episode's season, else the first season
@@ -83,6 +84,10 @@ struct EpisodesView: View {
     }
 }
 
+/// Episode row (Android epCard, mobile): the WHOLE card is the tap target — thumb, title and
+/// description together. With something to play it opens the episode page; in the tracker shell
+/// a tap flips the episode's watched mark (Android: `if (canPlay) showEpisodeDetail else
+/// toggleWatched`). Long-press = Mark watched/unwatched · Clear episode progress.
 struct EpisodeRow: View {
     @EnvironmentObject var session: Session
     let meta: Meta
@@ -103,55 +108,84 @@ struct EpisodeRow: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Button(action: onPlay) {
+        Button {
+            if session.canStream { onDetail() } else { session.toggleEpisodeWatched(ep.id) }
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
                 ZStack(alignment: .bottom) {
                     AsyncImage(url: URL(string: ep.thumb ?? "")) { img in
                         img.resizable().aspectRatio(contentMode: .fill)
-                    } placeholder: { Theme.card }
+                    } placeholder: { Theme.panel }
                     .frame(width: Platform.episodeThumbWidth, height: Platform.episodeThumbWidth * 9 / 16)
                     .blur(radius: (!watched && session.pref("blurUnwatched", false)) ? 8 : 0)
                     .clipped()
-                    if progress > 0.01 {
+                    // AJ Sep 13: watched = FULL purple bar; any progress = percent bar
+                    if watched || progress > 0.01 {
                         ZStack(alignment: .leading) {
                             Rectangle().fill(.white.opacity(0.3)).frame(width: Platform.episodeThumbWidth, height: 3)
-                            Rectangle().fill(Theme.accent).frame(width: Platform.episodeThumbWidth * progress, height: 3)
+                            Rectangle().fill(Theme.accent).frame(width: Platform.episodeThumbWidth * (watched ? 1 : progress), height: 3)
                         }
                     }
                     if ep.unaired {
-                        Text("📅 \(ep.airDate)").font(.caption2.bold())
-                            .padding(.horizontal, 6).padding(.vertical, 3)
-                            .background(.black.opacity(0.7), in: Capsule())
-                            .padding(4)
+                        Image(systemName: "hourglass").font(.system(size: 16)).foregroundStyle(.white)
+                            .frame(width: 34, height: 34).background(.black.opacity(0.7), in: Circle())
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                 }
                 .frame(width: Platform.episodeThumbWidth, height: Platform.episodeThumbWidth * 9 / 16)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.accent, lineWidth: current ? 2 : 0))
-            }.buttonStyle(.plain)
-            Button(action: onDetail) {
+                .overlay(alignment: .topTrailing) {
+                    if watched {
+                        Text("✓").font(.system(size: 11, weight: .bold)).foregroundStyle(.white)
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(.black.opacity(0.8), in: RoundedRectangle(cornerRadius: 9))
+                            .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.gold, lineWidth: 1))
+                            .padding(5)
+                    }
+                }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("E\(ep.episode) · \(ep.name)").font(.subheadline).lineLimit(2)
+                    Text("S\(ep.season) E\(ep.episode) · \(ep.name)").font(.subheadline.weight(.semibold)).lineLimit(2)
                         .foregroundStyle(current ? Theme.accent : .primary)
+                    if let o = ep.overview, !o.isEmpty {
+                        Text(o).font(.caption).foregroundStyle(Theme.dim).lineLimit(2)
+                    }
                     if !ep.airDate.isEmpty {
                         Text(ep.unaired ? "Airs \(ep.airDate)" : ep.airDate)
-                            .font(.caption2).foregroundStyle(.secondary)
+                            .font(.caption2).foregroundStyle(ep.unaired ? Theme.gold : .secondary)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-            }.buttonStyle(.plain)
-            Button {
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button(watched ? "Mark as Unwatched" : "Mark as Watched", systemImage: watched ? "eye.slash" : "eye") {
                 session.toggleEpisodeWatched(ep.id)
-            } label: {
-                Image(systemName: watched ? "eye.fill" : "eye")
-                    .foregroundStyle(watched ? Theme.accent : .secondary)
-            }.buttonStyle(.plain)
+            }
+            Button("Clear Episode Progress", systemImage: "arrow.uturn.backward") {
+                session.clearEpisodeProgress(ep.id, title: meta.id)
+            }
         }
     }
 }
 
 extension Session {
     /// Per-episode watched eye with the scoped `wt:` tombstone (Android epCard eye).
+    /// Clear one episode's resume position (Android "Clear Episode Progress" + syncClear).
+    func clearEpisodeProgress(_ epId: String, title: String) {
+        var ps = pstate()
+        var positions = ps["positions"] as? [String: Any] ?? [:]
+        positions.removeValue(forKey: epId)
+        ps["positions"] = positions
+        var removed = ps["removedTs"] as? [String: Any] ?? [:]
+        removed["pos:" + epId] = Int(Date().timeIntervalSince1970 * 1000)
+        ps["removedTs"] = removed
+        setPstate(ps)
+        clearServerResume(id: title)
+    }
+
     func toggleEpisodeWatched(_ epId: String) {
         var ps = pstate()
         var ids = ps["watchedIds"] as? [String] ?? []
@@ -190,7 +224,7 @@ struct EpisodeDetailView: View {
                         Text(o).font(.callout).foregroundStyle(.secondary)
                     }
                     HStack(spacing: 14) {
-                        if session.hasAddon && !ep.unaired {
+                        if session.canStream && !ep.unaired {
                             Button { showStreams = true } label: {
                                 Label("Play", systemImage: "play.fill").font(.headline)
                                     .padding(.horizontal, 18).padding(.vertical, 10)
@@ -261,18 +295,23 @@ struct StreamList: View {
     #endif
 
     var body: some View {
+        // the list exists only for service accounts (addon attached); the shell never sees it
+        if session.canStream { list } else { EmptyView() }
+    }
+
+    private var list: some View {
         VStack(alignment: .leading, spacing: 10) {
-            // expiry banner WHERE the streams would be — browsing never blocks, only
-            // play time shows it (Android expiryBanner parity, AJ Sep 18 rule)
+            // expiry banner WHERE the streams would be (Android expiryBanner, driven by the
+            // /tvapp/access expires/daysLeft) — browsing never blocks, play time says so
             if session.isExpired || expired {
                 VStack(alignment: .center, spacing: 6) {
                     Text("⛔").font(.system(size: 44))
-                    Text("Subscription expired").font(.headline)
+                    Text("Subscription expired").font(.system(size: 20, weight: .bold)).padding(.top, 10)
                     Text("Renew your plan to keep watching.")
-                        .font(.subheadline).foregroundStyle(.secondary)
+                        .font(.system(size: 14)).foregroundStyle(Theme.dim)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 28)
+                .padding(.vertical, 40)
             }
             else if loading { ProgressView().frame(maxWidth: .infinity).padding(.vertical, 20) }
             else if warming && streams.isEmpty {
@@ -358,8 +397,8 @@ struct StreamList: View {
         req.streamWindows = PlayerWindows(stream: s)
         req.subtitles = s["subtitles"] as? [[String: Any]] ?? []
         req.placeholder = PlayRequest.isPlaceholder(s)
-        let sid = season != nil ? "\(meta.id):\(season!):\(episode!)" : meta.id
-        req.streamPath = "/stream/\(season != nil ? "series" : (meta.type == "tv" ? "tv" : "movie"))/\(sid).json"
+        let sid = streamId
+        req.streamPath = "/stream/\(season != nil && episode != nil ? "series" : (meta.type == "tv" ? "tv" : "movie"))/\(sid).json"
         if meta.type == "tv" {
             // Live TV: gate probe first (429/503/403 → reason modal, never a spinning player)
             Task {
@@ -378,13 +417,19 @@ struct StreamList: View {
         return loop ? (ts + hls) : (hls + ts)
     }
 
+    /// "tt…:S:E" for an episode, the id for a movie / channel (never force-unwrapped).
+    private var streamId: String {
+        if let s = season, let e = episode { return "\(meta.id):\(s):\(e)" }
+        return meta.id
+    }
+
     private func load() async {
-        guard !session.isExpired, let base = session.addonBase() else { loading = false; return }
+        guard session.canStream, !session.isExpired, let base = session.addonBase() else { loading = false; return }
         loading = true; gate = ""
         let u = session.profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        let sid = season != nil ? "\(meta.id):\(season!):\(episode!)" : meta.id
+        let sid = streamId
         // Live TV channels come through as type "tv" with a cklive:<id> — /stream/tv/<id>.json
-        let type = season != nil ? "series" : (meta.type == "tv" ? "tv" : "movie")
+        let type = season != nil && episode != nil ? "series" : (meta.type == "tv" ? "tv" : "movie")
         // AUTO-POLL when nothing's cached yet (Android "press Play, then again shortly"): the
         // background warm/download lands within a minute — keep re-fetching so the list fills
         // itself instead of dead-ending. Live channels don't warm, so they poll only once.
@@ -432,7 +477,7 @@ struct StreamSheet: View {
                     .padding(14)
             }
             .background(Theme.bg)
-            .navigationTitle(season != nil ? "S\(season!)E\(episode!)" : meta.name)
+            .navigationTitle({ if let s = season, let e = episode { return "S\(s)E\(e)" } else { return meta.name } }())
             .ckInlineTitle()
         }
     }
