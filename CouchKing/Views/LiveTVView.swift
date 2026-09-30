@@ -632,7 +632,10 @@ struct GuideRow: View {
             // blocks materialize a FULL SCREEN before the edge — popping in exactly at
             // the boundary read as fade-in/out while panning (AJ)
             ForEach(progs.filter { x($0.e) > scrollX - timelineW && x($0.s) < right + timelineW }, id: \.self) { p in
-                let x0 = x(p.s)
+                // ANDROID RULE (AJ): a programme that began before the window start gets its
+                // box SHORTENED to the window start — the title is always on-screen for
+                // what's playing now. dayStart is fixed, so nothing reflows while panning.
+                let x0 = max(0, x(p.s))
                 let live = p.s <= now && now < p.e
                 VStack(alignment: .leading, spacing: 1) {
                     Text(p.t).font(.system(size: 11, weight: .medium)).lineLimit(2)
