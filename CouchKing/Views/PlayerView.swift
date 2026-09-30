@@ -28,7 +28,6 @@ struct PlayerView: View {
     /// PiP / orientation is the most likely "crashes every time" culprit.
     var request: PlayRequest { reqOverride ?? initialRequest }
     @State var player = AVPlayer()
-    init(request: PlayRequest) { self.initialRequest = request }
     @State var windows = PlayerWindows()
     @State var posMs = 0
     @State var durMs = 0
@@ -112,10 +111,10 @@ struct PlayerView: View {
         return request.url
     }
 
-    init(request: PlayRequest) { self.request = request }
+    init(request: PlayRequest) { self.initialRequest = request }
     // legacy call sites (movie stream list) still hand us a bare url
     init(url: URL, meta: Meta) {
-        self.request = PlayRequest(url: url, meta: meta, season: nil, episode: nil)
+        self.initialRequest = PlayRequest(url: url, meta: meta, season: nil, episode: nil)
     }
 
     var body: some View {
