@@ -629,7 +629,9 @@ struct GuideRow: View {
             // blocks keep their FULL width and just slide — clamping them to the visible
             // strip made every title reflow as the box resized while panning (AJ:
             // "disorienting, the words moving to fit"). Offscreen blocks still skipped.
-            ForEach(progs.filter { x($0.e) > scrollX && x($0.s) < right }, id: \.self) { p in
+            // blocks materialize a FULL SCREEN before the edge — popping in exactly at
+            // the boundary read as fade-in/out while panning (AJ)
+            ForEach(progs.filter { x($0.e) > scrollX - timelineW && x($0.s) < right + timelineW }, id: \.self) { p in
                 let x0 = x(p.s)
                 let live = p.s <= now && now < p.e
                 VStack(alignment: .leading, spacing: 1) {
