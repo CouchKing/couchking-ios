@@ -153,7 +153,11 @@ struct PlayerView: View {
         .ckFullScreenCover(item: $nextEpisode) { req in PlayerView(request: req) }
         #if os(iOS)
         .sheet(isPresented: $showSubPanel) {
-            SubtitlePanel(tracks: subTracks, index: $subIndex, onPick: { pickSub($0) })
+            // a USER pick is a profile choice — persist like Android's in-player toggle
+            // so it syncs across devices (auto-selection paths call pickSub directly)
+            SubtitlePanel(tracks: subTracks, index: $subIndex, onPick: { i in
+                pickSub(i); session.setPref("subLang", i < 0 ? "off" : "en")
+            })
                 .ckDetents()
         }
         .sheet(isPresented: $showEpisodes) {
