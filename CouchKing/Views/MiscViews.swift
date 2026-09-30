@@ -85,6 +85,7 @@ struct SearchView: View {
                 if q.trimmingCharacters(in: .whitespaces).isEmpty && movies.isEmpty && shows.isEmpty && people.isEmpty {
                     BrowseView()
                 } else {
+                    GeometryReader { geo in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 18) {
                             if !people.isEmpty { PeopleRow(people: people) }
@@ -95,6 +96,8 @@ struct SearchView: View {
                             }
                         }
                         .padding(.vertical, 8)
+                        .frame(width: geo.size.width, alignment: .leading)   // scoot-proof
+                    }
                     }
                 }
             }
@@ -210,6 +213,7 @@ struct LibraryView: View {
 
     var body: some View {
         NavigationStack {
+            GeometryReader { geo in
             ScrollView {
                 // plain VStack: LazyVStack deferred whole rows until you scrolled INTO them, so
                 // library sections sat blank and "spawned in" (AJ). The list is bounded and the
@@ -242,6 +246,8 @@ struct LibraryView: View {
                     }
                 }
                 .padding(.vertical, 8)
+                .frame(width: geo.size.width, alignment: .leading)   // scoot-proof
+            }
             }
             .background(Theme.bg)
             .navigationTitle("Library")

@@ -1382,7 +1382,19 @@ struct PlayerView: View {
             if name.contains("forced") { sc -= 20 }
             return sc
         }
-        return Array(subs.sorted { score($0) > score($1) }.prefix(12))
+        // Android 2.0.13 filtering: ENGLISH only, forced hidden — every language shown only
+        // when no English exists at all (the picker was listing the whole foreign pile).
+        func isEnglish(_ s: [String: Any]) -> Bool {
+            let lang = (s["lang"] as? String ?? "").lowercased()
+            let name = (s["name"] as? String ?? "").lowercased()
+            return lang.hasPrefix("en") || lang.contains("english") || name.contains("english")
+        }
+        func isForced(_ s: [String: Any]) -> Bool {
+            ((s["name"] as? String ?? "") + (s["lang"] as? String ?? "")).lowercased().contains("forced")
+        }
+        let english = subs.filter { isEnglish($0) && !isForced($0) }
+        let pool = english.isEmpty ? subs.filter { !isForced($0) } : english
+        return Array(pool.sorted { score($0) > score($1) }.prefix(12))
     }
 
     /// OpenSubtitles v3 extras (Android Ck.v3Subs): the default subtitle service Android
@@ -1394,26 +1406,23 @@ struct PlayerView: View {
         guard !isLive, !placeholder else { return }
         let id = request.season != nil ? "\(request.meta.id):\(request.season!):\(request.episode ?? 1)" : request.meta.id
         let kind = request.season != nil ? "series" : "movie"
-        let task = Task { () -> [[String: Any]] in
-            guard let u = URL(string: "https://opensubtitles-v3.strem.io/subtitles/\(kind)/\(id).json"),
-                  let (d, _) = try? await URLSession.shared.data(from: u),
-                  let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
-                  let subs = j["subtitles"] as? [[String: Any]] else { return [] }
-            var out: [[String: Any]] = []
-            for o in subs where (o["lang"] as? String) == "eng" {
-                guard let su = o["url"] as? String, !su.isEmpty else { continue }
-                out.append(["url": su, "lang": "English (OpenSubtitles \(out.count + 1))"])
-                if out.count >= 12 { break }
+        // plain await with a 6s request timeout — the old 1.5s watchdog RACE cancelled the
+        // fetch on any cold DNS/TLS handshake, so the OpenSubtitles list usually never
+        // arrived ("where's open subtitles… subtitles always off"). This runs after first
+        // frame; it delays nothing.
+        var extra: [[String: Any]] = []
+        if let u = URL(string: "https://opensubtitles-v3.strem.io/subtitles/\(kind)/\(id).json") {
+            var rq = URLRequest(url: u); rq.timeoutInterval = 6
+            if let (d, _) = try? await URLSession.shared.data(for: rq),
+               let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+               let subs = j["subtitles"] as? [[String: Any]] {
+                for o in subs where (o["lang"] as? String) == "eng" {
+                    guard let su = o["url"] as? String, !su.isEmpty else { continue }
+                    extra.append(["url": su, "lang": "English (OpenSubtitles \(extra.count + 1))"])
+                    if extra.count >= 12 { break }
+                }
             }
-            return out
         }
-        let extra = (try? await withThrowingTaskGroup(of: [[String: Any]].self) { g -> [[String: Any]] in
-            g.addTask { await task.value }
-            g.addTask { try await Task.sleep(for: .milliseconds(1500)); task.cancel(); return [] }
-            let first = try await g.next() ?? []
-            g.cancelAll()
-            return first
-        }) ?? []
         guard !extra.isEmpty else { return }
         let have = Set(subTracks.compactMap { $0["url"] as? String })
         let fresh = extra.filter { !have.contains($0["url"] as? String ?? "") }
