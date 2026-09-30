@@ -335,6 +335,7 @@ struct PlayerView: View {
     @State var showMiniGuide = false
     @State var miniChannels: [LiveChannel] = []
     @State var miniSections: [(String, [LiveChannel])] = []
+    @State var miniFavs: Set<String> = []
     var miniGuidePanel: some View {
         HStack(spacing: 0) {
             Spacer()
@@ -365,12 +366,27 @@ struct PlayerView: View {
                                     .frame(width: 34, height: 22)
                                     VStack(alignment: .leading, spacing: 1) {
                                         Text(ch.name).font(.caption.bold()).lineLimit(1)
+                                        // Android mini guide: NOW, and what's next with its time
                                         Text(ch.now(LiveTV.nowMs())?.t ?? "").font(.caption2)
                                             .foregroundStyle(.secondary).lineLimit(1)
+                                        if let nx = ch.next(LiveTV.nowMs()) {
+                                            Text("Next \(LiveTV.clock(nx.s)) · \(nx.t)").font(.system(size: 9))
+                                                .foregroundStyle(Theme.dim).lineLimit(1)
+                                        }
                                     }
                                     Spacer(minLength: 0)
+                                    // ★ favorite toggle right on the row (Android mini guide)
+                                    Button {
+                                        let on = !miniFavs.contains(ch.id)
+                                        if on { miniFavs.insert(ch.id) } else { miniFavs.remove(ch.id) }
+                                        Task { _ = await LiveTV.setFav(session, id: ch.id, on: on) }
+                                    } label: {
+                                        Text("★").font(.system(size: 15))
+                                            .foregroundStyle(miniFavs.contains(ch.id) ? Theme.gold : Theme.dim.opacity(0.5))
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .foregroundStyle(ch.id == request.meta.id ? Theme.accent : .white)
+                                .foregroundStyle("cklive:" + ch.id == request.meta.id || ch.id == request.meta.id ? Theme.accent : .white)
                                 .padding(.horizontal, 12).padding(.vertical, 8)
                                 .contentShape(Rectangle())
                             }
@@ -389,6 +405,7 @@ struct PlayerView: View {
             let region = UserDefaults.standard.string(forKey: "liveRegion") ?? ""
             if case .ok(let g) = await LiveTV.guide(session, region: region) {
                 let favs = Set(g.favs)
+                miniFavs = favs
                 miniChannels = g.favChannels + g.channels.filter { !favs.contains($0.id) }
                 // sectioned like the Live TV page: ★ Favorites, then each category
                 var out: [(String, [LiveChannel])] = []
@@ -586,6 +603,7 @@ struct PlayerView: View {
                         }
                     } label: { barLabel("Audio", "waveform") }
                 }
+                if !isLive {
                 Menu {
                     ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { r in
                         Button { setRate(Float(r)) } label: {
@@ -593,6 +611,7 @@ struct PlayerView: View {
                         }
                     }
                 } label: { barLabel(rate == 1 ? "Speed" : String(format: "%g×", rate), "speedometer") }
+                }
                 barButton("Screen", "aspectratio") { cycleScale() }
                 if request.season != nil && !allEpisodes.isEmpty {
                     barButton("Episodes", "list.bullet.rectangle") { showEpisodes = true; hideTask?.cancel() }
@@ -602,7 +621,7 @@ struct PlayerView: View {
                     barButton("Guide", "list.bullet.below.rectangle") { showMiniGuide = true; hideTask?.cancel() }
                 }
                 #endif
-                barButton("Stats", "chart.bar") { showStats.toggle() }
+                if !isLive { barButton("Stats", "chart.bar") { showStats.toggle() } }
             }
             .padding(.horizontal, 20)
         }
