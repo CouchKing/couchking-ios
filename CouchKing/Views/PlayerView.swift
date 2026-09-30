@@ -550,9 +550,11 @@ struct PlayerView: View {
                 if request.season != nil && !allEpisodes.isEmpty {
                     barButton("Episodes", "list.bullet.rectangle") { showEpisodes = true; hideTask?.cancel() }
                 }
+                #if os(iOS)
                 if isLive {
                     barButton("Guide", "list.bullet.below.rectangle") { showMiniGuide = true; hideTask?.cancel() }
                 }
+                #endif
                 barButton("Stats", "chart.bar") { showStats.toggle() }
             }
             .padding(.horizontal, 20)
