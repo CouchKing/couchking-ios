@@ -509,7 +509,7 @@ struct GuideGrid: View {
         #if !os(tvOS)
         // horizontal pan of the shared timeline; vertical drags still scroll the page
         .simultaneousGesture(
-            DragGesture(minimumDistance: 8)
+            DragGesture(minimumDistance: 20)
                 .onChanged { g in
                     if dragStart == nil {
                         guard abs(g.translation.width) > abs(g.translation.height) else { return }
@@ -714,7 +714,13 @@ extension View {
     /// button; ★ lives in the context menu (remote long-press on select / right-click).
     @ViewBuilder func liveTap(_ tune: @escaping () -> Void, fav: (() -> Void)? = nil, isFav: Bool = false) -> some View {
         #if os(iOS)
-        if let fav { self.onTapGesture(perform: tune).onLongPressGesture(perform: fav) }
+        // NEVER .onLongPressGesture here: it claims the touch and kills the ScrollView's
+        // vertical pan over every guide block (AJ: "can't scroll up and down, only from the
+        // top"). A simultaneous long press coexists with scrolling — a real scroll cancels it.
+        if let fav {
+            self.onTapGesture(perform: tune)
+                .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in fav() })
+        }
         else { self.onTapGesture(perform: tune) }
         #else
         Button(action: tune) { self }

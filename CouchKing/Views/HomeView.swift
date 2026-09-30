@@ -368,7 +368,7 @@ struct TitleContextMenu: ViewModifier {
         // individual item"). Bottom sheet rows are unmistakable — web mobile does the same.
         // Details = just tap the tile, so it isn't duplicated here.
         content
-            .onLongPressGesture(minimumDuration: 0.45) { menuOpen = true }
+            .simultaneousGesture(LongPressGesture(minimumDuration: 0.45).onEnded { _ in menuOpen = true })
             .confirmationDialog(meta.name, isPresented: $menuOpen, titleVisibility: .visible) {
                 Button(session.inLibrary(meta.id) ? "Remove from Library" : "Add to Library") {
                     session.toggleLibrary(meta)

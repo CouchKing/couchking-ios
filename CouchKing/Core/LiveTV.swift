@@ -212,10 +212,12 @@ enum LiveTV {
         var cal = Calendar(identifier: .gregorian); cal.timeZone = et
         let d = Date(timeIntervalSince1970: Double(now) / 1000)
         if day == 0 {
-            let m = cal.component(.minute, from: d)
-            let floored = cal.date(bySetting: .second, value: 0, of: d) ?? d
-            let half = cal.date(byAdding: .minute, value: -(m % 30), to: floored) ?? d
-            return Int(half.timeIntervalSince1970) * 1000
+            // plain epoch floor to the half hour — date(bySetting: .second, value: 0) ROLLS
+            // FORWARD to the next :00 (adds up to 59s, advancing the minute), which is why
+            // every guide tick read 1:01 / 1:31 (AJ). Half-hour epoch boundaries are
+            // timezone-safe for any zone on a :00/:30 offset.
+            let secs = Int(d.timeIntervalSince1970)
+            return (secs - secs % 1800) * 1000
         }
         let start = cal.startOfDay(for: cal.date(byAdding: .day, value: day, to: d) ?? d)
         let six = cal.date(byAdding: .hour, value: 6, to: start) ?? start
