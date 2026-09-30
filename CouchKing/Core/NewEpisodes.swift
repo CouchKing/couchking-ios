@@ -65,19 +65,40 @@ extension Session {
     /// Count unwatched, already-aired episodes after the last watched one.
     func newEpisodes(for meta: Meta, videos: [[String: Any]]) -> NewEpsInfo {
         guard meta.type == "series", !videos.isEmpty else { return NewEpsInfo() }
-        let (ls, le) = lastEpisode(of: meta.id)
-        guard ls > 0 else { return NewEpsInfo() }
-        let watched = Set(pstate()["watchedIds"] as? [String] ?? [])
         let now = Int(Date().timeIntervalSince1970 * 1000)
-        var info = NewEpsInfo()
-        for v in videos {
-            guard let ep = Episode(v), ep.season > 0 else { continue }
-            guard ep.season > ls || (ep.season == ls && ep.episode > le) else { continue }
-            let air = Session.airMs(ep.released)
-            guard air > 0, air <= now, !watched.contains(ep.id) else { continue }
-            info.count += 1
-            info.latestAir = max(info.latestAir, air)
+        let watched = Set(pstate()["watchedIds"] as? [String] ?? [])
+        // aired episodes only, in order — the whole count is derived against these
+        let aired = videos.compactMap { Episode($0) }
+            .filter { $0.season > 0 && { let a = Session.airMs($0.released); return a > 0 && a <= now }($0) }
+            .sorted { $0.season != $1.season ? $0.season < $1.season : $0.episode < $1.episode }
+        guard !aired.isEmpty else { return NewEpsInfo() }
+        let (ls, le) = lastEpisode(of: meta.id)
+
+        // NEVER-WATCHED library show (Android: "even if I haven't watched them") — badge the
+        // episodes that aired AFTER the show was added. No add-stamp → the whole back
+        // catalogue is not "new", so no badge. Capped at 9, exactly like Android/web/desktop.
+        if ls == 0 {
+            let addedAt = StateMerge.stamp((pstate()["addedTs"] as? [String: Any])?["wl:" + meta.id])
+            guard addedAt > 0 else { return NewEpsInfo() }
+            let fresh = aired.filter { Session.airMs($0.released) > addedAt && !watched.contains($0.id) }
+            var info = NewEpsInfo()
+            info.count = min(9, fresh.count)
+            info.latestAir = fresh.map { Session.airMs($0.released) }.max() ?? 0
+            return info
         }
+
+        // BINGEING OLD SEASONS: everything after you is technically newer, but the badge only
+        // means something when you're caught up to the current (or previous) season — else a
+        // show you're 5 seasons behind on shows "+9" forever (the 200+ over-count bug).
+        let maxSeason = aired.map { $0.season }.max() ?? 0
+        if ls < maxSeason - 1 { return NewEpsInfo() }
+
+        let fresh = aired.filter {
+            ($0.season > ls || ($0.season == ls && $0.episode > le)) && !watched.contains($0.id)
+        }
+        var info = NewEpsInfo()
+        info.count = min(9, fresh.count)
+        info.latestAir = fresh.map { Session.airMs($0.released) }.max() ?? 0
         return info
     }
 

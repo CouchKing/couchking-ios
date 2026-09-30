@@ -38,6 +38,23 @@ enum Platform {
     #endif
     /// Keep the display awake while video plays (iOS/tvOS idle timer, Mac display-sleep assertion).
     @MainActor
+    /// Force the player into landscape on iPhone (Android sensorLandscape parity) and release
+    /// it on close. iOS 16+ geometry request; the app allows all three orientations so this
+    /// takes effect. Safe no-op on iPad/tvOS/Mac.
+    static func lockLandscape(_ on: Bool) {
+        #if os(iOS)
+        guard UIDevice.current.userInterfaceIdiom == .phone else { return }
+        DispatchQueue.main.async {
+            guard let scene = UIApplication.shared.connectedScenes
+                .first(where: { $0.activationState == .foregroundActive }) as? UIWindowScene else { return }
+            let mask: UIInterfaceOrientationMask = on ? .landscape : .portrait
+            OrientationGate.mask = on ? .landscape : .all
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask))
+            UIViewController.attemptRotationToDeviceOrientation()
+        }
+        #endif
+    }
+
     static func keepAwake(_ on: Bool) {
         #if os(iOS) || os(tvOS)
         UIApplication.shared.isIdleTimerDisabled = on

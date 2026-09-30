@@ -177,7 +177,7 @@ struct LoginView: View {
     }
 }
 
-/// Logo + "CouchKing TV" wordmark (Android brandSpan: "Couch" purple, "King" white).
+/// Logo + "CouchKing" wordmark (Android brandSpan: "Couch" purple, "King" white).
 struct BrandLockup: View {
     var size: CGFloat = 96
     var body: some View {
@@ -187,7 +187,7 @@ struct BrandLockup: View {
                 .clipShape(RoundedRectangle(cornerRadius: size * 0.22))
             HStack(spacing: 0) {
                 Text("Couch").foregroundStyle(Color(red: 0xA8 / 255.0, green: 0x55 / 255.0, blue: 0xF7 / 255.0))
-                Text("King TV").foregroundStyle(Color(red: 0xF0 / 255.0, green: 0xF0 / 255.0, blue: 0xF5 / 255.0))
+                Text("King").foregroundStyle(Color(red: 0xF0 / 255.0, green: 0xF0 / 255.0, blue: 0xF5 / 255.0))
             }
             .font(.system(size: size * 0.3, weight: .bold))
             Text("Discover movies & shows — trailers, ratings, cast, where to watch, and your own watch tracker.")

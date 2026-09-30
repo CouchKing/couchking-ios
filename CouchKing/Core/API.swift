@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // Thin URLSession client for the CouchKing account service. The service lives at
 // couchking.app for every client (desktop app.js `SERVICE = 'https://couchking.app'`, the
@@ -7,6 +10,33 @@ import Foundation
 // different host — adding an addon never changes where accounts live.
 struct API {
     static let defaultService = "https://couchking.app"
+
+    /// STABLE per-install id so a new build/login isn't logged as a "new device" (the server
+    /// keyed iOS by the URLSession UA, which carries the build number → every update pinged).
+    static let deviceId: String = {
+        let k = "ckDeviceId"
+        if let v = UserDefaults.standard.string(forKey: k) { return v }
+        #if canImport(UIKit)
+        let v = UIDevice.current.identifierForVendor?.uuidString ?? UUID().uuidString
+        #else
+        let v = UUID().uuidString
+        #endif
+        UserDefaults.standard.set(v, forKey: k)
+        return v
+    }()
+    #if os(tvOS)
+    static let deviceModel = "Apple TV"
+    #elseif os(iOS)
+    static let deviceModel = UIDevice.current.userInterfaceIdiom == .pad ? "iPad" : "iPhone"
+    #else
+    static let deviceModel = "Mac"
+    #endif
+
+    /// Stamp the stable-device headers onto every request (read by the server tvRecordDevice).
+    static func stampDevice(_ req: inout URLRequest) {
+        req.setValue(deviceId, forHTTPHeaderField: "X-CK-Device")
+        req.setValue(deviceModel, forHTTPHeaderField: "X-CK-Model")
+    }
 
     /// The account service base: the user's override when set, else the default.
     static var serviceBase: String {
@@ -23,6 +53,7 @@ struct API {
         guard !b.isEmpty, let url = URL(string: b + path) else { throw URLError(.badURL) }
         var req = URLRequest(url: url)
         req.timeoutInterval = timeout
+        stampDevice(&req)
         let (data, resp) = try await URLSession.shared.data(for: req)
         return (data, (resp as? HTTPURLResponse)?.statusCode ?? 0)
     }
@@ -52,6 +83,7 @@ struct API {
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
         req.timeoutInterval = timeout
+        stampDevice(&req)
         let (data, resp) = try await URLSession.shared.data(for: req)
         let parsed = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
         return (parsed, (resp as? HTTPURLResponse)?.statusCode ?? 0)

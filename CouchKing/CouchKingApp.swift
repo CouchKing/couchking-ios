@@ -5,6 +5,9 @@ import SwiftUI
 // has an addon attached (on any device — it syncs down with the account state).
 @main
 struct CouchKingApp: App {
+    #if os(iOS)
+    @UIApplicationDelegateAdaptor(CKAppDelegate.self) private var appDelegate
+    #endif
     @StateObject private var session = Session.shared
     @Environment(\.scenePhase) private var scenePhase
     init() {
@@ -105,20 +108,55 @@ struct MainTabs: View {
     }
 
     #if os(iOS)
-    private var phoneTabs: some View {
-        // Android mobile navTabs order: Search · Home · Discover · Library · [Live TV] · Settings
-        TabView(selection: $tab) {
-            SearchView().tabItem { Label("Search", systemImage: "magnifyingglass") }.tag(0)
-            HomeView().tabItem { Label("Home", systemImage: "house.fill") }.tag(1)
-            DiscoverTab().tabItem { Label("Discover", systemImage: "square.grid.2x2.fill") }.tag(2)
-            LibraryView().tabItem { Label("Library", systemImage: "books.vertical.fill") }.tag(3)
-            // Live TV exists ONLY once an addon with a `tv` catalog is attached — the shell
-            // itself never mentions it (Android navTabs / desktop livetvDetect)
-            if session.liveTvOn && session.canStream {
-                LiveTVView().tabItem { Label("Live TV", systemImage: "dot.radiowaves.left.and.right") }.tag(4)
-            }
-            SettingsView().tabItem { Label("Settings", systemImage: "gearshape.fill") }.tag(5)
+    // Android's bottom nav shows EVERY tab in one row. Native SwiftUI TabView collapses the
+    // 6th item into a "More" tab (the "…" AJ saw once Live TV appears) — so we draw our own
+    // compact bar that fits all of them (Android navTabs parity).
+    private struct NavItem { let tag: Int; let label: String; let icon: String }
+    private var navItems: [NavItem] {
+        var items = [NavItem(tag: 0, label: "Search", icon: "magnifyingglass"),
+                     NavItem(tag: 1, label: "Home", icon: "house.fill"),
+                     NavItem(tag: 2, label: "Discover", icon: "square.grid.2x2.fill"),
+                     NavItem(tag: 3, label: "Library", icon: "books.vertical.fill")]
+        if session.liveTvOn && session.canStream {
+            items.append(NavItem(tag: 4, label: "Live TV", icon: "dot.radiowaves.left.and.right"))
         }
+        items.append(NavItem(tag: 5, label: "Settings", icon: "gearshape.fill"))
+        return items
+    }
+
+    private var phoneTabs: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                switch tab {
+                case 0: SearchView()
+                case 2: DiscoverTab()
+                case 3: LibraryView()
+                case 4: LiveTVView()
+                case 5: SettingsView()
+                default: HomeView()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            Divider().overlay(Theme.card2)
+            HStack(spacing: 0) {
+                ForEach(navItems, id: \.tag) { it in
+                    Button { tab = it.tag } label: {
+                        VStack(spacing: 3) {
+                            Image(systemName: it.icon).font(.system(size: 19))
+                            Text(it.label).font(.system(size: 10)).lineLimit(1).minimumScaleFactor(0.8)
+                        }
+                        .foregroundStyle(tab == it.tag ? Theme.accent : Theme.dim)
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.top, 7)
+            .padding(.horizontal, 4)
+            .background(Theme.bg)
+        }
+        .background(Theme.bg)
     }
     #endif
 }
@@ -140,7 +178,7 @@ enum Theme {
                                       startPoint: .leading, endPoint: .trailing)
 }
 
-/// The title-bar brand: logo + "CouchKing TV" (Android brandSpan: "Couch" purple, "King" white).
+/// The title-bar brand: logo + "CouchKing" (Android brandSpan: "Couch" purple, "King" white).
 struct BrandTitle: View {
     var body: some View {
         HStack(spacing: 6) {
@@ -148,7 +186,7 @@ struct BrandTitle: View {
                 .frame(width: 22, height: 22).clipShape(RoundedRectangle(cornerRadius: 5))
             HStack(spacing: 0) {
                 Text("Couch").foregroundStyle(Theme.couch)
-                Text("King TV").foregroundStyle(Theme.king)
+                Text("King").foregroundStyle(Theme.king)
             }
             .font(.headline.bold())
         }

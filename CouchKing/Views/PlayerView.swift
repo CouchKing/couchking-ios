@@ -662,6 +662,7 @@ struct PlayerView: View {
     func start() async {
         // keep-screen-on while playing (Android FLAG_KEEP_SCREEN_ON fix, Sep 18)
         Platform.keepAwake(true)
+        Platform.lockLandscape(true)
         PlaybackAudio.activate()   // .playback: sound on silent, in background, in the PiP window
         scaleMode = session.pref("scaleMode", "fit")
         if !isLive {
@@ -1264,6 +1265,7 @@ struct PlayerView: View {
 
     func stop() {
         Platform.keepAwake(false)
+        Platform.lockLandscape(false)
         let pos = max(remuxBaseMs + Int(player.currentTime().seconds * 1000), posMs)
         posMs = pos
         if remuxed { if probedDurMs > 0 { durMs = probedDurMs } }
