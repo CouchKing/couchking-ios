@@ -23,7 +23,7 @@ struct HomeView: View {
                     if !hero.isEmpty { HeroPager(metas: hero) }
                     if session.canStream && !cw.isEmpty {
                         ContinueRow(items: cw) { item in
-                            session.dismissNewEpsBadge(item.meta.id, latestAir: item.latestAir)
+                            session.dismissNewEpsBadge(item.meta.id, latestKey: item.latestKey)
                             resume = item
                         }
                     }

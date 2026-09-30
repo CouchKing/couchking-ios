@@ -39,7 +39,7 @@ struct TVHome: View {
                         ForEach(Array(cw.enumerated()), id: \.element.id) { i, item in
                             TVTile(meta: item.meta, rowId: "cw", page: page, model: board,
                                    progress: item.progress, newEps: item.newEps, inContinue: true) {
-                                session.dismissNewEpsBadge(item.meta.id, latestAir: item.latestAir)
+                                session.dismissNewEpsBadge(item.meta.id, latestKey: item.latestKey)
                                 resume = item   // resumeFromCw: play straight away
                             }
                             .prefersDefaultFocus(i == 0, in: ns)

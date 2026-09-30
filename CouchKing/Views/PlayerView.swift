@@ -1404,6 +1404,7 @@ struct PlayerView: View {
             let transcoded = Int(((player.currentItem?.duration.seconds ?? 0).isFinite
                                   ? (player.currentItem?.duration.seconds ?? 0) : 0) * 1000)
             if local >= 0 && transcoded > 0 && local < transcoded - 4000 {
+                seeking = true   // segment fetch can take a second+ — card, not black (AJ)
                 player.seek(to: CMTime(seconds: Double(local) / 1000, preferredTimescale: 1000),
                             toleranceBefore: .zero, toleranceAfter: .zero)
                 posMs = target

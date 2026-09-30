@@ -8,7 +8,9 @@ import Foundation
 //    across devices in the union merge) — the show then sorts by its watch stamp again.
 struct NewEpsInfo {
     var count = 0          // unwatched aired episodes after the last watched one
-    var latestAir = 0      // epoch ms of the newest of those
+    var latestAir = 0      // epoch ms of the newest of those (drives CW ordering)
+    var latestKey = 0      // season*10000+episode of the newest AIRED episode — the
+                           // dismissal unit every other client uses
 }
 
 @MainActor
@@ -84,6 +86,7 @@ extension Session {
             var info = NewEpsInfo()
             info.count = min(9, fresh.count)
             info.latestAir = fresh.map { Session.airMs($0.released) }.max() ?? 0
+            info.latestKey = aired.map { $0.season * 10000 + $0.episode }.max() ?? 0
             return info
         }
 
@@ -99,22 +102,26 @@ extension Session {
         var info = NewEpsInfo()
         info.count = min(9, fresh.count)
         info.latestAir = fresh.map { Session.airMs($0.released) }.max() ?? 0
+        info.latestKey = aired.map { $0.season * 10000 + $0.episode }.max() ?? 0
         return info
     }
 
     /// The badge shows until the person opens the show (or another device did).
+    /// UNIT FIX (AJ Sep 30, Speed Buggy "+9 on a 1970s show"): Android/web/desktop store
+    /// newEpsSeen as season*10000+episode — iOS wrote epoch MILLISECONDS and compared
+    /// epoch > key, so a dismissal made on any other device NEVER hid the badge here.
     func newEpsBadgeVisible(_ id: String, _ info: NewEpsInfo) -> Bool {
         guard info.count > 0 else { return false }
         let seen = StateMerge.stamp((pstate()["newEpsSeen"] as? [String: Any])?[id])
-        return info.latestAir > seen
+        return info.latestKey > seen
     }
 
-    func dismissNewEpsBadge(_ id: String, latestAir: Int) {
-        guard latestAir > 0 else { return }
+    func dismissNewEpsBadge(_ id: String, latestKey: Int) {
+        guard latestKey > 0 else { return }
         var ps = pstate()
         var seen = ps["newEpsSeen"] as? [String: Any] ?? [:]
-        if StateMerge.stamp(seen[id]) >= latestAir { return }
-        seen[id] = latestAir
+        if StateMerge.stamp(seen[id]) >= latestKey { return }
+        seen[id] = latestKey
         ps["newEpsSeen"] = seen
         setPstate(ps)
     }
@@ -129,6 +136,7 @@ extension Session {
             if newEpsBadgeVisible(items[i].meta.id, info) {
                 items[i].newEps = info.count
                 items[i].latestAir = info.latestAir
+                items[i].latestKey = info.latestKey
                 items[i].order = max(items[i].order, info.latestAir)
             }
         }

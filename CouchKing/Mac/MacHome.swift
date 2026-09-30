@@ -32,7 +32,7 @@ struct MacHome: View {
                             }
                             .buttonStyle(.plain)
                             .simultaneousGesture(TapGesture().onEnded {
-                                session.dismissNewEpsBadge(item.meta.id, latestAir: item.latestAir)
+                                session.dismissNewEpsBadge(item.meta.id, latestKey: item.latestKey)
                             })
                         }
                     }

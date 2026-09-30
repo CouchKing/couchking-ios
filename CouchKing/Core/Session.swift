@@ -695,6 +695,7 @@ struct CWItem: Identifiable {
     var order: Int = 0             // Android cwOrder: watch stamp, floated by a new ep's air time
     var newEps: Int = 0
     var latestAir: Int = 0
+    var latestKey: Int = 0         // season*10000+episode — the dismissal unit all clients share
     var id: String { meta.id }
 }
 

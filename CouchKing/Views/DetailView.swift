@@ -214,6 +214,13 @@ struct DetailView: View {
         full = await Catalog.fullMeta(session: session, type: meta.type, id: meta.id)
         if meta.type == "series", let v = full["videos"] as? [[String: Any]] {
             MetaCache.shared.put(meta.id, videos: v)
+            // opening the show clears its "+N" badge on EVERY device (web app.js parity —
+            // dismissal = the latest aired season*10000+episode key, merged by max)
+            let now = Int(Date().timeIntervalSince1970 * 1000)
+            let key = v.compactMap { Episode($0) }
+                .filter { $0.season > 0 && Session.airMs($0.released) > 0 && Session.airMs($0.released) <= now }
+                .map { $0.season * 10000 + $0.episode }.max() ?? 0
+            session.dismissNewEpsBadge(meta.id, latestKey: key)
         }
         if !session.canStream {
             providers = await TMDB.providers(imdb: meta.id, kind: meta.type == "series" ? "tv" : "movie")
