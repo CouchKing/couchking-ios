@@ -549,12 +549,8 @@ struct GuideGrid: View {
                             .offset(x: x)
                     }
                 }
-                if now >= dayStart && now < dayStart + windowMs {
-                    let x = CGFloat((now - dayStart) / 60_000) * Self.pxPerMin - scrollX
-                    if x >= 0 && x < timelineW {
-                        Rectangle().fill(.red).frame(width: 2, height: 26).offset(x: x)
-                    }
-                }
+                // (no red now-tick up here — it read as a glitch on the date row (AJ);
+                // the rows below still carry the now-line)
             }
             .frame(width: timelineW, height: 26, alignment: .leading).clipped()
         }

@@ -407,12 +407,13 @@ struct PlayerView: View {
     func switchLive(_ ch: LiveChannel) async {
         guard let base = session.addonBase() else { return }
         let u = session.profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        guard let r = try? await API.json("/stream/tv/\(ch.id).json?u=\(u)", base: base),
+        let m = ch.meta(LiveTV.nowMs())   // meta.id carries the cklive: prefix the addon expects
+        guard let r = try? await API.json("/stream/tv/\(m.id).json?u=\(u)", base: base),
               let st = (r["streams"] as? [[String: Any]])?.first(where: { ($0["url"] as? String)?.isEmpty == false }),
               let us = st["url"] as? String, let url = URL(string: us) else {
             flashLabel("No feed for \(ch.name)"); return
         }
-        await reloadInPlace(PlayRequest(url: url, meta: ch.meta(LiveTV.nowMs()), season: nil, episode: nil))
+        await reloadInPlace(PlayRequest(url: url, meta: m, season: nil, episode: nil))
     }
     #endif
 
@@ -446,8 +447,7 @@ struct PlayerView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         subRow("Off", on: subIndex < 0) { pickSub(-1); session.setPref("subLang", "off") }
                         ForEach(subTracks.indices, id: \.self) { i in
-                            subRow(subTracks[i]["lang"] as? String ?? subTracks[i]["name"] as? String ?? "Track \(i+1)",
-                                   on: subIndex == i) { pickSub(i); session.setPref("subLang", "en") }
+                            subRow(subLabel(i), on: subIndex == i) { pickSub(i); session.setPref("subLang", "en") }
                         }
                     }
                 }
@@ -458,6 +458,23 @@ struct PlayerView: View {
         }
         .sheet(isPresented: $subLook) { SubtitleLookSheet() }   // no detents — landscape dismisses medium sheets
     }
+    /// Readable track names (Android 2.0.13): bare "eng" codes become "English N"; real
+    /// names (Embedded · …, English (OpenSubtitles N)) pass through.
+    func subLabel(_ i: Int) -> String {
+        let t = subTracks[i]
+        let name = t["name"] as? String ?? ""
+        if !name.isEmpty { return name }
+        let lang = (t["lang"] as? String ?? "").lowercased()
+        if lang == "eng" || lang == "en" || lang == "english" {
+            let nth = subTracks.prefix(i).filter {
+                let l = ($0["lang"] as? String ?? "").lowercased()
+                return ($0["name"] as? String ?? "").isEmpty && (l == "eng" || l == "en" || l == "english")
+            }.count
+            return "English \(nth + 1)"
+        }
+        return t["lang"] as? String ?? "Track \(i + 1)"
+    }
+
     func subRow(_ label: String, on: Bool, _ act: @escaping () -> Void) -> some View {
         Button(action: act) {
             HStack {

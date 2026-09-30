@@ -20,8 +20,7 @@ struct ProfilePickerView: View {
         NavigationStack {
             ScrollView {
                 VStack(spacing: 0) {
-                    BrandLockup(size: 64).padding(.top, 24)
-                    Text("CouchKing TV").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.dim).padding(.top, 2)
+                    BrandLockup(size: 64, tv: true).padding(.top, 24)
                     Text("Who's watching?").font(.system(size: 28, weight: .bold)).padding(.top, 22).padding(.bottom, 26)
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 8)], spacing: 8) {
                         ForEach(session.profiles) { p in
@@ -126,18 +125,13 @@ struct SearchView: View {
         let enc = text.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? ""
         var mv: [Meta] = [], sv: [Meta] = []
         async let ppl = TMDB.people(text)   // people search rides TMDB for everyone (§1)
-        if let base = session.addonBase() {
-            let mc = session.catalogs.first { $0.type == "movie" && !$0.isLive }?.cid ?? "couchking-movies"
-            let sc = session.catalogs.first { $0.type == "series" && !$0.isLive }?.cid ?? "couchking-series"
-            async let m = API.json("/catalog/movie/\(mc)/search=\(enc).json", base: base)
-            async let s = API.json("/catalog/series/\(sc)/search=\(enc).json", base: base)
-            mv = Catalog.metas(try? await m, type: "movie"); sv = Catalog.metas(try? await s, type: "series")
-        } else {
-            // guests search Cinemeta (tracker mode)
-            async let m = API.json("/catalog/movie/top/search=\(enc).json", base: Catalog.cinemeta)
-            async let s = API.json("/catalog/series/top/search=\(enc).json", base: Catalog.cinemeta)
-            mv = Catalog.metas(try? await m, type: "movie"); sv = Catalog.metas(try? await s, type: "series")
-        }
+        // TMDB search for EVERYONE, exactly like Android Discovery.search — the addon
+        // catalog's search extra doesn't actually filter, so every query returned the same
+        // trending list (AJ "searching gives me the same movies no matter what")
+        _ = enc
+        async let m = TMDB.search(kind: "movie", text)
+        async let s = TMDB.search(kind: "tv", text)
+        mv = await m; sv = await s
         let pv = await ppl
         // drop a stale response after the query moved on
         guard q.trimmingCharacters(in: .whitespaces) == text else { return }

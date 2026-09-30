@@ -186,12 +186,19 @@ struct HeroPager: View {
         // NATIVE paging scroller (iOS17): each card is exactly the container width, the
         // horizontal scroll is isolated from the page (can't widen or re-center anything),
         // and swiping is the system gesture — no custom drag to fight the vertical scroll.
+        // BOXED banner (AJ: "make it shorter and put a box around it"): each page is the
+        // container width with the art inset in a rounded card — nothing can look
+        // off-center because the card's frame IS the page.
         ScrollView(.horizontal, showsIndicators: false) {
             LazyHStack(spacing: 0) {
                 ForEach(metas, id: \.id) { m in
-                    NavigationLink(value: m) { HeroCard(meta: m) }
-                        .buttonStyle(.plain)
-                        .containerRelativeFrame(.horizontal)
+                    NavigationLink(value: m) {
+                        HeroCard(meta: m)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                            .padding(.horizontal, 12)
+                    }
+                    .buttonStyle(.plain)
+                    .containerRelativeFrame(.horizontal)
                 }
             }
             .scrollTargetLayout()

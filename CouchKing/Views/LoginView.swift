@@ -180,6 +180,8 @@ struct LoginView: View {
 /// Logo + "CouchKing" wordmark (Android brandSpan: "Couch" purple, "King" white).
 struct BrandLockup: View {
     var size: CGFloat = 96
+    /// Profile picker shows "CouchKing TV"; everywhere else the wordmark is "CouchKing" (AJ).
+    var tv = false
     var body: some View {
         VStack(spacing: 10) {
             Image("Logo").resizable().aspectRatio(contentMode: .fit)
@@ -187,11 +189,13 @@ struct BrandLockup: View {
                 .clipShape(RoundedRectangle(cornerRadius: size * 0.22))
             HStack(spacing: 0) {
                 Text("Couch").foregroundStyle(Color(red: 0xA8 / 255.0, green: 0x55 / 255.0, blue: 0xF7 / 255.0))
-                Text("King").foregroundStyle(Color(red: 0xF0 / 255.0, green: 0xF0 / 255.0, blue: 0xF5 / 255.0))
+                Text(tv ? "King TV" : "King").foregroundStyle(Color(red: 0xF0 / 255.0, green: 0xF0 / 255.0, blue: 0xF5 / 255.0))
             }
             .font(.system(size: size * 0.3, weight: .bold))
-            Text("Discover movies & shows — trailers, ratings, cast, where to watch, and your own watch tracker.")
-                .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            if !tv {
+                Text("Discover movies & shows — trailers, ratings, cast, where to watch, and your own watch tracker.")
+                    .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            }
         }
     }
 }
