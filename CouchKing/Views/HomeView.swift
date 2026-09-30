@@ -17,6 +17,7 @@ struct HomeView: View {
 
     var body: some View {
         NavigationStack {
+            GeometryReader { geo in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     if !hero.isEmpty { HeroPager(metas: hero) }
@@ -36,6 +37,8 @@ struct HomeView: View {
                     }
                 }
                 .padding(.bottom, 28)
+                .frame(width: geo.size.width, alignment: .leading)
+            }
             }
             .background(Theme.bg)
             .toolbar {

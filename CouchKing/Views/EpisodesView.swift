@@ -214,10 +214,10 @@ struct EpisodeDetailView: View {
     let meta: Meta
     let ep: Episode
     var episodes: [Episode] = []
-    @State private var showStreams = false
     private var watched: Bool { session.isWatched(ep.id) }
     var body: some View {
         NavigationStack {
+            GeometryReader { geo in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     AsyncImage(url: URL(string: ep.thumb ?? "")) { img in
@@ -233,13 +233,6 @@ struct EpisodeDetailView: View {
                         Text(o).font(.callout).foregroundStyle(.secondary)
                     }
                     HStack(spacing: 14) {
-                        if session.canStream && !ep.unaired {
-                            Button { showStreams = true } label: {
-                                Label("Play", systemImage: "play.fill").font(.headline)
-                                    .padding(.horizontal, 18).padding(.vertical, 10)
-                                    .background(Theme.accent, in: Capsule()).foregroundStyle(.white)
-                            }
-                        }
                         Button { session.toggleEpisodeWatched(ep.id) } label: {
                             Label(watched ? "Watched" : "Mark watched", systemImage: watched ? "eye.fill" : "eye")
                                 .padding(.horizontal, 14).padding(.vertical, 10)
@@ -247,15 +240,20 @@ struct EpisodeDetailView: View {
                                 .foregroundStyle(watched ? Theme.accent : .primary)
                         }
                     }
+                    // STREAMS RIGHT HERE (AJ: "when I click an episode it should pop up the
+                    // streams and description on one page") — no extra Play step; they load
+                    // as soon as the page opens, Stremio-style.
+                    if session.canStream && !ep.unaired {
+                        Text("Streams").font(.headline).padding(.top, 4)
+                        StreamList(meta: meta, season: ep.season, episode: ep.episode, episodes: episodes)
+                    }
                 }
                 .padding(16)
+                .frame(width: geo.size.width, alignment: .leading)
             }
             .background(Theme.bg)
             .navigationTitle("Episode \(ep.episode)")
             .ckInlineTitle()
-            .sheet(isPresented: $showStreams) {
-                StreamSheet(meta: meta, season: ep.season, episode: ep.episode, episodes: episodes)
-                    .ckDetents()
             }
         }
     }

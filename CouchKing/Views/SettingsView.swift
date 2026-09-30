@@ -69,8 +69,12 @@ struct SettingsView: View {
                 if session.hasAddon {
                     NavigationLink { PlayerSettingsView() } label: { SettingRowLabel(label: "Player", value: "") }
                 }
-                NavigationLink { AddonsView() } label: {
-                    SettingRowLabel(label: "Addons", value: session.signedIn ? "\(session.addons.count) added" : "sign in to add")
+                // guests never see the addon system at all (store-shell rule) — the row
+                // exists only for signed-in accounts
+                if session.signedIn {
+                    NavigationLink { AddonsView() } label: {
+                        SettingRowLabel(label: "Addons", value: "\(session.addons.count) added")
+                    }
                 }
                 NavigationLink { LegalView() } label: { SettingRowLabel(label: "Legal & About", value: "") }
             }

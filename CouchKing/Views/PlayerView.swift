@@ -192,7 +192,7 @@ struct PlayerView: View {
     /// the first frame lands.
     var loadingScreen: some View {
         VStack(spacing: 12) {
-            AsyncImage(url: URL(string: request.meta.logo ?? request.meta.poster ?? "")) { img in
+            AsyncImage(url: URL(string: request.meta.logo ?? "")) { img in
                 img.resizable().aspectRatio(contentMode: .fit)
             } placeholder: { Image("Logo").resizable().scaledToFit().frame(height: 48) }
             .frame(width: 160, height: 160)
@@ -207,7 +207,33 @@ struct PlayerView: View {
         .background(.black)
     }
 
+    /// Android-style center transport: back-step, big play/pause, forward-step in the MIDDLE
+    /// of the screen (AJ: "can't play pause in the middle of the screen or skip 10 secs").
+    var centerCluster: some View {
+        HStack(spacing: 44) {
+            if !isLive && !placeholder {
+                let step = session.pref("seekStep", 10)
+                SeekButton(icon: "gobackward", label: "\(step)") { epTouched = true; seek(ms: max(0, posMs - step * 1000)); scheduleHide() }
+            }
+            Button { togglePlay(); scheduleHide() } label: {
+                Image(systemName: playing ? "pause.fill" : "play.fill")
+                    .font(.system(size: 30, weight: .bold))
+                    .frame(width: 68, height: 68)
+                    .background(.black.opacity(0.55), in: Circle())
+                    .foregroundStyle(.white)
+            }
+            .accessibilityLabel(playing ? "Pause" : "Play")
+            .focused($pfocus, equals: .play)
+            if !isLive && !placeholder {
+                let step = session.pref("seekStep", 10)
+                SeekButton(icon: "goforward", label: "\(step)") { epTouched = true; seek(ms: posMs + step * 1000); scheduleHide() }
+            }
+        }
+    }
+
     @ViewBuilder var overlay: some View {
+        ZStack {
+        if controlsVisible && !failed && firstFrame { centerCluster.transition(.opacity) }
         VStack {
             if controlsVisible { topBar.transition(.opacity) }
             if showStats {
@@ -242,13 +268,8 @@ struct PlayerView: View {
                 SubtitleText(text: currentCue)
                     .padding(.bottom, subBottomPad)
             }
-            // seek-step buttons hide with the controls; the skip pill never does
+            // the skip pill never hides with the controls (seek steps live in the center now)
             HStack(spacing: 10) {
-                if controlsVisible && !isLive && !placeholder {
-                    let step = session.pref("seekStep", 10)
-                    SeekButton(icon: "gobackward", label: "\(step)") { epTouched = true; seek(ms: max(0, posMs - step * 1000)); scheduleHide() }
-                    SeekButton(icon: "goforward", label: "\(step)") { epTouched = true; seek(ms: posMs + step * 1000); scheduleHide() }
-                }
                 Spacer()
                 skipButton
                     .transition(.move(edge: .trailing).combined(with: .opacity))
@@ -257,6 +278,7 @@ struct PlayerView: View {
             .padding(.horizontal, 20)
             .padding(.bottom, controlsVisible ? 8 : 40)
             if controlsVisible { transportBar.transition(.opacity) }
+        }
         }
         .animation(.easeInOut(duration: 0.2), value: controlsVisible)
     }
@@ -292,10 +314,6 @@ struct PlayerView: View {
                     .frame(width: 40, height: 40)
                     .background(.black.opacity(0.5), in: Circle())
             }
-            Menu { menuItems } label: {
-                Image(systemName: "ellipsis").padding(10)
-                    .background(.black.opacity(0.5), in: Circle())
-            }
         }
         .padding()
     }
@@ -303,15 +321,8 @@ struct PlayerView: View {
     /// Play/pause + scrubber with elapsed / remaining — replaces the native AVPlayerViewController
     /// controls the layer surface doesn't have. Live mode: play/pause + LIVE badge, no scrubber.
     var transportBar: some View {
+      VStack(spacing: 6) {
         HStack(spacing: 10) {
-            Button { togglePlay() } label: {
-                Image(systemName: playing ? "pause.fill" : "play.fill")
-                    .font(.title3).frame(width: 40, height: 40)
-                    .background(.black.opacity(0.5), in: Circle())
-                    .foregroundStyle(.white)
-            }
-            .accessibilityLabel(playing ? "Pause" : "Play")
-            .focused($pfocus, equals: .play)
             if isLive {
                 Text("LIVE").font(.caption2.bold())
                     .padding(.horizontal, 6).padding(.vertical, 3)
@@ -350,7 +361,56 @@ struct PlayerView: View {
             }
         }
         .padding(.horizontal, 20)
-        .padding(.bottom, 28)
+        // Android's bottom button row: Captions · Audio · Speed · Aspect · Episodes · Stats —
+        // labeled buttons on the bar, no hidden "…" menu (AJ: "there is 3 dots… I hate it").
+        #if !os(tvOS)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                if !subTracks.isEmpty {
+                    barButton("Captions", "captions.bubble") { showSubPanel = true; hideTask?.cancel() }
+                }
+                if audioOpts.count > 1 {
+                    Menu {
+                        ForEach(audioOpts.indices, id: \.self) { i in
+                            Button(audioOpts[i].displayName) {
+                                if let g = audioGroup { player.currentItem?.select(audioOpts[i], in: g) }
+                                flashLabel("Audio: \(audioOpts[i].displayName)")
+                            }
+                        }
+                    } label: { barLabel("Audio", "waveform") }
+                }
+                Menu {
+                    ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { r in
+                        Button { setRate(Float(r)) } label: {
+                            Text(rate == Float(r) ? "✓ \(r, specifier: "%g")×" : "\(r, specifier: "%g")×")
+                        }
+                    }
+                } label: { barLabel("Speed", "speedometer") }
+                barButton("Screen", "aspectratio") { cycleScale() }
+                if request.season != nil && !request.episodes.isEmpty {
+                    barButton("Episodes", "list.bullet.rectangle") { showEpisodes = true; hideTask?.cancel() }
+                }
+                barButton("Stats", "chart.bar") { showStats.toggle() }
+            }
+            .padding(.horizontal, 20)
+        }
+        #endif
+      }
+        .padding(.bottom, 24)
+    }
+
+    /// One labeled pill on the transport bar (Android's labeled control buttons).
+    func barLabel(_ label: String, _ icon: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon).font(.system(size: 13))
+            Text(label).font(.system(size: 12, weight: .semibold))
+        }
+        .padding(.horizontal, 11).padding(.vertical, 8)
+        .background(.black.opacity(0.5), in: Capsule())
+        .foregroundStyle(.white)
+    }
+    func barButton(_ label: String, _ icon: String, action: @escaping () -> Void) -> some View {
+        Button { action(); scheduleHide() } label: { barLabel(label, icon) }
     }
 
     /// The picture itself: tap (phone/Mac) toggles the controls. On Apple TV it is focusable while
@@ -704,6 +764,21 @@ struct PlayerView: View {
             resume = max(local, windows.resumeMs)
         }
         let r0 = resume
+        // KNOWN-BAD CONTAINER: don't waste up to 12s waiting for AVPlayer to fail on an MKV —
+        // go straight to the /webhls remux at the resume point (AJ: "playing and skipping
+        // around should be smooth").
+        if !isLive, !placeholder, request.url.path.lowercased().hasSuffix(".mkv") {
+            playRemux(fromMs: r0)
+            if r0 > 0 { sessionStartMs = r0 }
+            timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 10),
+                                                          queue: .main) { t in
+                Task { @MainActor in tick(remuxBaseMs + Int(t.seconds * 1000)) }
+            }
+            subTracks = rankSubtitles(request.subtitles)
+            await loadSubtitles()
+            nextEp = computeNextEpisode()
+            return
+        }
         // DON'T seek a not-ready item (the resume/fast-forward "stuck & crash" bug — seeking an
         // AVPlayerItem whose status is still .unknown, esp. an MKV AVPlayer can't even open,
         // hangs the surface). Wait for readiness, THEN seek+play; a container AVPlayer can't
@@ -1027,8 +1102,17 @@ struct PlayerView: View {
     func seek(ms: Int) {
         let target = max(0, ms)
         if remuxed {
-            // the event playlist only reaches as far as ffmpeg has transcoded — reopen the
-            // session at the target instead (web parity: "seeking reopens the stream")
+            // inside what ffmpeg has ALREADY transcoded → instant in-playlist seek; only a
+            // jump beyond the live edge reopens the session at the target (web parity)
+            let local = target - remuxBaseMs
+            let transcoded = Int(((player.currentItem?.duration.seconds ?? 0).isFinite
+                                  ? (player.currentItem?.duration.seconds ?? 0) : 0) * 1000)
+            if local >= 0 && transcoded > 0 && local < transcoded - 4000 {
+                player.seek(to: CMTime(seconds: Double(local) / 1000, preferredTimescale: 1000),
+                            toleranceBefore: .zero, toleranceAfter: .zero)
+                posMs = target
+                return
+            }
             playRemux(fromMs: target)
             posMs = target
             return

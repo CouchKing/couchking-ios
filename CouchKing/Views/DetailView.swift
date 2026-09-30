@@ -20,6 +20,11 @@ struct DetailView: View {
     private var rich: Meta { Meta(full, type: meta.type) ?? meta }
 
     var body: some View {
+        // GeometryReader pins the scroll content to EXACTLY the viewport width. Without it,
+        // any async child (stream rows / episode rows) that lays out a point too wide made
+        // the vertical ScrollView CENTER the whole page — everything "scooted" and clipped
+        // at both edges the moment content loaded in (AJ Sep 30).
+        GeometryReader { geo in
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 backdrop
@@ -40,6 +45,8 @@ struct DetailView: View {
                 }
                 .padding(.horizontal, Platform.gutter).padding(.bottom, 20)
             }
+            .frame(width: geo.size.width, alignment: .leading)
+        }
         }
         .background(Theme.bg)
         .ignoresSafeArea(edges: .top)
@@ -256,7 +263,10 @@ struct TrailerView: View {
 struct YouTubeEmbed {
     let ytId: String
     private var url: URL? {
-        URL(string: "https://www.youtube-nocookie.com/embed/\(ytId)?autoplay=1&playsinline=1&rel=0&modestbranding=1&fs=1")
+        // The bare embed URL answers "video player configuration error" on iOS WKWebView (no
+        // real page origin). The service hosts a tiny wrapper page (same one Android-web uses)
+        // whose https origin YouTube accepts.
+        URL(string: API.serviceBase + "/player/trailer?v=\(ytId)")
     }
     #if !os(tvOS)
     fileprivate func makeWeb() -> WKWebView {
