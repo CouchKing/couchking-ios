@@ -183,7 +183,7 @@ struct SettingsView: View {
                        options: [(5, "5s"), (10, "10s"), (15, "15s"), (30, "30s")])
             PrefPicker(label: "Subtitle size", key: "subScale", def: 1.0,
                        options: [(0.8, "Small"), (1.0, "Normal"), (1.3, "Large"), (1.6, "Huge")])
-            PrefPicker(label: "Subtitles", key: "subLang", def: "en",
+            PrefPicker(label: "Subtitles", key: "subLang", def: "off",
                        options: [("en", "English"), ("off", "Off")])   // Android: English or off only
             PrefToggle(label: "Subtitle background", key: "subBg", def: false)   // Android default: off
             PrefToggle(label: "Subtitle outline", key: "subOutline", def: true)

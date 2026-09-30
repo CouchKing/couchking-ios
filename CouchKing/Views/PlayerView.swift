@@ -1006,7 +1006,7 @@ struct PlayerView: View {
     }
 
     func loadSubtitles() async {
-        guard session.pref("subLang", "en") != "off", !placeholder else { subIndex = -1; return }
+        guard session.pref("subLang", "off") != "off", !placeholder else { subIndex = -1; return }
         if subTracks.isEmpty, let base = session.addonBase(), !isLive {
             // the addon attaches ranked subtitle files to each stream response — refetch the
             // stream list for this item and take this stream's list
@@ -1093,7 +1093,7 @@ struct PlayerView: View {
         guard !added.isEmpty else { return }
         subTracks = Array(rankSubtitles(subTracks + added).prefix(12))
         // nothing picked yet (no addon subs) → the best embedded track becomes the default
-        if subIndex < 0, session.pref("subLang", "en") != "off", !subTracks.isEmpty { pickSub(0) }
+        if subIndex < 0, session.pref("subLang", "off") != "off", !subTracks.isEmpty { pickSub(0) }
     }
 
     // MARK: placeholder hot-swap (IOS_CONTRACTS §5)
@@ -1132,7 +1132,7 @@ struct PlayerView: View {
         flashLabel("Now playing the full file")
         Task {
             await probeMedia()
-            if subIndex < 0, !subTracks.isEmpty, session.pref("subLang", "en") != "off" { pickSub(0) }
+            if subIndex < 0, !subTracks.isEmpty, session.pref("subLang", "off") != "off" { pickSub(0) }
         }
     }
 

@@ -380,7 +380,7 @@ struct HubPlayer: View {
     var body: some View {
         let scale: Double = session.pref("subScale", 1.0)
         let cur: Int = sizes.firstIndex { abs($0.1 - scale) < 0.01 } ?? 1
-        let subLang: String = session.pref("subLang", "en")
+        let subLang: String = session.pref("subLang", "off")
         let subOff = subLang == "off"
         let autoNext: Bool = session.pref("autoplayNext", true)
         let seek: Int = session.pref("seekStep", 10)
