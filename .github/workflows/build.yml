@@ -155,6 +155,16 @@ jobs:
           echo "uploading: $IPA"
           xcrun altool --upload-app -f "$IPA" --type ios \
             --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" --verbose 2>&1 | tee upload.log | tail -40
+      # dSYMs make TestFlight crash traces symbolicable (CrashGuard posts raw
+      # "CouchKing + offset" frames; with these files they become file:line)
+      - name: Keep dSYMs
+        if: steps.gate.outputs.go == 'yes'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsyms-${{ github.run_number }}
+          path: build/CouchKing.xcarchive/dSYMs
+          retention-days: 14
+
       - uses: actions/upload-artifact@v4
         if: always()   # capture validate.log + upload.log even on success so we can see Apple's response
         with: { name: testflight-logs, path: "*.log", if-no-files-found: warn }
