@@ -41,6 +41,32 @@ final class Session: ObservableObject {
 
     static let appVer = "ios-" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0")
 
+    /// The account blob lives on disk like Android's prefs (Store.kt): profiles, addons and every
+    /// profile's library are there on a cold open — offline, before the first pull, instantly.
+    init() {
+        if let d = UserDefaults.standard.data(forKey: "acctstate"),
+           let st = (try? JSONSerialization.jsonObject(with: d)) as? [String: Any] {
+            state = st
+            profiles = (st["profiles"] as? [[String: Any]] ?? []).compactMap(Profile.init)
+            var list = st["addons"] as? [[String: Any]] ?? []
+            if list.isEmpty, let states = st["states"] as? [String: Any] {
+                for (_, v) in states {
+                    if let a = (v as? [String: Any])?["addons"] as? [[String: Any]], !a.isEmpty { list = a; break }
+                }
+            }
+            addons = list.compactMap {
+                guard let u = $0["url"] as? String, !u.isEmpty else { return nil }
+                return Addon(url: u, name: $0["name"] as? String ?? "Addon")
+            }
+        }
+    }
+
+    private func persist() {
+        guard JSONSerialization.isValidJSONObject(state),
+              let d = try? JSONSerialization.data(withJSONObject: state) else { return }
+        UserDefaults.standard.set(d, forKey: "acctstate")
+    }
+
     var signedIn: Bool { !email.isEmpty && !token.isEmpty }
     /// The account's synced state carries a user-added addon (any device).
     var hasAddon: Bool { !addons.isEmpty }
@@ -189,6 +215,7 @@ final class Session: ObservableObject {
         state = [:]; profiles = []; addons = []; liveTvOn = false; catalogs = []
         currentProfile = ""
         UserDefaults.standard.set("", forKey: "curProfile")
+        UserDefaults.standard.removeObject(forKey: "acctstate")
     }
 
     private func stashKey(_ e: String) -> String {
@@ -284,6 +311,7 @@ final class Session: ObservableObject {
     }
 
     func push() {
+        persist()
         guard signedIn else { return }
         var out = state
         out["v"] = 2
@@ -314,6 +342,7 @@ final class Session: ObservableObject {
             guard let u = $0["url"] as? String, !u.isEmpty else { return nil }
             return Addon(url: u, name: $0["name"] as? String ?? "Addon")
         }
+        persist()
         objectWillChange.send()
     }
 
@@ -335,7 +364,7 @@ final class Session: ObservableObject {
             state["states"] = states
         }
         objectWillChange.send()
-        if doPush { push() }
+        if doPush { push() } else { persist() }
     }
 
     // ---- thumbs (identical semantics to Android/web: {v: 1|-1|0, ts}) ----
