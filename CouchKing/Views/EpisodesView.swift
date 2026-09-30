@@ -42,8 +42,21 @@ struct EpisodesView: View {
     /// as episodes exist. Manual season taps set `landed` so this never yanks them back.
     private func landOnCurrentSeason() {
         guard !landed, !all.isEmpty else { return }
-        if let c = all.first(where: { $0.id == currentId }) { season = c.season; landed = true }
-        else if let f = seasons.first { season = f; landed = true }
+        // parse the season straight out of the cwlast pointer ("tt…:S:E") — id-string
+        // equality broke whenever the pointer and the episode list disagreed on the id
+        // prefix, which is why Details kept opening on Season 1 (AJ ×3)
+        let p = currentId.split(separator: ":")
+        if p.count >= 3, let cs = Int(p[p.count - 2]), seasons.contains(cs) {
+            season = cs; landed = true; return
+        }
+        if let c = all.first(where: { $0.id == currentId }) { season = c.season; landed = true; return }
+        if let f = seasons.first { season = f; landed = true }
+        // phone home WHY it missed (once) — /tvapp/diag lands in Telegram with the raw ids
+        if !currentId.isEmpty {
+            let text = "landS1 meta=\(meta.id) cwlast=\(currentId) firstEp=\(all.first?.id ?? "-")"
+            Task { _ = try? await API.postJSON("/tvapp/diag",
+                body: ["email": session.email, "token": session.token, "text": text]) }
+        }
     }
 
     private var all: [Episode] { videos.compactMap(Episode.init) }

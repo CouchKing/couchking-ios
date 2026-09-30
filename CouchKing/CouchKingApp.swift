@@ -11,6 +11,7 @@ struct CouchKingApp: App {
     @StateObject private var session = Session.shared
     @Environment(\.scenePhase) private var scenePhase
     init() {
+        CrashGuard.install()   // previous run's crash trace → /tvapp/crash → TG
         // Poster/image discipline (Android: 300MB disk poster cache + viewport art pass):
         // one shared cache so scrolling back through rows never re-fetches artwork.
         URLCache.shared = URLCache(memoryCapacity: 64 * 1024 * 1024,

@@ -180,24 +180,47 @@ struct HeroPager: View {
     }
 
     #if os(iOS)
+    @State private var dragX: CGFloat = 0
     private var phonePager: some View {
-        // each page pinned to EXACTLY the container width — a wide backdrop image could
-        // oversize the page and shove the name/year off-screen (AJ: "the rolling card at
-        // the top is too big and off center, can't see the names")
+        // HAND-ROLLED pager: a paged TabView inside a vertical ScrollView drifts between
+        // pages after re-layout (the "fine at first, then it scooches/centers and cuts off"
+        // bug — a known SwiftUI defect). An HStack offset by page*width with a snap drag
+        // can't drift: the offset is recomputed from state on every layout.
         GeometryReader { geo in
-            TabView(selection: $page) {
-                ForEach(Array(metas.enumerated()), id: \.element.id) { i, m in
+            let w = max(1, geo.size.width)
+            HStack(spacing: 0) {
+                ForEach(metas, id: \.id) { m in
                     NavigationLink(value: m) { HeroCard(meta: m) }
                         .buttonStyle(.plain)
-                        .frame(width: geo.size.width, height: Platform.heroHeight)
+                        .frame(width: w, height: Platform.heroHeight)
                         .clipped()
-                        .tag(i)
                 }
             }
-            .tabViewStyle(.page(indexDisplayMode: .automatic))
+            .offset(x: -CGFloat(page) * w + dragX)
+            .animation(.interactiveSpring(response: 0.35, dampingFraction: 0.86), value: page)
+            .gesture(
+                DragGesture(minimumDistance: 15)
+                    .onChanged { g in paused = true; dragX = g.translation.width }
+                    .onEnded { g in
+                        let t = g.predictedEndTranslation.width
+                        if t < -w / 3 { page = min(page + 1, metas.count - 1) }
+                        else if t > w / 3 { page = max(page - 1, 0) }
+                        dragX = 0; paused = false
+                    }
+            )
+            // page dots (the TabView used to draw these)
+            .overlay(alignment: .bottom) {
+                HStack(spacing: 5) {
+                    ForEach(metas.indices, id: \.self) { i in
+                        Circle().fill(.white.opacity(i == page ? 0.95 : 0.4))
+                            .frame(width: 6, height: 6)
+                    }
+                }
+                .padding(.bottom, 8)
+            }
         }
         .frame(height: Platform.heroHeight)
-        .simultaneousGesture(DragGesture().onChanged { _ in paused = true }.onEnded { _ in paused = false })
+        .clipped()
         .task { await rotate() }
     }
     #endif
@@ -337,7 +360,26 @@ struct PosterCard: View {
 struct TitleContextMenu: ViewModifier {
     @EnvironmentObject var session: Session
     let meta: Meta
+    @State private var menuOpen = false
     func body(content: Content) -> some View {
+        #if os(iOS)
+        // action SHEET, not contextMenu: the zoomed-tile context menu highlighted the whole
+        // card and the rows read badly (AJ: "you can't really tell you're clicking the
+        // individual item"). Bottom sheet rows are unmistakable — web mobile does the same.
+        // Details = just tap the tile, so it isn't duplicated here.
+        content
+            .onLongPressGesture(minimumDuration: 0.45) { menuOpen = true }
+            .confirmationDialog(meta.name, isPresented: $menuOpen, titleVisibility: .visible) {
+                Button(session.inLibrary(meta.id) ? "Remove from Library" : "Add to Library") {
+                    session.toggleLibrary(meta)
+                }
+                Button(session.isWatched(meta.id) ? "Mark unwatched" : "Mark watched") {
+                    session.toggleWatched(meta)
+                }
+                Button("Clear progress", role: .destructive) { session.clearProgress(meta) }
+                Button("Cancel", role: .cancel) {}
+            }
+        #else
         content.contextMenu {
             NavigationLink(value: meta) { Label("Details", systemImage: "info.circle") }
             Button(session.inLibrary(meta.id) ? "Remove from Library" : "Add to Library",
@@ -352,6 +394,7 @@ struct TitleContextMenu: ViewModifier {
                 session.clearProgress(meta)
             }
         }
+        #endif
     }
 }
 extension View { func titleMenu(_ meta: Meta) -> some View { modifier(TitleContextMenu(meta: meta)) } }

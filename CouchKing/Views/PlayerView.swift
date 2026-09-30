@@ -175,13 +175,15 @@ struct PlayerView: View {
         #if os(iOS)
 
         .sheet(isPresented: $showEpisodes) {
+            // NO detents: a medium sheet is illegal in landscape (compact height) and iOS
+            // dismisses it the moment it appears — the "episode list opens then closes
+            // instantly" bug. Full sheet works in both orientations.
             EpisodePanel(meta: request.meta, episodes: request.episodes,
                          currentId: posKey()) { ep in
                 showEpisodes = false
                 epTouched = true
                 Task { await playEpisode(ep, idle: 0) }
             }
-            .ckDetents()
         }
         #endif
     }
@@ -334,7 +336,7 @@ struct PlayerView: View {
             .frame(maxHeight: .infinity)
             .background(.black.opacity(0.82))
         }
-        .sheet(isPresented: $subLook) { SubtitleLookSheet().ckDetents() }
+        .sheet(isPresented: $subLook) { SubtitleLookSheet() }   // no detents — landscape dismisses medium sheets
     }
     func subRow(_ label: String, on: Bool, _ act: @escaping () -> Void) -> some View {
         Button(action: act) {
