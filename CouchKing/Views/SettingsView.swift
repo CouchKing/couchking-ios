@@ -633,7 +633,7 @@ struct UpdateGateView: View {
     var body: some View {
         VStack(spacing: 18) {
             Spacer()
-            Text("👑").font(.system(size: 56))
+            Image("Logo").resizable().scaledToFit().frame(height: 96)
             Text("Update required").font(.title2.bold())
             Text("This version of CouchKing is no longer supported. Update to \(info.latest) to keep watching.")
                 .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
@@ -664,7 +664,7 @@ struct ConfirmCard: View {
         ZStack {
             Color.black.opacity(0.6).ignoresSafeArea().onTapGesture(perform: cancel)
             VStack(spacing: 14) {
-                Text("👑").font(.system(size: 36))
+                Image("Logo").resizable().scaledToFit().frame(height: 44)
                 Text(title).font(.title3.bold())
                 Text(text).font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 HStack(spacing: 12) {

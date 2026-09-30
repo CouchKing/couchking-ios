@@ -258,7 +258,7 @@ struct GateModal: View {
     let dismiss: () -> Void
     var body: some View {
         VStack(spacing: 14) {
-            Text("👑").font(.system(size: 40))
+            Image("Logo").resizable().scaledToFit().frame(height: 48)
             Text(text).font(.subheadline).multilineTextAlignment(.center)
             Button("OK", action: dismiss)
                 .font(.headline).padding(.horizontal, 26).padding(.vertical, 10)

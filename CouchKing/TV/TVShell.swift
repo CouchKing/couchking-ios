@@ -72,7 +72,7 @@ struct TVShell: View {
         VStack(alignment: .leading, spacing: 0) {
             Spacer()
             HStack(spacing: TV.dp(10)) {
-                Text("👑").font(.system(size: TV.dp(28))).frame(width: TV.dp(36), height: TV.dp(36))
+                Image("Logo").resizable().scaledToFit().frame(width: TV.dp(36), height: TV.dp(36))
                 if expanded { TVWordmark() }
             }
             .padding(.leading, TV.dp(6)).padding(.bottom, TV.dp(18))

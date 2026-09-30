@@ -359,7 +359,7 @@ extension PlayerView {
         ZStack {
             Color.black.opacity(0.75).ignoresSafeArea()
             VStack(spacing: TV.dp(6)) {
-                Text("👑").font(.system(size: TV.sp(30)))
+                Image("Logo").resizable().scaledToFit().frame(height: TV.sp(34))
                 Text("Are you still watching?").font(.system(size: TV.sp(18.5), weight: .bold)).foregroundStyle(.white)
                 Text(request.meta.name).font(.system(size: TV.sp(14))).foregroundStyle(TV.dim)
                 Button {

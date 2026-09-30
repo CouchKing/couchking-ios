@@ -188,7 +188,7 @@ struct PlayerView: View {
         VStack(spacing: 12) {
             AsyncImage(url: URL(string: request.meta.logo ?? request.meta.poster ?? "")) { img in
                 img.resizable().aspectRatio(contentMode: .fit)
-            } placeholder: { Text("👑").font(.system(size: 48)) }
+            } placeholder: { Image("Logo").resizable().scaledToFit().frame(height: 48) }
             .frame(width: 160, height: 160)
             .modifier(Pulse())
             Text(isLive ? "Tuning \(request.meta.name)…" : request.meta.name)
@@ -573,7 +573,7 @@ struct PlayerView: View {
     /// playback stops and the player exits (Android showStillWatching).
     var stillWatchingCard: some View {
         VStack(spacing: 14) {
-            Text("👑").font(.system(size: 40))
+            Image("Logo").resizable().scaledToFit().frame(height: 48)
             Text("Are you still watching?").font(.title3.bold())
             Button {
                 showStillWatching = false

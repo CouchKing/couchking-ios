@@ -51,7 +51,7 @@ struct MacShell: View {
         VStack(alignment: .leading, spacing: 5.6) {
             // `.rail-brand`
             HStack(spacing: 9.6) {
-                Text("👑").font(.system(size: 22)).frame(width: 30, height: 30)
+                Image("Logo").resizable().scaledToFit().frame(width: 30, height: 30)
                 DeskWordmark().opacity(open ? 1 : 0).offset(x: open ? 0 : -6)
             }
             .padding(.horizontal, 8).padding(.top, 6.4).padding(.bottom, 16)
