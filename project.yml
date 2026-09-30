@@ -26,7 +26,11 @@ targets:
       properties:
         CFBundleDisplayName: CouchKing
         UILaunchScreen: {}
-        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        # Portrait app; the PLAYER rotates to landscape (Android sensorLandscape parity).
+        # All three must be declared or iOS refuses the runtime rotation.
+        UISupportedInterfaceOrientations:
+          [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft,
+           UIInterfaceOrientationLandscapeRight]
         "UISupportedInterfaceOrientations~ipad":
           [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft,
            UIInterfaceOrientationLandscapeRight]

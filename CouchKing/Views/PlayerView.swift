@@ -71,6 +71,8 @@ struct PlayerView: View {
     /// The absolute position the current remux session started at — the HLS clock restarts
     /// near 0 there, so every reported time is remuxBaseMs + player clock (web state.offset).
     @State var remuxBaseMs = 0
+    /// a seek requested before the item was .readyToPlay — applied the moment it is
+    @State var pendingSeekMs = -1
     @State var serverAhead = 0        // mid-play reconcile: another device's position
     // ---- placeholder / "not yet available" clip (IOS_CONTRACTS §5) ----
     @State var placeholder = false
@@ -699,14 +701,29 @@ struct PlayerView: View {
             let local = ((session.pstate()["positions"] as? [String: Any])?[posKey()] as? String)?
                 .split(separator: "|").first.flatMap { Int($0) } ?? 0
             resume = max(local, windows.resumeMs)
-            if resume > 120_000 { seek(ms: resume); sessionStartMs = resume }
         }
-        player.play()
-        // remux fallback for containers AVPlayer can't open
         let r0 = resume
-        Task {
-            try? await Task.sleep(for: .seconds(4))
-            if item.status == .failed && !remuxed { playRemux(fromMs: r0) }
+        // DON'T seek a not-ready item (the resume/fast-forward "stuck & crash" bug — seeking an
+        // AVPlayerItem whose status is still .unknown, esp. an MKV AVPlayer can't even open,
+        // hangs the surface). Wait for readiness, THEN seek+play; a container AVPlayer can't
+        // open goes .failed → the /webhls remux opened AT r0 (no seek needed there).
+        Task { @MainActor in
+            for _ in 0..<120 {                       // up to ~12s
+                if item.status == .readyToPlay {
+                    if r0 > 120_000 && !remuxed {
+                        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                            player.seek(to: CMTime(seconds: Double(r0) / 1000, preferredTimescale: 1000),
+                                        toleranceBefore: .zero, toleranceAfter: .zero) { _ in c.resume() }
+                        }
+                        sessionStartMs = r0
+                    }
+                    player.play()
+                    return
+                }
+                if item.status == .failed { if !remuxed { playRemux(fromMs: r0) }; return }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            if !remuxed { playRemux(fromMs: r0) }    // never became ready → remux as a last resort
         }
         // position ticker drives skip buttons + subtitle cues + the account heartbeat
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 10),
@@ -749,6 +766,13 @@ struct PlayerView: View {
     // MARK: ticker
 
     func tick(_ ms: Int) {
+        // a seek requested while the item was loading — apply it now that frames flow
+        if pendingSeekMs >= 0, !remuxed, let it = player.currentItem, it.status == .readyToPlay {
+            let t = pendingSeekMs; pendingSeekMs = -1
+            player.seek(to: CMTime(seconds: Double(t) / 1000, preferredTimescale: 1000),
+                        toleranceBefore: .zero, toleranceAfter: .zero)
+            return
+        }
         let prev = lastTickPos
         let nowPlaying = player.timeControlStatus != .paused
         if nowPlaying != playing {
@@ -1000,14 +1024,21 @@ struct PlayerView: View {
     }
 
     func seek(ms: Int) {
+        let target = max(0, ms)
         if remuxed {
             // the event playlist only reaches as far as ffmpeg has transcoded — reopen the
             // session at the target instead (web parity: "seeking reopens the stream")
-            playRemux(fromMs: max(0, ms))
-            posMs = max(0, ms)
+            playRemux(fromMs: target)
+            posMs = target
             return
         }
-        player.seek(to: CMTime(seconds: Double(ms) / 1000, preferredTimescale: 1000))
+        // seeking a not-ready item does nothing and can wedge playback — stash it and apply
+        // when the item is ready (handled in the open loop / status poll)
+        guard let item = player.currentItem, item.status == .readyToPlay else {
+            pendingSeekMs = target; posMs = target; return
+        }
+        player.seek(to: CMTime(seconds: Double(target) / 1000, preferredTimescale: 1000),
+                    toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
     // MARK: subtitles
