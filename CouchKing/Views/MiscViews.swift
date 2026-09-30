@@ -210,7 +210,10 @@ struct LibraryView: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 18) {
+                // plain VStack: LazyVStack deferred whole rows until you scrolled INTO them, so
+                // library sections sat blank and "spawned in" (AJ). The list is bounded and the
+                // posters inside each row are still lazy — only the row shells render eagerly.
+                VStack(alignment: .leading, spacing: 18) {
                     HStack(spacing: 8) {
                         ForEach([("all", "All"), ("movie", "Movies"), ("series", "Shows")], id: \.0) { k, label in
                             Button(label) { filter = k }

@@ -1089,6 +1089,15 @@ struct PlayerView: View {
         guard let remux = URL(string: API.serviceBase + "/webhls?u=\(b64)&t=\(fromMs / 1000)") else { return }
         remuxed = true
         remuxBaseMs = fromMs
+        // the remux really begins at the KEYFRAME at-or-before fromMs (t=873 → 868.2) — snap
+        // the clock base to the real start (same /webplay/start snap the web player does) or
+        // subtitles + position drift by up to a whole GOP after every seek/fallback.
+        Task { @MainActor in
+            if let r = try? await API.json("/webplay/start?u=\(b64)&t=\(fromMs / 1000)"),
+               let real = r["start"] as? Double, real.isFinite {
+                remuxBaseMs = Int(real * 1000)
+            }
+        }
         let item = AVPlayerItem(url: remux)
         player.replaceCurrentItem(with: item)
         observeItem(item)
