@@ -68,6 +68,9 @@ struct PlayerView: View {
     @State var firstFrame = false
     @State var failed = false
     @State var remuxed = false
+    /// The absolute position the current remux session started at — the HLS clock restarts
+    /// near 0 there, so every reported time is remuxBaseMs + player clock (web state.offset).
+    @State var remuxBaseMs = 0
     @State var serverAhead = 0        // mid-play reconcile: another device's position
     // ---- placeholder / "not yet available" clip (IOS_CONTRACTS §5) ----
     @State var placeholder = false
@@ -75,6 +78,7 @@ struct PlayerView: View {
     @State var swapped: [String: Any]?   // the real stream once it lands
     // ---- /webplay/probe (IOS_CONTRACTS §4) ----
     @State var probeInfo = ""
+    @State var probedDurMs = 0   // true media duration from /webplay/probe (the remux HLS playlist only reports what's transcoded)
     @State var subxTask: Task<Void, Never>?
     @State var subxFrom = 0
     // ---- Picture-in-Picture + our own transport (the AVPlayerLayer surface has no native controls) ----
@@ -707,7 +711,7 @@ struct PlayerView: View {
         // position ticker drives skip buttons + subtitle cues + the account heartbeat
         timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 10),
                                                       queue: .main) { t in
-            Task { @MainActor in tick(Int(t.seconds * 1000)) }
+            Task { @MainActor in tick(remuxBaseMs + Int(t.seconds * 1000)) }
         }
         subTracks = rankSubtitles(request.subtitles)
         await loadSubtitles()
@@ -807,7 +811,8 @@ struct PlayerView: View {
     /// local resume bar every 30s, account blob every 90s — all gated on a MOVING position
     /// (the zombie guard: a stick frozen "playing" for 26h must never pin CW everywhere).
     func heartbeat() {
-        if let d = player.currentItem?.duration.seconds, d.isFinite, d > 0 { durMs = Int(d * 1000) }
+        if remuxed { if probedDurMs > 0 { durMs = probedDurMs } }
+        else if let d = player.currentItem?.duration.seconds, d.isFinite, d > 0 { durMs = Int(d * 1000) }
         beatCount += 1
         guard player.rate > 0, durMs > 0, !finishedHandled else { return }
         if !startStamped {
@@ -978,8 +983,12 @@ struct PlayerView: View {
     func playRemux(fromMs: Int) {
         guard !API.serviceBase.isEmpty else { failed = true; return }
         let b64 = API.b64url(playURL.absoluteString)
-        guard let remux = URL(string: API.serviceBase + "/webplay?u=\(b64)&t=\(fromMs / 1000)") else { return }
+        // /webhls, NOT /webplay: AVFoundation can't consume the piped fragmented-MP4 remux
+        // (the exact reason the HLS lane exists — ck-web routes iOS the same way). 302 →
+        // event playlist, video stream-copied, audio → AAC.
+        guard let remux = URL(string: API.serviceBase + "/webhls?u=\(b64)&t=\(fromMs / 1000)") else { return }
         remuxed = true
+        remuxBaseMs = fromMs
         let item = AVPlayerItem(url: remux)
         player.replaceCurrentItem(with: item)
         observeItem(item)
@@ -991,6 +1000,13 @@ struct PlayerView: View {
     }
 
     func seek(ms: Int) {
+        if remuxed {
+            // the event playlist only reaches as far as ffmpeg has transcoded — reopen the
+            // session at the target instead (web parity: "seeking reopens the stream")
+            playRemux(fromMs: max(0, ms))
+            posMs = max(0, ms)
+            return
+        }
         player.seek(to: CMTime(seconds: Double(ms) / 1000, preferredTimescale: 1000))
     }
 
@@ -1086,6 +1102,8 @@ struct PlayerView: View {
               (r["duration"] as? Double ?? Double(r["duration"] as? Int ?? 0)) > 0 else { return }
         let dur = r["duration"] as? Double ?? Double(r["duration"] as? Int ?? 0)
         probeInfo = "\(r["vcodec"] as? String ?? "?") / \(r["acodec"] as? String ?? "?") · \(Int(dur / 60)) min"
+        probedDurMs = Int(dur * 1000)
+        if remuxed { durMs = probedDurMs }
         var added: [[String: Any]] = []
         for s in r["subs"] as? [[String: Any]] ?? [] {
             guard let i = s["i"] as? Int else { continue }
@@ -1215,9 +1233,10 @@ struct PlayerView: View {
 
     func stop() {
         Platform.keepAwake(false)
-        let pos = max(Int(player.currentTime().seconds * 1000), posMs)
+        let pos = max(remuxBaseMs + Int(player.currentTime().seconds * 1000), posMs)
         posMs = pos
-        if let d = player.currentItem?.duration.seconds, d.isFinite, d > 0 { durMs = Int(d * 1000) }
+        if remuxed { if probedDurMs > 0 { durMs = probedDurMs } }
+        else if let d = player.currentItem?.duration.seconds, d.isFinite, d > 0 { durMs = Int(d * 1000) }
         if !isLive && !placeholder && !finishedHandled {
             if qualifiesWatched {
                 finishEpisode()
