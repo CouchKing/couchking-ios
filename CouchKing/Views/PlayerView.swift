@@ -191,17 +191,30 @@ struct PlayerView: View {
     /// Branded loading screen (Android buildLoadingScreen): show/channel art pulsing until
     /// the first frame lands.
     var loadingScreen: some View {
+        // Android/Fire TV loading: the TITLE's logo art, else the title NAME big — never the
+        // full poster, never the CouchKing brand mark (AJ Sep 30, both directions).
         VStack(spacing: 12) {
-            AsyncImage(url: URL(string: request.meta.logo ?? "")) { img in
-                img.resizable().aspectRatio(contentMode: .fit)
-            } placeholder: { Image("Logo").resizable().scaledToFit().frame(height: 48) }
-            .frame(width: 160, height: 160)
-            .modifier(Pulse())
-            Text(isLive ? "Tuning \(request.meta.name)…" : request.meta.name)
-                .font(.headline).foregroundStyle(.white.opacity(0.9))
+            if let lg = request.meta.logo, let u = URL(string: lg) {
+                AsyncImage(url: u) { img in
+                    img.resizable().aspectRatio(contentMode: .fit)
+                } placeholder: {
+                    Text(request.meta.name).font(.title2.bold()).multilineTextAlignment(.center)
+                        .foregroundStyle(.white)
+                }
+                .frame(maxWidth: 280, maxHeight: 130)
+                .modifier(Pulse())
+            } else {
+                Text(request.meta.name).font(.title2.bold()).multilineTextAlignment(.center)
+                    .foregroundStyle(.white).padding(.horizontal, 30)
+                    .modifier(Pulse())
+            }
+            if isLive {
+                Text("Tuning…").font(.headline).foregroundStyle(.white.opacity(0.9))
+            }
             if let s = request.season, let e = request.episode {
                 Text("S\(s) E\(e)").font(.caption).foregroundStyle(.secondary)
             }
+            ProgressView().tint(.white).padding(.top, 6)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.black)
