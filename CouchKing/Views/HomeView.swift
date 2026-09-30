@@ -367,15 +367,16 @@ struct TitleContextMenu: ViewModifier {
     @EnvironmentObject var session: Session
     let meta: Meta
     @State private var menuOpen = false
+    @State private var detailMeta: Meta?
     func body(content: Content) -> some View {
         #if os(iOS)
         // action SHEET, not contextMenu: the zoomed-tile context menu highlighted the whole
         // card and the rows read badly (AJ: "you can't really tell you're clicking the
         // individual item"). Bottom sheet rows are unmistakable — web mobile does the same.
-        // Details = just tap the tile, so it isn't duplicated here.
         content
             .simultaneousGesture(LongPressGesture(minimumDuration: 0.45).onEnded { _ in menuOpen = true })
             .confirmationDialog(meta.name, isPresented: $menuOpen, titleVisibility: .visible) {
+                Button("Details") { detailMeta = meta }
                 Button(session.inLibrary(meta.id) ? "Remove from Library" : "Add to Library") {
                     session.toggleLibrary(meta)
                 }
@@ -385,6 +386,7 @@ struct TitleContextMenu: ViewModifier {
                 Button("Clear progress", role: .destructive) { session.clearProgress(meta) }
                 Button("Cancel", role: .cancel) {}
             }
+            .navigationDestination(item: $detailMeta) { DetailView(meta: $0) }
         #else
         content.contextMenu {
             NavigationLink(value: meta) { Label("Details", systemImage: "info.circle") }

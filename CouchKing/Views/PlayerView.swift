@@ -80,6 +80,8 @@ struct PlayerView: View {
     @State var pendingSeekMs = -1
     @State var seeking = false   // remux reopen / buffering a seek → keep loading card, not black
     @State var subOffsetMs = 0   // manual subtitle sync nudge (per sit-down)
+    @State var openResumeMs = 0  // the resume target while the open is still settling
+    @State var bufferTicks = 0   // consecutive 250ms ticks spent buffering
     /// Episode list fetched at open when the request came without one (CW resume etc.) —
     /// the Episodes button/panel and next-up need it no matter how playback started.
     @State var fetchedEpisodes: [Episode] = []
@@ -336,6 +338,7 @@ struct PlayerView: View {
     @State var miniChannels: [LiveChannel] = []
     @State var miniSections: [(String, [LiveChannel])] = []
     @State var miniFavs: Set<String> = []
+    @State var curFav = false
     var miniGuidePanel: some View {
         HStack(spacing: 0) {
             Spacer()
@@ -406,6 +409,7 @@ struct PlayerView: View {
             if case .ok(let g) = await LiveTV.guide(session, region: region) {
                 let favs = Set(g.favs)
                 miniFavs = favs
+                curFav = favs.contains(request.meta.id.replacingOccurrences(of: "cklive:", with: ""))
                 miniChannels = g.favChannels + g.channels.filter { !favs.contains($0.id) }
                 // sectioned like the Live TV page: ★ Favorites, then each category
                 var out: [(String, [LiveChannel])] = []
@@ -619,6 +623,14 @@ struct PlayerView: View {
                 #if os(iOS)
                 if isLive {
                     barButton("Guide", "list.bullet.below.rectangle") { showMiniGuide = true; hideTask?.cancel() }
+                    barButton(curFav ? "★ Favorited" : "☆ Favorite", curFav ? "star.fill" : "star") {
+                        let raw = request.meta.id.replacingOccurrences(of: "cklive:", with: "")
+                        curFav.toggle()
+                        if curFav { miniFavs.insert(raw) } else { miniFavs.remove(raw) }
+                        let on = curFav
+                        flashLabel(on ? "Added to Favorites" : "Removed from Favorites")
+                        Task { _ = await LiveTV.setFav(session, id: raw, on: on) }
+                    }
                 }
                 #endif
                 if !isLive { barButton("Stats", "chart.bar") { showStats.toggle() } }
@@ -995,6 +1007,7 @@ struct PlayerView: View {
             resume = max(local, windows.resumeMs)
         }
         let r0 = resume
+        openResumeMs = r0
         // KNOWN-BAD CONTAINER: don't waste up to 12s waiting for AVPlayer to fail on an MKV —
         // go straight to the /webhls remux at the resume point (AJ: "playing and skipping
         // around should be smooth").
@@ -1125,6 +1138,12 @@ struct PlayerView: View {
         lastTickPos = ms
         if !firstFrame, player.rate > 0, ms > 0 { firstFrame = true; seeking = false; scheduleHide() }
         else if seeking, player.timeControlStatus == .playing { seeking = false }
+        // mid-play buffering (seek landing, remux catching up): >0.75s of waiting shows the
+        // loading card instead of a black surface (AJ: "black screen 5-10s before it plays")
+        if firstFrame, player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
+            bufferTicks += 1
+            if bufferTicks >= 3 && !seeking { seeking = true }
+        } else { bufferTicks = 0 }
         let cueMs = ms - subOffsetMs
         currentCue = subCues.first(where: { cueMs >= $0.from && cueMs <= $0.to })?.text ?? ""
         // seek discontinuity (Android onPositionDiscontinuity / pendingIntroFrom): jumping back
@@ -1502,8 +1521,14 @@ struct PlayerView: View {
         }
         Task {
             guard let surl = t["url"] as? String, let u = URL(string: surl),
-                  let data = try? await URLSession.shared.data(from: u).0,
-                  let text = String(data: data, encoding: .utf8) else { return }
+                  let data = try? await URLSession.shared.data(from: u).0 else { return }
+            // many sub files are NOT UTF-8 (latin-1/windows-1252 SRTs are everywhere) —
+            // a strict utf8 decode returned nil and the track silently showed NOTHING
+            // while the same stream's subs worked on Android ("iPhone is nada", AJ)
+            guard let text = String(data: data, encoding: .utf8)
+                    ?? String(data: data, encoding: .windowsCP1252)
+                    ?? String(data: data, encoding: .isoLatin1)
+                    ?? String(data: data, encoding: .utf16) else { return }
             if subIndex == i { subCues = SubCue.parse(text) }
         }
     }
@@ -1543,6 +1568,10 @@ struct PlayerView: View {
               let r = try? await API.json("/webplay/probe?u=\(API.b64url(playURL.absoluteString))"),
               (r["duration"] as? Double ?? Double(r["duration"] as? Int ?? 0)) > 0 else { return }
         let dur = r["duration"] as? Double ?? Double(r["duration"] as? Int ?? 0)
+        if let cont = r["container"] as? String, cont.contains("matroska"),
+           !remuxed, !firstFrame, !isLive {
+            playRemux(fromMs: max(posMs, openResumeMs))
+        }
         probeInfo = "\(r["vcodec"] as? String ?? "?") / \(r["acodec"] as? String ?? "?") · \(Int(dur / 60)) min"
         probedDurMs = Int(dur * 1000)
         if remuxed { durMs = probedDurMs }
