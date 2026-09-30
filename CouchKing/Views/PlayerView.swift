@@ -20,14 +20,20 @@ struct PlayerView: View {
     /// Leave the player: the Mac's in-window overlay closes through its host; elsewhere the
     /// system cover dismisses.
     func close() { if let ckClose { ckClose() } else { dismiss() } }
-    let request: PlayRequest
+    let initialRequest: PlayRequest
+    @State private var reqOverride: PlayRequest?
+    /// The episode currently loaded. Next-Up swaps this IN PLACE (see reloadInPlace) instead
+    /// of presenting a second PlayerView on top — that stacking was why hitting ✕ left the
+    /// previous player still open, and two live players fighting over the audio session /
+    /// PiP / orientation is the most likely "crashes every time" culprit.
+    var request: PlayRequest { reqOverride ?? initialRequest }
     @State var player = AVPlayer()
+    init(request: PlayRequest) { self.initialRequest = request }
     @State var windows = PlayerWindows()
     @State var posMs = 0
     @State var durMs = 0
     @State var subCues: [SubCue] = []
     @State var currentCue = ""
-    @State var nextEpisode: PlayRequest?
     // ---- watched tracking + account heartbeat (Android PlayerActivity ticker) ----
     @State var sessionStartMs = 0     // where this sit-down began (resume point)
     @State var beatCount = 0
@@ -73,6 +79,7 @@ struct PlayerView: View {
     @State var remuxBaseMs = 0
     /// a seek requested before the item was .readyToPlay — applied the moment it is
     @State var pendingSeekMs = -1
+    @State var seeking = false   // remux reopen / buffering a seek → keep loading card, not black
     @State var serverAhead = 0        // mid-play reconcile: another device's position
     // ---- placeholder / "not yet available" clip (IOS_CONTRACTS §5) ----
     @State var placeholder = false
@@ -132,13 +139,16 @@ struct PlayerView: View {
             if showNextUp, let ep = nextEp { deskNextUp(ep) }
             if showStillWatching { deskStillWatching }
             #else
-            if !firstFrame && !failed { loadingScreen }
+            if (!firstFrame || seeking) && !failed { loadingScreen }
             overlay
             if placeholder { placeholderBanner }
             if showNextUp, let ep = nextEp { nextUpCard(ep) }
             if showStillWatching { stillWatchingCard }
             #endif
             if failed { errorCard }
+            #if os(iOS)
+            if showSubPanel { subSidePanel.transition(.move(edge: .trailing)) }
+            #endif
         }
         .background(.black)
         // any tap during an episode = someone's there → the idle chain resets
@@ -156,16 +166,15 @@ struct PlayerView: View {
         #endif
         .onAppear { Task { await start() } }
         .onDisappear { stop() }
-        .ckFullScreenCover(item: $nextEpisode) { req in PlayerView(request: req) }
-        #if os(iOS)
+        #if os(tvOS) || os(macOS)
         .sheet(isPresented: $showSubPanel) {
-            // a USER pick is a profile choice — persist like Android's in-player toggle
-            // so it syncs across devices (auto-selection paths call pickSub directly)
             SubtitlePanel(tracks: subTracks, index: $subIndex, onPick: { i in
                 pickSub(i); session.setPref("subLang", i < 0 ? "off" : "en")
             })
-                .ckDetents()
         }
+        #endif
+        #if os(iOS)
+
         .sheet(isPresented: $showEpisodes) {
             EpisodePanel(meta: request.meta, episodes: request.episodes,
                          currentId: posKey()) { ep in
@@ -296,6 +305,53 @@ struct PlayerView: View {
         .animation(.easeInOut(duration: 0.2), value: controlsVisible)
     }
 
+    /// Right-side captions strip (Android live-captions panel) — narrow, so you can still
+    /// watch while picking a track. Full style options behind the ⚙︎.
+    #if os(iOS)
+    @State private var subLook = false
+    var subSidePanel: some View {
+        HStack(spacing: 0) {
+            Spacer()
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("Subtitles").font(.subheadline.bold())
+                    Spacer()
+                    Button { subLook = true } label: { Image(systemName: "textformat.size") }
+                    Button { withAnimation { showSubPanel = false } } label: { Image(systemName: "xmark") }
+                }
+                .foregroundStyle(.white).padding(.horizontal, 14).padding(.vertical, 12)
+                Divider().overlay(Theme.card2)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        subRow("Off", on: subIndex < 0) { pickSub(-1); session.setPref("subLang", "off") }
+                        ForEach(subTracks.indices, id: \.self) { i in
+                            subRow(subTracks[i]["lang"] as? String ?? subTracks[i]["name"] as? String ?? "Track \(i+1)",
+                                   on: subIndex == i) { pickSub(i); session.setPref("subLang", "en") }
+                        }
+                    }
+                }
+            }
+            .frame(width: 260)
+            .frame(maxHeight: .infinity)
+            .background(.black.opacity(0.82))
+        }
+        .sheet(isPresented: $subLook) { SubtitleLookSheet().ckDetents() }
+    }
+    func subRow(_ label: String, on: Bool, _ act: @escaping () -> Void) -> some View {
+        Button(action: act) {
+            HStack {
+                Text(label).font(.callout).lineLimit(1)
+                Spacer()
+                if on { Image(systemName: "checkmark").foregroundStyle(Theme.accent) }
+            }
+            .foregroundStyle(on ? Theme.accent : .white)
+            .padding(.horizontal, 14).padding(.vertical, 11)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+    #endif
+
     /// Close · Ends · PiP · AirPlay · more (subtitles / audio / speed / aspect / episodes / stats).
     var topBar: some View {
         HStack(spacing: 8) {
@@ -398,7 +454,7 @@ struct PlayerView: View {
                             Text(rate == Float(r) ? "✓ \(r, specifier: "%g")×" : "\(r, specifier: "%g")×")
                         }
                     }
-                } label: { barLabel("Speed", "speedometer") }
+                } label: { barLabel(rate == 1 ? "Speed" : String(format: "%g×", rate), "speedometer") }
                 barButton("Screen", "aspectratio") { cycleScale() }
                 if request.season != nil && !request.episodes.isEmpty {
                     barButton("Episodes", "list.bullet.rectangle") { showEpisodes = true; hideTask?.cancel() }
@@ -877,7 +933,8 @@ struct PlayerView: View {
         }
         posMs = ms
         lastTickPos = ms
-        if !firstFrame, player.rate > 0, ms > 0 { firstFrame = true; scheduleHide() }
+        if !firstFrame, player.rate > 0, ms > 0 { firstFrame = true; seeking = false; scheduleHide() }
+        else if seeking, player.timeControlStatus == .playing { seeking = false }
         currentCue = subCues.first(where: { ms >= $0.from && ms <= $0.to })?.text ?? ""
         // seek discontinuity (Android onPositionDiscontinuity / pendingIntroFrom): jumping back
         // BEFORE a window re-arms its latch; crossing a window's end without skipping latches it
@@ -1107,7 +1164,7 @@ struct PlayerView: View {
         // (the exact reason the HLS lane exists — ck-web routes iOS the same way). 302 →
         // event playlist, video stream-copied, audio → AAC.
         guard let remux = URL(string: API.serviceBase + "/webhls?u=\(b64)&t=\(fromMs / 1000)") else { return }
-        remuxed = true
+        remuxed = true; seeking = true
         remuxBaseMs = fromMs
         // the remux really begins at the KEYFRAME at-or-before fromMs (t=873 → 868.2) — snap
         // the clock base to the real start (same /webplay/start snap the web player does) or
@@ -1385,7 +1442,29 @@ struct PlayerView: View {
         if req == nil { req = await resolveStream(ep) }
         guard var r = req else { close(); return }
         r.idleEps = idle
-        nextEpisode = r
+        await reloadInPlace(r)
+    }
+
+    /// Swap the loaded episode without opening a new player screen (Android = same activity,
+    /// new media). Tears the current session down, resets per-episode state, reopens.
+    func reloadInPlace(_ r: PlayRequest) async {
+        // save where we were leaving before we drop the old item
+        if !isLive && !placeholder && durMs > 0 {
+            savePos(posMs, durMs, push: true)
+        }
+        for o in observers { NotificationCenter.default.removeObserver(o) }
+        observers = []
+        if let t = timeObserver { player.removeTimeObserver(t); timeObserver = nil }
+        player.pause(); player.replaceCurrentItem(with: nil)
+        // reset per-episode state
+        reqOverride = r
+        firstFrame = false; failed = false; remuxed = false; remuxBaseMs = 0
+        posMs = 0; durMs = 0; probedDurMs = 0; pendingSeekMs = -1
+        subCues = []; currentCue = ""; subTracks = []; subIndex = -1
+        nextEp = nil; nextReq = nil; showNextUp = false; nextUpDismissed = false
+        finishedHandled = false; startStamped = false; controlsVisible = true
+        windows = PlayerWindows()
+        await start()
     }
 
     func onEnded() {
@@ -1495,6 +1574,24 @@ struct Pulse: ViewModifier {
 
 /// Subtitle side panel (Android showSubtitleSidePanel): stays open with LIVE apply — track
 /// list (Off first), size incl. Tiny, background, outline, position.
+struct SubtitleLookSheet: View {
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Look") {
+                    PrefPicker(label: "Size", key: "subScale", def: 1.0,
+                               options: [(0.6, "Tiny"), (0.8, "Small"), (1.0, "Normal"), (1.3, "Large"), (1.6, "Huge")])
+                    PrefToggle(label: "Background", key: "subBg", def: false)
+                    PrefToggle(label: "Outline", key: "subOutline", def: true)
+                    PrefPicker(label: "Position", key: "subPos", def: "normal",
+                               options: [("normal", "Normal"), ("raised", "Raised"), ("high", "High")])
+                }
+            }
+            .navigationTitle("Subtitle style").ckInlineTitle()
+        }
+    }
+}
+
 struct SubtitlePanel: View {
     @EnvironmentObject var session: Session
     let tracks: [[String: Any]]

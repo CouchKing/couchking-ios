@@ -21,7 +21,8 @@ struct ProfilePickerView: View {
             ScrollView {
                 VStack(spacing: 0) {
                     BrandLockup(size: 64).padding(.top, 24)
-                    Text("Who's watching?").font(.system(size: 28, weight: .bold)).padding(.top, 26).padding(.bottom, 26)
+                    Text("CouchKing TV").font(.system(size: 15, weight: .semibold)).foregroundStyle(Theme.dim).padding(.top, 2)
+                    Text("Who's watching?").font(.system(size: 28, weight: .bold)).padding(.top, 22).padding(.bottom, 26)
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 110), spacing: 8)], spacing: 8) {
                         ForEach(session.profiles) { p in
                             Button { session.switchProfile(p.id); session.push() } label: {

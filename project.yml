@@ -24,7 +24,7 @@ targets:
     info:
       path: CouchKing/Info.plist
       properties:
-        CFBundleDisplayName: CouchKing
+        CFBundleDisplayName: CouchKing TV
         UILaunchScreen: {}
         # Portrait app; the PLAYER rotates to landscape (Android sensorLandscape parity).
         # All three must be declared or iOS refuses the runtime rotation.
@@ -52,7 +52,7 @@ targets:
     info:
       path: Platforms/tvOS/Info.plist
       properties:
-        CFBundleDisplayName: CouchKing
+        CFBundleDisplayName: CouchKing TV
         UILaunchScreen: {}
         NSAppTransportSecurity: { NSAllowsArbitraryLoads: false }
         UIBackgroundModes: [audio]
@@ -72,7 +72,7 @@ targets:
     info:
       path: Platforms/macOS/Info.plist
       properties:
-        CFBundleDisplayName: CouchKing
+        CFBundleDisplayName: CouchKing TV
         LSApplicationCategoryType: public.app-category.entertainment
         ITSAppUsesNonExemptEncryption: false   # HTTPS only = exempt (same as iOS)
         NSAppTransportSecurity: { NSAllowsArbitraryLoads: false }

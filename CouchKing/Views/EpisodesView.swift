@@ -82,6 +82,7 @@ struct EpisodesView: View {
         // "details brings me to season 1, not the episode I'm on"). Re-run when the list fills.
         .onAppear { landOnCurrentSeason() }
         .onChange(of: all.count) { _ in landOnCurrentSeason() }
+        .onChange(of: currentId) { _ in landed = false; landOnCurrentSeason() }
         .sheet(item: $pick) { ep in
             StreamSheet(meta: meta, season: ep.season, episode: ep.episode, episodes: all)
                 .ckDetents()
