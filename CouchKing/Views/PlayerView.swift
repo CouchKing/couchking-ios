@@ -783,7 +783,7 @@ struct PlayerView: View {
         if !isLive, !placeholder, request.url.path.lowercased().hasSuffix(".mkv") {
             playRemux(fromMs: r0)
             if r0 > 0 { sessionStartMs = r0 }
-            timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 10),
+            timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 40),
                                                           queue: .main) { t in
                 Task { @MainActor in tick(remuxBaseMs + Self.safeMs(t.seconds)) }
             }
@@ -815,7 +815,7 @@ struct PlayerView: View {
             if !remuxed { playRemux(fromMs: r0) }    // never became ready → remux as a last resort
         }
         // position ticker drives skip buttons + subtitle cues + the account heartbeat
-        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 1, preferredTimescale: 10),
+        timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 40),
                                                       queue: .main) { t in
             Task { @MainActor in tick(remuxBaseMs + Self.safeMs(t.seconds)) }
         }
