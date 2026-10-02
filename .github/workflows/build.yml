@@ -168,6 +168,179 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()   # capture validate.log + upload.log even on success so we can see Apple's response
         with: { name: testflight-logs, path: "*.log", if-no-files-found: warn }
+  # Apple TV TestFlight lane — same cloud-signing pattern as the iPhone job (archive
+  # unsigned → export signs → altool). The ASC app record is a universal record with the
+  # tvOS platform already enabled, so the upload lands under TestFlight → tvOS.
+  testflight-tvos:
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    runs-on: macos-15
+    env:
+      KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+      ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+      TEAM_ID: "9DQ4PK94U6"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select newest Xcode (App Store requires the 26 SDKs)
+        run: |
+          NEW=$(ls -d /Applications/Xcode_2*.app 2>/dev/null | sort -V | tail -1)
+          [ -n "$NEW" ] && sudo xcode-select -s "$NEW" || echo "no Xcode 2x found — using default"
+          xcodebuild -version
+      - name: Skip if no signing secrets
+        id: gate
+        run: |
+          if [ -z "$KEY_ID" ]; then echo "no signing secrets — skipping"; echo "go=no" >> $GITHUB_OUTPUT
+          else echo "go=yes" >> $GITHUB_OUTPUT; fi
+      - name: Install XcodeGen
+        if: steps.gate.outputs.go == 'yes'
+        run: brew install xcodegen
+      - name: Generate project
+        if: steps.gate.outputs.go == 'yes'
+        run: xcodegen generate
+      - name: Install API key
+        if: steps.gate.outputs.go == 'yes'
+        env: { APPSTORE_P8: "${{ secrets.APPSTORE_P8 }}" }
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "$APPSTORE_P8" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8
+          chmod 600 ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8
+      - name: Archive tvOS (unsigned — the export step does distribution signing)
+        if: steps.gate.outputs.go == 'yes'
+        run: |
+          set -o pipefail
+          xcodebuild -project CouchKing.xcodeproj -scheme CouchKing-tvOS \
+            -configuration Release -destination 'generic/platform=tvOS' \
+            -archivePath build/CouchKing-tvOS.xcarchive \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            archive 2>&1 | tee archive-tvos.log | tail -30
+      - name: Export IPA
+        if: steps.gate.outputs.go == 'yes'
+        run: |
+          set -o pipefail
+          cat > ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>destination</key><string>export</string>
+            <key>uploadSymbols</key><true/>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath build/CouchKing-tvOS.xcarchive -exportPath build/export \
+            -exportOptionsPlist ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8 \
+            -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER_ID" \
+            2>&1 | tee export-tvos.log | tail -20
+      - name: Upload to TestFlight (tvOS)
+        if: steps.gate.outputs.go == 'yes'
+        run: |
+          set -o pipefail
+          IPA=$(find build/export -name '*.ipa' | head -1)
+          echo "uploading: $IPA"
+          xcrun altool --upload-app -f "$IPA" --type appletvos \
+            --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" --verbose 2>&1 | tee upload-tvos.log | tail -40
+      - name: Keep dSYMs
+        if: steps.gate.outputs.go == 'yes'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsyms-tvos-${{ github.run_number }}
+          path: build/CouchKing-tvOS.xcarchive/dSYMs
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: testflight-tvos-logs, path: "*.log", if-no-files-found: warn }
+
+  # Mac TestFlight lane — export produces a signed .pkg (Mac App Store distribution);
+  # cloud signing mints the Apple Distribution + Mac Installer Distribution certs.
+  testflight-macos:
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    runs-on: macos-15
+    env:
+      KEY_ID: ${{ secrets.APPSTORE_KEY_ID }}
+      ISSUER_ID: ${{ secrets.APPSTORE_ISSUER_ID }}
+      TEAM_ID: "9DQ4PK94U6"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select newest Xcode (App Store requires the 26 SDKs)
+        run: |
+          NEW=$(ls -d /Applications/Xcode_2*.app 2>/dev/null | sort -V | tail -1)
+          [ -n "$NEW" ] && sudo xcode-select -s "$NEW" || echo "no Xcode 2x found — using default"
+          xcodebuild -version
+      - name: Skip if no signing secrets
+        id: gate
+        run: |
+          if [ -z "$KEY_ID" ]; then echo "no signing secrets — skipping"; echo "go=no" >> $GITHUB_OUTPUT
+          else echo "go=yes" >> $GITHUB_OUTPUT; fi
+      - name: Install XcodeGen
+        if: steps.gate.outputs.go == 'yes'
+        run: brew install xcodegen
+      - name: Generate project
+        if: steps.gate.outputs.go == 'yes'
+        run: xcodegen generate
+      - name: Install API key
+        if: steps.gate.outputs.go == 'yes'
+        env: { APPSTORE_P8: "${{ secrets.APPSTORE_P8 }}" }
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          echo "$APPSTORE_P8" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8
+          chmod 600 ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8
+      - name: Archive macOS (unsigned — the export step does distribution signing)
+        if: steps.gate.outputs.go == 'yes'
+        run: |
+          set -o pipefail
+          xcodebuild -project CouchKing.xcodeproj -scheme CouchKing-macOS \
+            -configuration Release -destination 'generic/platform=macOS' \
+            -archivePath build/CouchKing-macOS.xcarchive \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            archive 2>&1 | tee archive-macos.log | tail -30
+      - name: Export pkg
+        if: steps.gate.outputs.go == 'yes'
+        run: |
+          set -o pipefail
+          cat > ExportOptions.plist <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>${TEAM_ID}</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>destination</key><string>export</string>
+            <key>uploadSymbols</key><true/>
+          </dict></plist>
+          PLIST
+          xcodebuild -exportArchive \
+            -archivePath build/CouchKing-macOS.xcarchive -exportPath build/export \
+            -exportOptionsPlist ExportOptions.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8 \
+            -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER_ID" \
+            2>&1 | tee export-macos.log | tail -20
+      - name: Upload to TestFlight (macOS)
+        if: steps.gate.outputs.go == 'yes'
+        run: |
+          set -o pipefail
+          PKG=$(find build/export -name '*.pkg' | head -1)
+          echo "uploading: $PKG"
+          xcrun altool --upload-app -f "$PKG" --type macos \
+            --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" --verbose 2>&1 | tee upload-macos.log | tail -40
+      - name: Keep dSYMs
+        if: steps.gate.outputs.go == 'yes'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsyms-macos-${{ github.run_number }}
+          path: build/CouchKing-macOS.xcarchive/dSYMs
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: { name: testflight-macos-logs, path: "*.log", if-no-files-found: warn }
+
   # Apple TV compile check (unsigned). Signing / TestFlight lanes are owned by the main session.
   compile-tvos:
     runs-on: macos-15
