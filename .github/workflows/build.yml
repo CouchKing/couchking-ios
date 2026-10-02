@@ -244,6 +244,8 @@ jobs:
           echo "uploading: $IPA"
           xcrun altool --upload-app -f "$IPA" --type appletvos \
             --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" --verbose 2>&1 | tee upload-tvos.log | tail -40
+          # altool can exit 0 on a 409 validation failure — only the log line is the truth
+          grep -q "UPLOAD SUCCEEDED" upload-tvos.log
       - name: Keep dSYMs
         if: steps.gate.outputs.go == 'yes'
         uses: actions/upload-artifact@v4
@@ -289,16 +291,20 @@ jobs:
           mkdir -p ~/.appstoreconnect/private_keys
           echo "$APPSTORE_P8" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8
           chmod 600 ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8
-      - name: Archive macOS (unsigned — the export step does distribution signing)
+      - name: Archive macOS (ad-hoc signed — embeds the sandbox entitlement, no cert needed)
         if: steps.gate.outputs.go == 'yes'
         run: |
           set -o pipefail
+          # NOT CODE_SIGNING_ALLOWED=NO like iOS/tvOS: with signing fully off the
+          # com.apple.security.app-sandbox entitlement is never embedded, the export
+          # re-sign has nothing to carry over, and Apple 409s the pkg ("App sandbox not
+          # enabled"). Ad-hoc ("-") signs locally with entitlements and needs no profile.
           xcodebuild -project CouchKing.xcodeproj -scheme CouchKing-macOS \
             -configuration Release -destination 'generic/platform=macOS' \
             -archivePath build/CouchKing-macOS.xcarchive \
             DEVELOPMENT_TEAM="$TEAM_ID" \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_IDENTITY="-" AD_HOC_CODE_SIGNING_ALLOWED=YES \
             archive 2>&1 | tee archive-macos.log | tail -30
       - name: Export pkg
         if: steps.gate.outputs.go == 'yes'
@@ -330,6 +336,9 @@ jobs:
           echo "uploading: $PKG"
           xcrun altool --upload-app -f "$PKG" --type macos \
             --apiKey "$KEY_ID" --apiIssuer "$ISSUER_ID" --verbose 2>&1 | tee upload-macos.log | tail -40
+          # altool can exit 0 on a 409 validation failure (run 111: "App sandbox not
+          # enabled" passed the step) — only the log line is the truth
+          grep -q "UPLOAD SUCCEEDED" upload-macos.log
       - name: Keep dSYMs
         if: steps.gate.outputs.go == 'yes'
         uses: actions/upload-artifact@v4
