@@ -1187,8 +1187,11 @@ struct PlayerView: View {
         guard durMs > 0, request.season != nil, let ep = nextEp else { return }
         let remain = durMs - posMs
         if nextReq == nil && remain <= 300_000 { Task { await prefetchNext(ep) } }
-        let credits = finishPointMs(durMs)
-        if !showNextUp && !nextUpDismissed && (remain <= 30_000 || posMs >= credits) && posMs > 60_000 {
+        // card pops only when the episode is JUST about over (AJ Oct 1: the credits-point
+        // trigger put it up minutes early on long eps) — final 30s, or at the credits
+        // point if credits start even later than that. Watched-marking is untouched.
+        let cardLead = min(max(durMs - finishPointMs(durMs), 0), 30_000)
+        if !showNextUp && !nextUpDismissed && remain > 0 && remain <= cardLead && posMs > 60_000 {
             withAnimation { showNextUp = true }
         }
     }
