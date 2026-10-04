@@ -1,5 +1,6 @@
 import SwiftUI
 import AVKit
+import CoreImage
 #if os(macOS)
 import AppKit
 #endif
@@ -79,6 +80,11 @@ struct PlayerView: View {
     /// a seek requested before the item was .readyToPlay — applied the moment it is
     @State var pendingSeekMs = -1
     @State var seeking = false   // remux reopen / buffering a seek → keep loading card, not black
+    /// Last on-screen frame, frozen over a seek/remux reopen so the screen never looks dead
+    /// (AJ Oct 4 "hold the last frame during seeks"). Captured via AVPlayerItemVideoOutput —
+    /// AVPlayerLayer blanks on replaceCurrentItem, this covers the gap until first new frame.
+    @State var heldFrame: CGImage?
+    @State var holdOut: AVPlayerItemVideoOutput?
     @State var subOffsetMs = 0   // manual subtitle sync nudge (per sit-down)
     @State var openResumeMs = 0  // the resume target while the open is still settling
     @State var bufferTicks = 0   // consecutive 250ms ticks spent buffering
@@ -144,12 +150,18 @@ struct PlayerView: View {
             if showStillWatching { tvStillWatching }
             #elseif os(macOS)
             if !firstFrame && !failed { loadingScreen }
+            else if seeking && !failed, let hf = heldFrame { seekHold(hf) }
             deskOverlay
             if placeholder { placeholderBanner }
             if showNextUp, let ep = nextEp { deskNextUp(ep) }
             if showStillWatching { deskStillWatching }
             #else
-            if (!firstFrame || seeking) && !failed { loadingScreen }
+            if !firstFrame && !failed { loadingScreen }
+            else if seeking && !failed {
+                // seek within the same title: freeze the last frame (+ small spinner), only
+                // fall back to the big loading card when no frame was captured
+                if let hf = heldFrame { seekHold(hf) } else { loadingScreen }
+            }
             overlay
             if placeholder { placeholderBanner }
             if showNextUp, let ep = nextEp { nextUpCard(ep) }
@@ -211,6 +223,19 @@ struct PlayerView: View {
     }
 
     // MARK: overlay
+
+    /// The frozen last frame + a small spinner over a seek reload — the picture "pauses"
+    /// instead of going black or flashing the big loading card (AJ Oct 4).
+    func seekHold(_ hf: CGImage) -> some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+            Image(decorative: hf, scale: 1)
+                .resizable().aspectRatio(contentMode: .fit)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .ignoresSafeArea()
+            ProgressView().tint(.white).scaleEffect(1.4)
+        }
+    }
 
     /// Branded loading screen (Android buildLoadingScreen): show/channel art pulsing until
     /// the first frame lands.
@@ -1079,6 +1104,11 @@ struct PlayerView: View {
     func observeItem(_ item: AVPlayerItem) {
         for o in observers { NotificationCenter.default.removeObserver(o) }
         observers = []
+        // frame tap for the seek-hold snapshot (plain HLS, never FairPlay — always allowed)
+        let out = AVPlayerItemVideoOutput(pixelBufferAttributes:
+            [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
+        item.add(out)
+        holdOut = out
         observers.append(NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime,
                                                                 object: item, queue: .main) { _ in
             Task { @MainActor in onEnded() }
@@ -1112,6 +1142,22 @@ struct PlayerView: View {
     /// NaN/∞-safe CMTime→ms (Int(NaN) is a Swift runtime CRASH — currentTime() on a torn-down
     /// or failed item returns invalid time; this was the "crashes when I try to play" bug).
     nonisolated static func safeMs(_ seconds: Double) -> Int { seconds.isFinite ? Int(seconds * 1000) : 0 }
+
+    nonisolated static let holdCtx = CIContext(options: nil)
+    /// Snapshot the frame currently on screen into heldFrame (best-effort, never throws the
+    /// seek off course) — called right BEFORE a seek/reopen tears the picture down.
+    func captureHold() {
+        guard let item = player.currentItem, item.status == .readyToPlay,
+              let out = holdOut else { return }
+        let t = item.currentTime()
+        guard t.isValid, out.hasNewPixelBuffer(forItemTime: t) || true,
+              let pb = out.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil) else { return }
+        let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
+        if let cg = Self.holdCtx.createCGImage(CIImage(cvPixelBuffer: pb),
+                                               from: CGRect(x: 0, y: 0, width: w, height: h)) {
+            heldFrame = cg
+        }
+    }
 
     func posKey() -> String {
         if let s = request.season, let e = request.episode { return "\(request.meta.id):\(s):\(e)" }
@@ -1379,6 +1425,7 @@ struct PlayerView: View {
         // (the exact reason the HLS lane exists — ck-web routes iOS the same way). 302 →
         // event playlist, video stream-copied, audio → AAC.
         guard let remux = URL(string: API.serviceBase + "/webhls?u=\(b64)&t=\(fromMs / 1000)") else { return }
+        captureHold()
         remuxed = true; seeking = true
         remuxBaseMs = fromMs
         // the remux really begins at the KEYFRAME at-or-before fromMs (t=873 → 868.2) — snap
@@ -1409,7 +1456,8 @@ struct PlayerView: View {
             let transcoded = Int(((player.currentItem?.duration.seconds ?? 0).isFinite
                                   ? (player.currentItem?.duration.seconds ?? 0) : 0) * 1000)
             if local >= 0 && transcoded > 0 && local < transcoded - 4000 {
-                seeking = true   // segment fetch can take a second+ — card, not black (AJ)
+                captureHold()
+                seeking = true   // segment fetch can take a second+ — held frame, not black (AJ)
                 player.seek(to: CMTime(seconds: Double(local) / 1000, preferredTimescale: 1000),
                             toleranceBefore: .zero, toleranceAfter: .zero)
                 posMs = target
@@ -1424,7 +1472,7 @@ struct PlayerView: View {
         guard let item = player.currentItem, item.status == .readyToPlay else {
             pendingSeekMs = target; posMs = target; return
         }
-        if abs(target - posMs) > 4000 { seeking = true }   // big jump → loading card, not black
+        if abs(target - posMs) > 4000 { captureHold(); seeking = true }   // big jump → held frame, not black
         posMs = target
         player.seek(to: CMTime(seconds: Double(target) / 1000, preferredTimescale: 1000),
                     toleranceBefore: .zero, toleranceAfter: .zero)
@@ -1696,6 +1744,7 @@ struct PlayerView: View {
         // reset per-episode state
         reqOverride = r
         firstFrame = false; failed = false; remuxed = false; remuxBaseMs = 0
+        heldFrame = nil; holdOut = nil
         posMs = 0; durMs = 0; probedDurMs = 0; pendingSeekMs = -1
         subCues = []; currentCue = ""; subTracks = []; subIndex = -1
         nextEp = nil; nextReq = nil; showNextUp = false; nextUpDismissed = false
