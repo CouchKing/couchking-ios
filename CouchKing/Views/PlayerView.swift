@@ -1238,7 +1238,7 @@ struct PlayerView: View {
         // credits estimate can't park it up minutes early (the Oct 1 complaint).
         // Watched-marking is untouched. The 60s floor scales down so sub-90s episodes
         // (Bluey Minisodes) can still show the card.
-        let cardLead: Int64 = min(max(durMs - finishPointMs(durMs), 0) + 30_000, 180_000)
+        let cardLead = min(max(durMs - finishPointMs(durMs), 0) + 30_000, 180_000)
         if !showNextUp && !nextUpDismissed && remain > 0 && remain <= cardLead && posMs > min(60_000, durMs / 2) {
             withAnimation { showNextUp = true }
         }
