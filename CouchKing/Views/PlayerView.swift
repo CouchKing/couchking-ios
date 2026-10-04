@@ -1187,12 +1187,12 @@ struct PlayerView: View {
         guard durMs > 0, request.season != nil, let ep = nextEp else { return }
         let remain = durMs - posMs
         if nextReq == nil && remain <= 300_000 { Task { await prefetchNext(ep) } }
-        // card pops only when the episode is JUST about over (AJ Oct 1: the credits-point
-        // trigger put it up minutes early on long eps) — a FLAT final 30s (AJ Oct 3: the
-        // min with the credits lead shrank the window when the lead was short and the
-        // card never showed). Watched-marking is untouched. The 60s floor scales down so
-        // sub-90s episodes (Bluey Minisodes) can still show the card.
-        let cardLead: Int64 = 30_000
+        // card pops ~30s BEFORE the CONTENT ends (AJ Oct 3 "pop up on the show"): credits
+        // lead from the finish point + 30s of show still playing, capped at 3min so a bad
+        // credits estimate can't park it up minutes early (the Oct 1 complaint).
+        // Watched-marking is untouched. The 60s floor scales down so sub-90s episodes
+        // (Bluey Minisodes) can still show the card.
+        let cardLead: Int64 = min(max(durMs - finishPointMs(durMs), 0) + 30_000, 180_000)
         if !showNextUp && !nextUpDismissed && remain > 0 && remain <= cardLead && posMs > min(60_000, durMs / 2) {
             withAnimation { showNextUp = true }
         }
