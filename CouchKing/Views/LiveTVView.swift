@@ -587,7 +587,8 @@ struct GuideRow: View {
 
     private var dayEnd: Int { dayStart + Int(windowW / GuideGrid.pxPerMin) * 60_000 }
     private var progs: [LiveProg] { channel.progs.filter { $0.e > dayStart && $0.s < dayEnd } }
-    private func x(_ ms: Int) -> CGFloat { CGFloat((ms - dayStart) / 60_000) * GuideGrid.pxPerMin }
+    // fractional minutes — Int division truncated up to 59s (~4px) off every edge
+    private func x(_ ms: Int) -> CGFloat { CGFloat(ms - dayStart) / 60_000 * GuideGrid.pxPerMin }
 
     var body: some View {
         HStack(spacing: 0) {

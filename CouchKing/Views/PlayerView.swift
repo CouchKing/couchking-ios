@@ -81,6 +81,11 @@ struct PlayerView: View {
     /// a seek requested before the item was .readyToPlay — applied the moment it is
     @State var pendingSeekMs = -1
     @State var seeking = false   // remux reopen / buffering a seek → keep loading card, not black
+    /// in-flight player.seek calls — `seeking` must NOT clear while one is pending:
+    /// timeControlStatus can read .playing DURING a seek, so the tick dropped the held
+    /// frame ≤250ms in, the layer sat black, and the buffer guard re-raised the card ~1s
+    /// later — the "hold" was a blink then black then the loading card
+    @State var pendingSeeks = 0
     /// Last on-screen frame, frozen over a seek/remux reopen so the screen never looks dead
     /// (AJ Oct 4 "hold the last frame during seeks"). Captured via AVPlayerItemVideoOutput —
     /// AVPlayerLayer blanks on replaceCurrentItem, this covers the gap until first new frame.
@@ -1206,7 +1211,7 @@ struct PlayerView: View {
         posMs = ms
         lastTickPos = ms
         if !firstFrame, player.rate > 0, ms > 0 { firstFrame = true; seeking = false; scheduleHide() }
-        else if seeking, player.timeControlStatus == .playing { seeking = false }
+        else if seeking, pendingSeeks == 0, player.timeControlStatus == .playing { seeking = false }
         // mid-play buffering (seek landing, remux catching up): >0.75s of waiting shows the
         // loading card instead of a black surface (AJ: "black screen 5-10s before it plays")
         if firstFrame, player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
@@ -1450,6 +1455,7 @@ struct PlayerView: View {
         guard let remux = URL(string: API.serviceBase + "/webhls?u=\(b64)&t=\(fromMs / 1000)") else { return }
         captureHold()
         remuxed = true; seeking = true
+        pendingSeeks = 0   // the reopen replaces the item; stale completions must not pin `seeking`
         remuxBaseMs = fromMs
         // the remux really begins at the KEYFRAME at-or-before fromMs (t=873 → 868.2) — snap
         // the clock base to the real start (same /webplay/start snap the web player does) or
@@ -1481,8 +1487,11 @@ struct PlayerView: View {
             if local >= 0 && transcoded > 0 && local < transcoded - 4000 {
                 captureHold()
                 seeking = true   // segment fetch can take a second+ — held frame, not black (AJ)
+                pendingSeeks += 1
                 player.seek(to: CMTime(seconds: Double(local) / 1000, preferredTimescale: 1000),
-                            toleranceBefore: .zero, toleranceAfter: .zero)
+                            toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+                    Task { @MainActor in pendingSeeks = max(0, pendingSeeks - 1) }
+                }
                 posMs = target
                 return
             }
@@ -1497,8 +1506,11 @@ struct PlayerView: View {
         }
         if abs(target - posMs) > 4000 { captureHold(); seeking = true }   // big jump → held frame, not black
         posMs = target
+        pendingSeeks += 1
         player.seek(to: CMTime(seconds: Double(target) / 1000, preferredTimescale: 1000),
-                    toleranceBefore: .zero, toleranceAfter: .zero)
+                    toleranceBefore: .zero, toleranceAfter: .zero) { _ in
+            Task { @MainActor in pendingSeeks = max(0, pendingSeeks - 1) }
+        }
     }
 
     // MARK: subtitles
@@ -1766,7 +1778,7 @@ struct PlayerView: View {
         player.pause(); player.replaceCurrentItem(with: nil)
         // reset per-episode state
         reqOverride = r
-        firstFrame = false; failed = false; remuxed = false; remuxBaseMs = 0
+        firstFrame = false; failed = false; remuxed = false; remuxBaseMs = 0; pendingSeeks = 0
         heldFrame = nil; holdOut = nil
         posMs = 0; durMs = 0; probedDurMs = 0; pendingSeekMs = -1
         subCues = []; currentCue = ""; subTracks = []; subIndex = -1
