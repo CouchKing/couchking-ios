@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import CoreImage
+import QuartzCore
 #if os(macOS)
 import AppKit
 #endif
@@ -1149,9 +1150,14 @@ struct PlayerView: View {
     func captureHold() {
         guard let item = player.currentItem, item.status == .readyToPlay,
               let out = holdOut else { return }
-        let t = item.currentTime()
-        guard t.isValid, out.hasNewPixelBuffer(forItemTime: t) || true,
-              let pb = out.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil) else { return }
+        // the output's own clock maps "what's on screen right now" better than currentTime,
+        // and the copy itself is the authoritative test (hasNewPixelBuffer false-negatives)
+        var t = out.itemTime(forHostTime: CACurrentMediaTime())
+        if !t.isValid { t = item.currentTime() }
+        guard t.isValid,
+              let pb = out.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil)
+                ?? out.copyPixelBuffer(forItemTime: item.currentTime(), itemTimeForDisplay: nil)
+        else { return }
         let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
         if let cg = Self.holdCtx.createCGImage(CIImage(cvPixelBuffer: pb),
                                                from: CGRect(x: 0, y: 0, width: w, height: h)) {
@@ -1173,6 +1179,12 @@ struct PlayerView: View {
             player.seek(to: CMTime(seconds: Double(t) / 1000, preferredTimescale: 1000),
                         toleranceBefore: .zero, toleranceAfter: .zero)
             return
+        }
+        // keep the hold-frame output AWAKE: AVPlayerItemVideoOutput suspends buffer delivery
+        // after ~1s without a poll, so a capture attempted only at seek time always came back
+        // nil (the "doesn't hold the frame" bug) — a 4Hz touch keeps frames flowing for free
+        if let out = holdOut, let it = player.currentItem, it.status == .readyToPlay {
+            _ = out.hasNewPixelBuffer(forItemTime: it.currentTime())
         }
         let prev = lastTickPos
         let nowPlaying = player.timeControlStatus != .paused

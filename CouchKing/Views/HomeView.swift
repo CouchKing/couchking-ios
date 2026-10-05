@@ -182,6 +182,7 @@ struct HeroPager: View {
     }
 
     #if os(iOS)
+    @State private var scrolled: String?
     private var phonePager: some View {
         // NATIVE paging scroller (iOS17): each card is exactly the container width, the
         // horizontal scroll is isolated from the page (can't widen or re-center anything),
@@ -204,8 +205,21 @@ struct HeroPager: View {
             .scrollTargetLayout()
         }
         .scrollTargetBehavior(.paging)
+        .scrollPosition(id: $scrolled)
         .frame(height: Platform.heroHeight)
         .clipped()
+        // the native-pager rewrite dropped the ~9s auto-advance on iPhone (rotate() only ran
+        // on bigPager) — advance relative to wherever the user swiped to
+        .task { await rotatePhone() }
+    }
+
+    private func rotatePhone() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(9))
+            guard metas.count > 1 else { continue }
+            let cur = metas.firstIndex { $0.id == scrolled } ?? 0
+            withAnimation { scrolled = metas[(cur + 1) % metas.count].id }
+        }
     }
     #endif
 }

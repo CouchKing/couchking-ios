@@ -538,7 +538,10 @@ struct GuideGrid: View {
     private var tickHeader: some View {
         HStack(spacing: 0) {
             Text(LiveTV.day(dayStart, "EEE MMM d")).font(.caption2.bold())
-                .frame(width: Self.colW, height: 26, alignment: .leading).padding(.leading, 14)
+                // inset INSIDE colW — padding after .frame widened this cell to colW+14,
+                // shifting every tick 14pt right of the rows' blocks/now-line (AJ: "channels
+                // start and end slightly before the time, red bar looks behind")
+                .padding(.leading, 14).frame(width: Self.colW, height: 26, alignment: .leading)
             ZStack(alignment: .topLeading) {
                 // only the ticks inside the visible strip — offscreen ones aren't laid out
                 ForEach(0..<(windowMs / 1_800_000), id: \.self) { i in
