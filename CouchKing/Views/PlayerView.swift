@@ -94,6 +94,8 @@ struct PlayerView: View {
     /// Newest frame stashed by the 250ms tick — captureHold's fallback when the on-demand
     /// copy misses, so a held frame is ALWAYS available (at worst 250ms old)
     @State var lastPixelBuffer: CVPixelBuffer?
+    @State var holdDry = 0           // ticks since the output last produced a buffer
+    static var holdBeaconSent = false
     @State var subOffsetMs = 0   // manual subtitle sync nudge (per sit-down)
     @State var openResumeMs = 0  // the resume target while the open is still settling
     @State var bufferTicks = 0   // consecutive 250ms ticks spent buffering
@@ -1118,6 +1120,10 @@ struct PlayerView: View {
         let out = AVPlayerItemVideoOutput(pixelBufferAttributes:
             [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA])
         item.add(out)
+        // REQUIRED activation: an attached output doesn't necessarily deliver until asked
+        // (Apple samples always call this) — without it hasNewPixelBuffer can stay false
+        // forever and no frame was ever captured (AJ Oct 5 "STILL doesn't hold")
+        out.requestNotificationOfMediaDataChange(withAdvanceInterval: 0.25)
         holdOut = out
         observers.append(NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime,
                                                                 object: item, queue: .main) { _ in
@@ -1157,6 +1163,9 @@ struct PlayerView: View {
     /// Snapshot the frame currently on screen into heldFrame (best-effort, never throws the
     /// seek off course) — called right BEFORE a seek/reopen tears the picture down.
     func captureHold() {
+        // if after everything there's STILL no frame to hold, the app phones home WHY —
+        // one [seekhold] beacon per run (server TG-dedups 6h/model) ends the build-guessing
+        defer { if heldFrame == nil { beaconHold() } }
         guard let item = player.currentItem, item.status == .readyToPlay,
               let out = holdOut else { return }
         // the output's own clock maps "what's on screen right now" better than currentTime,
@@ -1172,6 +1181,19 @@ struct PlayerView: View {
         if let cg = Self.holdCtx.createCGImage(CIImage(cvPixelBuffer: pb),
                                                from: CGRect(x: 0, y: 0, width: w, height: h)) {
             heldFrame = cg
+        }
+    }
+
+    /// Field diagnostic for "doesn't hold the frame": reports exactly which link is empty.
+    func beaconHold() {
+        guard !Self.holdBeaconSent else { return }
+        Self.holdBeaconSent = true
+        let st = player.currentItem?.status.rawValue ?? -1
+        let info = "[seekhold] \(CrashGuard.buildTag) remuxed=\(remuxed) out=\(holdOut != nil) stash=\(lastPixelBuffer != nil) dry=\(holdDry) status=\(st)"
+        Task {
+            let model = API.deviceModel + " " + ProcessInfo.processInfo.operatingSystemVersionString
+            _ = try? await API.postJSON("/tvapp/crash",
+                                        body: ["v": Session.appVer + " " + CrashGuard.buildTag, "model": model, "trace": info])
         }
     }
 
@@ -1200,6 +1222,12 @@ struct PlayerView: View {
             if out.hasNewPixelBuffer(forItemTime: t),
                let pb = out.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil) {
                 lastPixelBuffer = pb
+                holdDry = 0
+            } else if playing {
+                // playing but no buffers flowing = the output suspended (or never started) —
+                // re-request delivery every ~2s until frames arrive
+                holdDry += 1
+                if holdDry % 8 == 4 { out.requestNotificationOfMediaDataChange(withAdvanceInterval: 0.25) }
             }
         }
         let prev = lastTickPos
