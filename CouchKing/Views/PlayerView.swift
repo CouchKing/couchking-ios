@@ -145,6 +145,7 @@ struct PlayerView: View {
             pictureCatcher
             #if os(tvOS)
             if !firstFrame && !failed { tvLoading }
+            else if seeking && !failed, let hf = heldFrame { seekHold(hf) }
             tvOverlay
             if placeholder { placeholderBanner }
             if showNextUp, let ep = nextEp { tvNextUp(ep) }
