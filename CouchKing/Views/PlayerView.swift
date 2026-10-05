@@ -86,6 +86,9 @@ struct PlayerView: View {
     /// AVPlayerLayer blanks on replaceCurrentItem, this covers the gap until first new frame.
     @State var heldFrame: CGImage?
     @State var holdOut: AVPlayerItemVideoOutput?
+    /// Newest frame stashed by the 250ms tick — captureHold's fallback when the on-demand
+    /// copy misses, so a held frame is ALWAYS available (at worst 250ms old)
+    @State var lastPixelBuffer: CVPixelBuffer?
     @State var subOffsetMs = 0   // manual subtitle sync nudge (per sit-down)
     @State var openResumeMs = 0  // the resume target while the open is still settling
     @State var bufferTicks = 0   // consecutive 250ms ticks spent buffering
@@ -1152,12 +1155,13 @@ struct PlayerView: View {
         guard let item = player.currentItem, item.status == .readyToPlay,
               let out = holdOut else { return }
         // the output's own clock maps "what's on screen right now" better than currentTime,
-        // and the copy itself is the authoritative test (hasNewPixelBuffer false-negatives)
+        // and the copy itself is the authoritative test (hasNewPixelBuffer false-negatives);
+        // when both copies miss, fall back to the tick's rolling stash (≤250ms old)
         var t = out.itemTime(forHostTime: CACurrentMediaTime())
         if !t.isValid { t = item.currentTime() }
-        guard t.isValid,
-              let pb = out.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil)
+        guard let pb = (t.isValid ? out.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil) : nil)
                 ?? out.copyPixelBuffer(forItemTime: item.currentTime(), itemTimeForDisplay: nil)
+                ?? lastPixelBuffer
         else { return }
         let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
         if let cg = Self.holdCtx.createCGImage(CIImage(cvPixelBuffer: pb),
@@ -1183,9 +1187,15 @@ struct PlayerView: View {
         }
         // keep the hold-frame output AWAKE: AVPlayerItemVideoOutput suspends buffer delivery
         // after ~1s without a poll, so a capture attempted only at seek time always came back
-        // nil (the "doesn't hold the frame" bug) — a 4Hz touch keeps frames flowing for free
+        // nil (the "doesn't hold the frame" bug). Poll at 4Hz AND stash the newest buffer —
+        // captureHold then always has a frame no older than 250ms even if the on-demand
+        // copy misses (dormancy restart, FairPlay edge, race with the seek teardown).
         if let out = holdOut, let it = player.currentItem, it.status == .readyToPlay {
-            _ = out.hasNewPixelBuffer(forItemTime: it.currentTime())
+            let t = it.currentTime()
+            if out.hasNewPixelBuffer(forItemTime: t),
+               let pb = out.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil) {
+                lastPixelBuffer = pb
+            }
         }
         let prev = lastTickPos
         let nowPlaying = player.timeControlStatus != .paused

@@ -292,8 +292,9 @@ struct LiveTVView: View {
         loading = true
         now = LiveTV.nowMs()
         switch await LiveTV.guide(session, region: region, force: force) {
+        // device clock for `now` — it's what the user compares the red line against (the
+        // server `at` stamp went stale between refreshes and read as "the red bar is behind")
         case .ok(let g): guide = g; locked = false
-            if g.at > 0 { now = g.at }
         case .locked: locked = true
         case .failed: break
         }
@@ -330,15 +331,19 @@ struct LiveTVView: View {
         if q.trimmingCharacters(in: .whitespaces) == query { catalog = r }   // ignore stale response
     }
 
-    /// The games banner self-refreshes every 3 minutes (never served stale).
+    /// The games banner self-refreshes every 3 minutes (never served stale); the clock —
+    /// red now-line, LIVE highlights — ticks every 60s so the guide tracks real time
+    /// while you sit on it instead of freezing at open.
     func startGamesLoop() {
         gamesTask?.cancel()
         gamesTask = Task {
+            var n = 0
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(180))
+                try? await Task.sleep(for: .seconds(60))
                 guard !Task.isCancelled else { return }
-                sports = await LiveTV.games(session)
                 now = LiveTV.nowMs()
+                n += 1
+                if n % 3 == 0 { sports = await LiveTV.games(session) }
             }
         }
     }
@@ -547,9 +552,14 @@ struct GuideGrid: View {
                 ForEach(0..<(windowMs / 1_800_000), id: \.self) { i in
                     let x = CGFloat(i * 30) * Self.pxPerMin - scrollX
                     if x > -80 && x < timelineW {
+                        // desktop's .epg-tick: a boundary line AT the slot time, label just
+                        // right of it — without the line the label text was the only cue
+                        // and the whole grid read as shifted
+                        Rectangle().fill(Theme.card).frame(width: 1, height: 10)
+                            .offset(x: x, y: 14)
                         Text(LiveTV.clock(dayStart + i * 1_800_000)).font(.system(size: 10))
                             .foregroundStyle(.secondary)
-                            .offset(x: x)
+                            .offset(x: x + 3)
                     }
                 }
                 // (no red now-tick up here — it read as a glitch on the date row (AJ);
