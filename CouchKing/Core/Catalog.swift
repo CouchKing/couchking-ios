@@ -265,9 +265,14 @@ enum Curated {
         """)),
     ]
 
-    private static var cache: [String: Meta] = [:]
+    // MainActor-guarded: row() resolves CONCURRENTLY and every task read/wrote this dict
+    // unsynchronized — Dictionary corruption = the intermittent cold-open SIGSEGV on the
+    // curated shelves (Oct 5 b34, crumb=home-shelf:Marvel: Release Order). resolve hops to
+    // the main actor only for the dict touch; the network awaits still run concurrently.
+    @MainActor private static var cache: [String: Meta] = [:]
 
     /// Resolve one id: Cinemeta meta for the row's type, then the other type, then TMDB /find.
+    @MainActor
     static func resolve(_ id: String, type: String) async -> Meta? {
         if let c = cache[id] { return c }
         for t in [type, type == "movie" ? "series" : "movie"] {

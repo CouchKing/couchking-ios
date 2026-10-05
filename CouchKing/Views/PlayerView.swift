@@ -95,6 +95,7 @@ struct PlayerView: View {
     /// copy misses, so a held frame is ALWAYS available (at worst 250ms old)
     @State var lastPixelBuffer: CVPixelBuffer?
     @State var holdDry = 0           // ticks since the output last produced a buffer
+    @State var seekClearTicks = 0    // dead-output fallback: release the hold after ~2.5s
     static var holdBeaconSent = false
     @State var subOffsetMs = 0   // manual subtitle sync nudge (per sit-down)
     @State var openResumeMs = 0  // the resume target while the open is still settling
@@ -1185,8 +1186,10 @@ struct PlayerView: View {
     }
 
     /// Field diagnostic for "doesn't hold the frame": reports exactly which link is empty.
+    /// Mid-play only — captureHold also runs on the initial-open remux fallback where no
+    /// frame can exist yet (that false-fired the first beacon).
     func beaconHold() {
-        guard !Self.holdBeaconSent else { return }
+        guard firstFrame, !Self.holdBeaconSent else { return }
         Self.holdBeaconSent = true
         let st = player.currentItem?.status.rawValue ?? -1
         let info = "[seekhold] \(CrashGuard.buildTag) remuxed=\(remuxed) out=\(holdOut != nil) stash=\(lastPixelBuffer != nil) dry=\(holdDry) status=\(st)"
@@ -1223,6 +1226,11 @@ struct PlayerView: View {
                let pb = out.copyPixelBuffer(forItemTime: t, itemTimeForDisplay: nil) {
                 lastPixelBuffer = pb
                 holdDry = 0
+                // FRAME-PROOF clear: drop the held frame only when a REAL new frame exists
+                // behind it. timeControlStatus goes .playing (and the seek completion fires)
+                // BEFORE the first post-seek frame decodes — clearing on those left the bare
+                // layer BLACK for the 1-2s the segment takes (AJ Oct 5 "just black in between")
+                if seeking, pendingSeeks == 0, player.timeControlStatus == .playing { seeking = false }
             } else if playing {
                 // playing but no buffers flowing = the output suspended (or never started) —
                 // re-request delivery every ~2s until frames arrive
@@ -1239,7 +1247,12 @@ struct PlayerView: View {
         posMs = ms
         lastTickPos = ms
         if !firstFrame, player.rate > 0, ms > 0 { firstFrame = true; seeking = false; scheduleHide() }
-        else if seeking, pendingSeeks == 0, player.timeControlStatus == .playing { seeking = false }
+        else if seeking, pendingSeeks == 0, player.timeControlStatus == .playing {
+            // frame-proof clear lives in the keep-alive above; this is only the fallback for
+            // a dead output — don't hold the frozen frame hostage forever, release after ~2.5s
+            seekClearTicks += 1
+            if seekClearTicks >= 10 { seeking = false; seekClearTicks = 0 }
+        } else { seekClearTicks = 0 }
         // mid-play buffering (seek landing, remux catching up): >0.75s of waiting shows the
         // loading card instead of a black surface (AJ: "black screen 5-10s before it plays")
         if firstFrame, player.timeControlStatus == .waitingToPlayAtSpecifiedRate {
