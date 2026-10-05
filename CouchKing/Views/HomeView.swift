@@ -97,6 +97,9 @@ struct HomeView: View {
         var fresh: [(String, [Meta])] = []
         rows = []
         for cat in session.enabledShelves() {
+            // crumb per shelf — "home-shelves" spanned the whole phase (incl. hero/Top10
+            // rendering in parallel), too wide to localize the Oct 5 cold-open crashes
+            CrashGuard.crumb("home-shelf:" + cat.name)
             let metas = await Catalog.shelf(session: session, cat)
             guard gen == loadGen else { return }
             if metas.isEmpty { continue }

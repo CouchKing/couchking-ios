@@ -6,6 +6,9 @@ import Foundation
 // server pings Telegram (💥 alert, deduped on model + first trace line).
 enum CrashGuard {
     private static let key = "ckPendingCrash"
+    /// Precomputed at install() — the C signal handler can't capture context, and the TG
+    /// crash line carried no BUILD number so "which build crashed" was guesswork (AJ Oct 5).
+    static var buildTag = ""
 
     /// Tiny breadcrumb — CrashGuard appends the last one to the trace so an unsymbolicated
     /// stack still says WHICH phase died (profile-pick, home-load, …).
@@ -14,22 +17,23 @@ enum CrashGuard {
     }
 
     static func install() {
+        buildTag = "b" + (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?")
         // ship any trace captured on the previous run
         if let t = UserDefaults.standard.string(forKey: key), !t.isEmpty {
             UserDefaults.standard.removeObject(forKey: key)
             Task {
                 let model = API.deviceModel + " " + ProcessInfo.processInfo.operatingSystemVersionString
                 _ = try? await API.postJSON("/tvapp/crash",
-                                            body: ["v": Session.appVer, "model": model, "trace": t])
+                                            body: ["v": Session.appVer + " " + buildTag, "model": model, "trace": t])
             }
         }
         NSSetUncaughtExceptionHandler { ex in
-            let t = "crumb=\(UserDefaults.standard.string(forKey: "ckCrumb") ?? "-")\n\(ex.name.rawValue): \(ex.reason ?? "")\n" + ex.callStackSymbols.prefix(25).joined(separator: "\n")
+            let t = "\(CrashGuard.buildTag) crumb=\(UserDefaults.standard.string(forKey: "ckCrumb") ?? "-")\n\(ex.name.rawValue): \(ex.reason ?? "")\n" + ex.callStackSymbols.prefix(25).joined(separator: "\n")
             CrashGuard.stash(t)
         }
         for sig in [SIGABRT, SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP] {
             signal(sig) { s in
-                let t = "crumb=\(UserDefaults.standard.string(forKey: "ckCrumb") ?? "-")\nsignal \(s)\n" + Thread.callStackSymbols.prefix(25).joined(separator: "\n")
+                let t = "\(CrashGuard.buildTag) crumb=\(UserDefaults.standard.string(forKey: "ckCrumb") ?? "-")\nsignal \(s)\n" + Thread.callStackSymbols.prefix(25).joined(separator: "\n")
                 CrashGuard.stash(t)
                 exit(s)
             }
