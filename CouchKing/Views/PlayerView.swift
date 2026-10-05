@@ -850,17 +850,22 @@ struct PlayerView: View {
         return nil
     }
 
-    /// "Getting this ready…" strip while the placeholder clip loops (Android placeholder branch).
+    /// "Getting this ready…" card while the placeholder clip loops (Android placeholder
+    /// branch) — brand logo + explicit "from the beginning" promise (AJ Oct 5).
     var placeholderBanner: some View {
         VStack {
             Spacer()
-            HStack(spacing: 8) {
-                ProgressView().tint(.white)
-                Text("Getting this ready — playback starts automatically when it lands.")
-                    .font(.caption).foregroundStyle(.white)
+            VStack(spacing: 10) {
+                Image("Logo").resizable().aspectRatio(contentMode: .fit).frame(height: 44)
+                HStack(spacing: 8) {
+                    ProgressView().tint(.white)
+                    Text("Getting this ready — it'll play from the beginning the moment it's ready. Hang tight!")
+                        .font(.caption).foregroundStyle(.white)
+                        .multilineTextAlignment(.leading)
+                }
             }
-            .padding(.horizontal, 14).padding(.vertical, 8)
-            .background(.black.opacity(0.7), in: Capsule())
+            .padding(.horizontal, 18).padding(.vertical, 12)
+            .background(.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 16))
             .padding(.bottom, 96)
         }
     }
@@ -1321,7 +1326,10 @@ struct PlayerView: View {
         if remuxed { if probedDurMs > 0 { durMs = probedDurMs } }
         else if let d = player.currentItem?.duration.seconds, d.isFinite, d > 0 { durMs = Int(d * 1000) }
         beatCount += 1
-        guard player.rate > 0, durMs > 0, !finishedHandled else { return }
+        // never track progress on the "getting this ready" loop — its clock was being saved
+        // as the EPISODE's position (local + server), so the real file resumed minutes in
+        // (AJ Oct 5 "3 minutes into the getting-ready screen = show starts at 3 minutes")
+        guard !placeholder, player.rate > 0, durMs > 0, !finishedHandled else { return }
         if !startStamped {
             startStamped = true
             savePos(max(posMs, 500), durMs, push: true)
@@ -1746,14 +1754,26 @@ struct PlayerView: View {
         swapped = s
         placeholder = false
         firstFrame = false
+        // the real episode starts FROM THE BEGINNING — the placeholder loop's clock was
+        // leaking in as the start position (remux fallback reopened at posMs = however long
+        // they sat on the getting-ready screen)
+        posMs = 0; lastTickPos = 0; remuxBaseMs = 0; remuxed = false
+        openResumeMs = 0; pendingSeekMs = -1
+        startStamped = false; firstReported = false
         let w = PlayerWindows(stream: s)
         if w.hasWindows { windows.adopt(w) }
         subTracks = rankSubtitles(s["subtitles"] as? [[String: Any]] ?? [])
-        let item = AVPlayerItem(url: url)
-        player.replaceCurrentItem(with: item)
-        observeItem(item)
-        player.play()
-        flashLabel("Now playing the full file")
+        flashLabel("Here we go — starting from the beginning")
+        if url.path.lowercased().hasSuffix(".mkv") {
+            // known-bad container: straight to the remux at 0 (same shortcut the open uses)
+            // instead of letting AVPlayer fail and reopen at a stale clock
+            playRemux(fromMs: 0)
+        } else {
+            let item = AVPlayerItem(url: url)
+            player.replaceCurrentItem(with: item)
+            observeItem(item)
+            player.play()
+        }
         Task {
             await probeMedia()
             if subIndex < 0, !subTracks.isEmpty, session.pref("subLang", "off") != "off" { pickSub(0) }
