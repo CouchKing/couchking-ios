@@ -33,6 +33,9 @@ struct PlayerView: View {
     @State var windows = PlayerWindows()
     @State var posMs = 0
     @State var durMs = 0
+    @State var shuttleLevel = 0            // stepped FF/RW scan: -3..3, 0 = normal (AJ Oct 11)
+    @State var shuttleTimer: Timer? = nil
+    let shuttleRates = [10_000, 40_000, 120_000]   // ms advanced per second of scan
     @State var subCues: [SubCue] = []
     @State var currentCue = ""
     // ---- watched tracking + account heartbeat (Android PlayerActivity ticker) ----
@@ -299,8 +302,9 @@ struct PlayerView: View {
     var centerCluster: some View {
         HStack(spacing: 44) {
             if !isLive && !placeholder {
-                let step = session.pref("seekStep", 10)
-                SeekButton(icon: "gobackward", label: "\(step)") { epTouched = true; seek(ms: max(0, posMs - step * 1000)); scheduleHide() }
+                // stepped shuttle (AJ Oct 11): each tap scans faster; opposite tap slows; play resumes
+                SeekButton(icon: shuttleLevel < 0 ? "backward.fill" : "backward",
+                           label: shuttleLevel < 0 ? "\(shuttleRates[abs(shuttleLevel) - 1] / 1000)×" : "") { shuttleStep(-1) }
             }
             Button { togglePlay(); scheduleHide() } label: {
                 Image(systemName: playing ? "pause.fill" : "play.fill")
@@ -312,8 +316,8 @@ struct PlayerView: View {
             .accessibilityLabel(playing ? "Pause" : "Play")
             .focused($pfocus, equals: .play)
             if !isLive && !placeholder {
-                let step = session.pref("seekStep", 10)
-                SeekButton(icon: "goforward", label: "\(step)") { epTouched = true; seek(ms: posMs + step * 1000); scheduleHide() }
+                SeekButton(icon: shuttleLevel > 0 ? "forward.fill" : "forward",
+                           label: shuttleLevel > 0 ? "\(shuttleRates[abs(shuttleLevel) - 1] / 1000)×" : "") { shuttleStep(+1) }
             }
         }
     }
@@ -671,6 +675,13 @@ struct PlayerView: View {
                     }
                 }
                 #endif
+                // Restart = play from the very beginning (AJ Oct 11 "everyone wants a restart button")
+                if !isLive && !placeholder {
+                    barButton("Restart", "arrow.counterclockwise") {
+                        shuttleStop(resume: false)
+                        seek(ms: 0); player.play(); playing = true; scheduleHide()
+                    }
+                }
                 if !isLive { barButton("Stats", "chart.bar") { showStats.toggle() } }
             }
             .padding(.horizontal, 20)
@@ -722,6 +733,42 @@ struct PlayerView: View {
         #endif
     }
 
+    // ---- Netflix-style stepped FF/RW shuttle (AJ Oct 11) ----
+    // Each press of the center back/forward buttons steps the scan one level (▶ ▶▶ ▶▶▶);
+    // the opposite direction steps back down; play/OK resumes right where the scan sits.
+    // The scan only moves the TIMELINE preview (posMs) — ONE seek fires on resume, because
+    // remuxed seeks past the transcode edge reopen the ffmpeg session.
+    func shuttleStep(_ dir: Int) {
+        guard !isLive, !placeholder else { return }
+        epTouched = true
+        let lvl = max(-3, min(3, shuttleLevel + dir))
+        if lvl == 0 { shuttleStop(resume: true); return }
+        if shuttleLevel == 0 { player.pause(); playing = false }
+        shuttleLevel = lvl
+        let n = abs(lvl)
+        flashLabel(String(repeating: lvl > 0 ? "▶" : "◀", count: n) + "  \(shuttleRates[n - 1] / 1000)×")
+        showControls(); hideTask?.cancel()   // controls stay up while scanning
+        shuttleTimer?.invalidate()
+        shuttleTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { _ in
+            Task { @MainActor in
+                guard shuttleLevel != 0 else { return }
+                let step = shuttleRates[abs(shuttleLevel) - 1] / 4 * (shuttleLevel > 0 ? 1 : -1)
+                var p = posMs + step
+                if p <= 0 { p = 0 }
+                if durMs > 0 && p >= durMs - 4000 { p = durMs - 4000 }
+                posMs = p
+                if p == 0 || (durMs > 0 && p >= durMs - 4000) { shuttleStop(resume: true) }
+            }
+        }
+    }
+
+    func shuttleStop(resume: Bool) {
+        shuttleTimer?.invalidate(); shuttleTimer = nil
+        guard shuttleLevel != 0 else { return }
+        shuttleLevel = 0
+        if resume { seek(ms: posMs); player.play(); playing = true; scheduleHide() }
+    }
+
     func remoteSeek(_ dir: Int) {
         guard !isLive, !placeholder else { showControls(); return }
         let step = session.pref("seekStep", 10) * 1000
@@ -739,6 +786,8 @@ struct PlayerView: View {
 
     func togglePlay() {
         epTouched = true
+        // while the shuttle is scanning, ANY play/pause = "play from where I am" (AJ Oct 11)
+        if shuttleLevel != 0 { shuttleStop(resume: true); return }
         if player.timeControlStatus == .paused {
             player.play()          // resumes at defaultRate, so the chosen speed sticks
             playing = true
@@ -1213,6 +1262,7 @@ struct PlayerView: View {
     // MARK: ticker
 
     func tick(_ ms: Int) {
+        if shuttleLevel != 0 { return }   // the scan owns posMs — don't let the clock fight it
         // a seek requested while the item was loading — apply it now that frames flow
         if pendingSeekMs >= 0, !remuxed, let it = player.currentItem, it.status == .readyToPlay {
             let t = pendingSeekMs; pendingSeekMs = -1
@@ -1833,6 +1883,7 @@ struct PlayerView: View {
         if !isLive && !placeholder && durMs > 0 {
             savePos(posMs, durMs, push: true)
         }
+        shuttleTimer?.invalidate(); shuttleTimer = nil; shuttleLevel = 0
         for o in observers { NotificationCenter.default.removeObserver(o) }
         observers = []
         if let t = timeObserver { player.removeTimeObserver(t); timeObserver = nil }
@@ -1894,6 +1945,7 @@ struct PlayerView: View {
         }
         pip.stop()
         hideTask?.cancel(); hideTask = nil
+        shuttleTimer?.invalidate(); shuttleTimer = nil; shuttleLevel = 0
         placeholderPoll?.cancel(); placeholderPoll = nil
         subxTask?.cancel(); subxTask = nil
         if let t = timeObserver { player.removeTimeObserver(t) }
