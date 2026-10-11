@@ -302,9 +302,14 @@ struct PlayerView: View {
     var centerCluster: some View {
         HStack(spacing: 44) {
             if !isLive && !placeholder {
-                // stepped shuttle (AJ Oct 11): each tap scans faster; opposite tap slows; play resumes
-                SeekButton(icon: shuttleLevel < 0 ? "backward.fill" : "backward",
-                           label: shuttleLevel < 0 ? "\(shuttleRates[abs(shuttleLevel) - 1] / 1000)×" : "") { shuttleStep(-1) }
+                // TAP = ±step every time; HOLD = Netflix scan; taps then change speed (AJ Oct 11)
+                let step = session.pref("seekStep", 10)
+                SeekButton(icon: shuttleLevel < 0 ? "backward.fill" : "gobackward",
+                           label: shuttleLevel < 0 ? "\(shuttleRates[abs(shuttleLevel) - 1] / 1000)×" : "\(step)",
+                           action: {
+                               if shuttleLevel != 0 { shuttleStep(-1) }
+                               else { epTouched = true; seek(ms: max(0, posMs - step * 1000)); scheduleHide() }
+                           }, onHold: { shuttleStep(-1) })
             }
             Button { togglePlay(); scheduleHide() } label: {
                 Image(systemName: playing ? "pause.fill" : "play.fill")
@@ -316,8 +321,13 @@ struct PlayerView: View {
             .accessibilityLabel(playing ? "Pause" : "Play")
             .focused($pfocus, equals: .play)
             if !isLive && !placeholder {
-                SeekButton(icon: shuttleLevel > 0 ? "forward.fill" : "forward",
-                           label: shuttleLevel > 0 ? "\(shuttleRates[abs(shuttleLevel) - 1] / 1000)×" : "") { shuttleStep(+1) }
+                let step = session.pref("seekStep", 10)
+                SeekButton(icon: shuttleLevel > 0 ? "forward.fill" : "goforward",
+                           label: shuttleLevel > 0 ? "\(shuttleRates[abs(shuttleLevel) - 1] / 1000)×" : "\(step)",
+                           action: {
+                               if shuttleLevel != 0 { shuttleStep(+1) }
+                               else { epTouched = true; seek(ms: posMs + step * 1000); scheduleHide() }
+                           }, onHold: { shuttleStep(+1) })
             }
         }
     }
@@ -1983,6 +1993,7 @@ struct SkipPill: View {
 /// Seek-step control (Android seekStepSec applied to the seek controls): ⟲10 / ⟳10.
 struct SeekButton: View {
     let icon: String, label: String, action: () -> Void
+    var onHold: (() -> Void)? = nil   // HOLD = enter the Netflix scan (AJ Oct 11)
     var body: some View {
         Button(action: action) {
             ZStack {
@@ -1993,6 +2004,7 @@ struct SeekButton: View {
             .background(.black.opacity(0.5), in: Circle())
             .foregroundStyle(.white)
         }
+        .simultaneousGesture(LongPressGesture(minimumDuration: 0.45).onEnded { _ in onHold?() })
     }
 }
 
