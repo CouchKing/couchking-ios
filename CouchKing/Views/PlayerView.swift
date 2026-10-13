@@ -1631,6 +1631,9 @@ struct PlayerView: View {
             let name = (s["name"] as? String ?? s["id"] as? String ?? "").lowercased()
             var sc = 0
             if lang.hasPrefix("en") || name.contains("english") { sc += 100 }
+            // in-video tracks are cut for the exact file being played = best sync — list
+            // them above the external OpenSubtitles entries (matches Android's ordering)
+            if s["embedded"] != nil { sc += 10 }
             if name.contains("sdh") || name.contains("hearing") { sc -= 5 }
             if name.contains("forced") { sc -= 20 }
             return sc
@@ -1776,8 +1779,15 @@ struct PlayerView: View {
         var added: [[String: Any]] = []
         for s in r["subs"] as? [[String: Any]] ?? [] {
             guard let i = s["i"] as? Int else { continue }
-            let lang = s["lang"] as? String ?? "und"
-            var name = "Embedded · " + (s["title"] as? String ?? lang)
+            let rawLang = (s["lang"] as? String ?? "").lowercased()
+            let rawTitle = s["title"] as? String ?? ""
+            // Fully-untagged in-mux text track (TrollHD-style WEB-DLs): it's the release's own
+            // English subs cut for THIS file (best sync), but the English filter in
+            // rankSubtitles was dropping it — leaving only external subs timed for a
+            // different cut (AJ Oct 12, Gilmore Girls S1E7 "subs don't line up").
+            let untagged = (rawLang.isEmpty || rawLang == "und") && rawTitle.isEmpty
+            let lang = untagged ? "eng" : (rawLang.isEmpty ? "und" : rawLang)
+            var name = "Embedded · " + (untagged ? "English (in-video)" : (rawTitle.isEmpty ? lang : rawTitle))
             if s["forced"] as? Bool == true { name += " (forced)" }
             if s["hi"] as? Bool == true { name += " (SDH)" }
             added.append(["lang": lang, "name": name, "embedded": i])
