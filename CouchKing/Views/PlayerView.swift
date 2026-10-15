@@ -56,6 +56,7 @@ struct PlayerView: View {
     // ---- skip latches (Android *Handled): never re-show after skipping / crossing ----
     @State var introHandled = false
     @State var recapHandled = false
+    @State var acDismissed = false   // Dismiss on the after-credits pill (AJ Oct 15)
     @State var lastTickPos = 0        // seek-discontinuity detection
     // ---- after-credits ----
     @State var stingerToastShown = false
@@ -133,7 +134,7 @@ struct PlayerView: View {
     @State var audioMenu = false           // TV audio sheet
     @State var liveFav = false             // Live TV: ★ this channel
     // remote / keyboard focus (Apple TV: the Firestick-style "controls hidden → arrows seek")
-    enum PFocus: Hashable { case picture, skip, play, seek, ctrl(String), upNext, upDismiss, keep }
+    enum PFocus: Hashable { case picture, skip, skipDismiss, play, seek, ctrl(String), upNext, upDismiss, keep }
     @FocusState var pfocus: PFocus?
 
     var isLive: Bool { request.meta.type == "tv" }
@@ -835,7 +836,7 @@ struct PlayerView: View {
             if playing && !scrubbing && !showSubPanel && !showEpisodes && !speedMenu && !audioMenu {
                 controlsVisible = false
                 #if os(tvOS)
-                if pfocus != .skip { pfocus = .picture }
+                if pfocus != .skip && pfocus != .skipDismiss { pfocus = .picture }
                 #endif
             }
         }
@@ -894,7 +895,7 @@ struct PlayerView: View {
         if windows.introFrom > 0, !introHandled, posMs >= windows.introFrom, posMs < windows.introTo - tail {
             return ("Skip Intro", windows.introTo)
         }
-        guard durMs > 0, !windows.afterCredits.isEmpty else { return nil }
+        guard durMs > 0, !windows.afterCredits.isEmpty, !acDismissed else { return nil }
         let stingers = windows.afterCredits.filter { $0.count >= 1 && $0[0] > 0 }.sorted { $0[0] < $1[0] }
         let finish = finishPointMs(durMs)
         for (i, st) in stingers.enumerated() {
@@ -932,13 +933,33 @@ struct PlayerView: View {
     @ViewBuilder var skipButton: some View {
         if placeholder { EmptyView() }
         else if let st = skipState {
-            SkipPill(text: st.0, focus: $pfocus) {
-                epTouched = true
-                if st.0 == "Skip Recap" { recapHandled = true }
-                if st.0 == "Skip Intro" { introHandled = true }
-                seek(ms: st.1)
+            // Dismiss beside Skip hides the pill for the rest of this window, like the
+            // next-up card's Dismiss (AJ Oct 15). Focus still lands on Skip on appear.
+            HStack(spacing: 8) {
+                SkipPill(text: st.0, focus: $pfocus) {
+                    epTouched = true
+                    if st.0 == "Skip Recap" { recapHandled = true }
+                    if st.0 == "Skip Intro" { introHandled = true }
+                    seek(ms: st.1)
+                }
+                Button {
+                    epTouched = true
+                    dismissSkip(st.0)
+                } label: {
+                    Text("Dismiss").font(.subheadline.bold())
+                        .padding(.horizontal, 14).padding(.vertical, 10)
+                        .background(.black.opacity(0.55), in: Capsule())
+                        .foregroundStyle(.white)
+                }
+                .focused($pfocus, equals: .skipDismiss)
             }
         }
+    }
+
+    func dismissSkip(_ label: String) {
+        if label == "Skip Recap" { recapHandled = true }
+        else if label == "Skip Intro" { introHandled = true }
+        else { acDismissed = true }
     }
 
     /// Next-Up card (Android showNextUpCard): thumbnail (blurred if unwatched + pref), title,
@@ -1367,12 +1388,17 @@ struct PlayerView: View {
         guard durMs > 0, request.season != nil, let ep = nextEp else { return }
         let remain = durMs - posMs
         if nextReq == nil && remain <= 300_000 { Task { await prefetchNext(ep) } }
-        // card pops ~30s BEFORE the CONTENT ends (AJ Oct 3 "pop up on the show"): credits
-        // lead from the finish point + 30s of show still playing, capped at 3min so a bad
-        // credits estimate can't park it up minutes early (the Oct 1 complaint).
-        // Watched-marking is untouched. The 60s floor scales down so sub-90s episodes
-        // (Bluey Minisodes) can still show the card.
-        let cardLead = min(max(durMs - finishPointMs(durMs), 0) + 30_000, 180_000)
+        // card pops where the credits START, not early (AJ Oct 15 "right at the end
+        // almost"): real signal (last sub cue → learned clicks) used as-is — the server
+        // already biases learned clicks 30s early, so the old client +30s stacked into
+        // "minutes early". No signal at all = 10s before file end (was effectively 90s).
+        // Watched-marking (finishPointMs with its 90s default) is untouched. The 60s
+        // floor scales down so sub-90s episodes (Bluey Minisodes) can still show the card.
+        let lastCue = subCues.map(\.to).max() ?? 0
+        let subsLead = lastCue > 0 ? durMs - lastCue - 2000 : -1
+        let haveSignal = (15_000...300_000).contains(subsLead)
+            || (windows.credits > 0 && windows.credits < durMs)
+        let cardLead = min(haveSignal ? max(durMs - finishPointMs(durMs), 0) : 10_000, 180_000)
         if !showNextUp && !nextUpDismissed && remain > 0 && remain <= cardLead && posMs > min(60_000, durMs / 2) {
             withAnimation { showNextUp = true }
         }
@@ -1915,6 +1941,7 @@ struct PlayerView: View {
         posMs = 0; durMs = 0; probedDurMs = 0; pendingSeekMs = -1
         subCues = []; currentCue = ""; subTracks = []; subIndex = -1
         nextEp = nil; nextReq = nil; showNextUp = false; nextUpDismissed = false
+        introHandled = false; recapHandled = false; acDismissed = false
         finishedHandled = false; startStamped = false; controlsVisible = true
         windows = PlayerWindows()
         await start()

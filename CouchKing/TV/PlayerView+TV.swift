@@ -214,7 +214,7 @@ extension PlayerView {
     // MARK: skip pill (bottom-end, auto-focused, fades + rises in over 220ms)
     private func tvSkipPill(_ st: (String, Int)) -> some View {
         VStack { Spacer()
-            HStack { Spacer()
+            HStack(spacing: TV.dp(8)) { Spacer()
                 Button {
                     epTouched = true
                     if st.0 == "Skip Recap" { recapHandled = true }
@@ -228,6 +228,19 @@ extension PlayerView {
                 }
                 .buttonStyle(TVRingButton(radius: TV.dp(30), ring: TV.accent))
                 .focused($pfocus, equals: .skip)
+                // Dismiss hides the pill for the rest of this window, like the next-up
+                // card (AJ Oct 15); focus still lands on Skip when the pill appears
+                Button {
+                    epTouched = true
+                    dismissSkip(st.0)
+                } label: {
+                    Text("Dismiss")
+                        .font(.system(size: TV.sp(14), weight: .semibold)).foregroundStyle(.white)
+                        .padding(.horizontal, TV.dp(16)).padding(.vertical, TV.dp(9))
+                        .background(.black.opacity(0.55), in: Capsule())
+                }
+                .buttonStyle(TVRingButton(radius: TV.dp(30), ring: TV.accent))
+                .focused($pfocus, equals: .skipDismiss)
             }
             .padding(.trailing, TV.dp(24)).padding(.bottom, TV.dp(28))
         }
