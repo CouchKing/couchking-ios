@@ -310,6 +310,7 @@ struct StreamList: View {
     @State private var expired = false
     @State private var notice = ""
     @State private var gate = ""
+    @State private var gateTitle = "CouchKing"
     @State private var play: PlayRequest?
     #if os(tvOS)
     @Namespace private var streamNS
@@ -350,14 +351,12 @@ struct StreamList: View {
             }
             streamRows
         }
-        .overlay {
-            if !gate.isEmpty {
-                ZStack {
-                    Color.black.opacity(0.6).ignoresSafeArea()
-                    GateModal(text: gate) { gate = "" }
-                }
-            }
-        }
+        // native alert, NOT an .overlay — StreamList embeds INLINE on the Details page, so an
+        // overlay is clipped to the (nearly empty) list frame and the modal rendered pinched
+        // tiny (AJ Oct 16 iPhone). An alert is always centered mid-screen with an OK button.
+        .alert(gateTitle, isPresented: Binding(get: { !gate.isEmpty }, set: { if !$0 { gate = "" } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(gate) }
         .task { await load() }
         .ckFullScreenCover(item: $play) { req in PlayerView(request: req) }
     }
@@ -466,11 +465,15 @@ struct StreamList: View {
             }
             if let r {
                 let body = r.0, code = r.1
-                if let reason = API.gateReason(code) { gate = reason; loading = false; warming = false; return }
+                if let reason = API.gateReason(code) {
+                    gateTitle = type == "tv" ? "Live TV locked" : "CouchKing"
+                    gate = reason; loading = false; warming = false; return
+                }
                 if body["ckExpired"] as? Bool == true { expired = true; loading = false; warming = false; return }
                 // VOD device limit (AJ Oct 16 "a banner that pops up, no streams"): another IP
-                // holds the account's streaming slot — the same centered modal Live TV uses.
+                // holds the account's streaming slot — centered pop-up, Live TV treatment.
                 if let s = body["streams"] as? [[String: Any]], s.first?["ckBlocked"] as? Bool == true {
+                    gateTitle = "Too many devices"
                     gate = (s.first?["title"] as? String)
                         ?? "Too many devices are streaming on this account.\nStop one, then press play again."
                     loading = false; warming = false; return
