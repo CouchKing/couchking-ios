@@ -1098,6 +1098,14 @@ struct PlayerView: View {
         Platform.lockLandscape(true)
         PlaybackAudio.activate()   // .playback: sound on silent, in background, in the PiP window
         scaleMode = session.pref("scaleMode", "fit")
+        // PRE-PLAY slot check (AJ Oct 16 "I don't want a stream, just the banner"): the list
+        // can pass while the slot is free and the slot be taken before the press — the play
+        // URL then serves the too-many message CLIP. Ask at the press instead: "no slot" →
+        // the banner, and the player never opens the clip.
+        if !isLive, !request.placeholder, await session.beat() == false {
+            vodKicked = true
+            return
+        }
         if !isLive {
             windows = await PlayerWindows.fetch(session: session, id: request.meta.id,
                                                 season: request.season, episode: request.episode)
