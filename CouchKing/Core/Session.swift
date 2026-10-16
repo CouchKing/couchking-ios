@@ -824,7 +824,7 @@ extension Session {
 
 // Skip windows + resume from the addon (same endpoint the Android player uses).
 struct PlayerWindows {
-    var introFrom = 0, introTo = 0, recapFrom = 0, recapTo = 0, credits = 0
+    var introFrom = 0, introTo = 0, recapFrom = 0, recapTo = 0, credits = 0, creditsAt = 0
     var afterCredits: [[Int]] = []
     var resumeMs = 0
 
@@ -842,6 +842,7 @@ struct PlayerWindows {
         w.recapFrom = r["recapFrom"] as? Int ?? 0
         w.recapTo = r["recapTo"] as? Int ?? 0
         w.credits = r["credits"] as? Int ?? 0
+        w.creditsAt = r["creditsAt"] as? Int ?? 0
         w.afterCredits = r["afterCredits"] as? [[Int]] ?? []
         w.resumeMs = r["pos"] as? Int ?? 0
         return w
@@ -858,7 +859,7 @@ struct PlayerWindows {
         }
         introFrom = i("introFrom"); introTo = i("introTo")
         recapFrom = i("recapFrom"); recapTo = i("recapTo")
-        credits = i("credits")
+        credits = i("credits"); creditsAt = i("creditsAt")
         afterCredits = w["afterCredits"] as? [[Int]] ?? []
     }
     init() {}
@@ -870,6 +871,7 @@ struct PlayerWindows {
         if o.introTo > 0 { introFrom = o.introFrom; introTo = o.introTo }
         if o.recapTo > 0 { recapFrom = o.recapFrom; recapTo = o.recapTo }
         if o.credits > 0 { credits = o.credits }
+        if o.creditsAt > 0 { creditsAt = o.creditsAt }
         if !o.afterCredits.isEmpty { afterCredits = o.afterCredits }
     }
 }

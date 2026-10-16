@@ -1396,9 +1396,13 @@ struct PlayerView: View {
         // floor scales down so sub-90s episodes (Bluey Minisodes) can still show the card.
         let lastCue = subCues.map(\.to).max() ?? 0
         let subsLead = lastCue > 0 ? durMs - lastCue - 2000 : -1
+        // +10s: pop BEFORE the content ends (AJ Oct 16 "10 seconds before the episode is
+        // over" — the learned next-click median is measured after people sat through some
+        // credits, so the signal alone runs late). No signal = 60s before file end.
         let haveSignal = (15_000...300_000).contains(subsLead)
+            || windows.creditsAt > 0
             || (windows.credits > 0 && windows.credits < durMs)
-        let cardLead = min(haveSignal ? max(durMs - finishPointMs(durMs), 0) : 10_000, 180_000)
+        let cardLead = min(haveSignal ? max(durMs - finishPointMs(durMs), 0) + 10_000 : 60_000, 180_000)
         if !showNextUp && !nextUpDismissed && remain > 0 && remain <= cardLead && posMs > min(60_000, durMs / 2) {
             withAnimation { showNextUp = true }
         }
@@ -1445,6 +1449,10 @@ struct PlayerView: View {
         let w = await PlayerWindows.fetch(session: session, id: request.meta.id,
                                           season: request.season, episode: request.episode)
         if w.resumeMs > posMs + 60_000, w.resumeMs < durMs { serverAhead = w.resumeMs }
+        // MARKER RE-POLL (Oct 16, AJ's Landman E10): the analyzer often publishes
+        // intro/recap windows DURING the first viewer's watch — adopt them when the
+        // initial fetch came back empty, so the pills still appear mid-episode.
+        if !windows.hasWindows && w.hasWindows { windows.adopt(w) }
     }
 
     /// Stats overlay (Android updateStats): resolution / fps / dropped frames / bitrate.
@@ -1498,9 +1506,15 @@ struct PlayerView: View {
     func finishPointMs(_ dur: Int) -> Int {
         let lastCue = subCues.map(\.to).max() ?? 0
         let subsLead = lastCue > 0 ? dur - lastCue - 2000 : -1
+        let exactLead = windows.creditsAt > 0 && windows.creditsAt < dur ? dur - windows.creditsAt : -1
         let lead: Int
-        if (15_000...300_000).contains(subsLead) { lead = subsLead }
-        else if windows.credits > 0 && windows.credits < dur { lead = dur - windows.credits }
+        // a named end-credits chapter in the served file = EXACT content end (Oct 16)
+        if (10_000...600_000).contains(exactLead) { lead = exactLead }
+        else if (15_000...300_000).contains(subsLead) { lead = subsLead }
+        // server `credits` is a LEAD (ms remaining at the family's next-clicks), not an
+        // absolute position — treating it as one pushed the card to the 80% floor = a flat
+        // 3-min-early pop whenever learned credits existed (Oct 16, Android parity)
+        else if windows.credits > 0 { lead = min(max(windows.credits + 5_000, 20_000), 240_000) }
         else { lead = 90_000 }
         // CAP (AJ Sep 28, parity w/ TV 2.0.123): finished by 90% (movies) / 92% (shows) so a
         // long-credits movie marks watched + leaves Continue Watching without sitting through credits.
@@ -1949,6 +1963,14 @@ struct PlayerView: View {
 
     func onEnded() {
         if placeholder { seek(ms: 0); player.play(); return }   // loop the clip until the real file lands
+        // SIGNATURE-DURATION FALLBACK (AJ Oct 16): the waiting clips are exactly ~30s/~300s —
+        // if detection missed, ending one must loop + enter placeholder mode, never "finish"
+        if (29_000...31_000).contains(durMs) || (295_000...305_000).contains(durMs), !isLive {
+            seek(ms: 0); player.play()
+            placeholder = true
+            startPlaceholderPoll()
+            return
+        }
         finishEpisode()
         // Popped out: the next episode opens as a new player screen, which can't re-enter PiP
         // from the background — so close the pop-out and leave Next-Up waiting for the return.
