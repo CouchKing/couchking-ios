@@ -1420,6 +1420,9 @@ struct PlayerView: View {
         // as the EPISODE's position (local + server), so the real file resumed minutes in
         // (AJ Oct 5 "3 minutes into the getting-ready screen = show starts at 3 minutes")
         guard !placeholder, player.rate > 0, durMs > 0, !finishedHandled else { return }
+        // streaming-slot beat (AJ Oct 16, Live TV parity): claims/refreshes this device's
+        // VOD slot every 15s while actually playing — Live TV has its own slot system
+        if beatCount % 15 == 0 && !isLive { session.beat() }
         if !startStamped {
             startStamped = true
             savePos(max(posMs, 500), durMs, push: true)
@@ -1851,7 +1854,8 @@ struct PlayerView: View {
                 let u = session.profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
                 guard let r = try? await API.json(request.streamPath + "?u=\(u)", base: base),
                       let list = r["streams"] as? [[String: Any]],
-                      let real = list.first(where: { !PlayRequest.isPlaceholder($0) && ($0["url"] as? String) != nil })
+                      let real = list.first(where: { !PlayRequest.isPlaceholder($0) && ($0["url"] as? String) != nil
+                                                     && $0["ckBlocked"] as? Bool != true })   // never hot-swap to the device-limit clip
                 else { continue }
                 await MainActor.run { hotSwap(real) }
                 return
@@ -1913,7 +1917,8 @@ struct PlayerView: View {
         guard let base = session.addonBase() else { return nil }
         let u = session.profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         guard let r = try? await API.json("/stream/series/\(ep.id).json?u=\(u)", base: base),
-              let st = (r["streams"] as? [[String: Any]])?.first,
+              // skip the device-limit card — a blocked next-episode just ends the binge cleanly
+              let st = (r["streams"] as? [[String: Any]])?.first(where: { $0["ckBlocked"] as? Bool != true }),
               let us = st["url"] as? String, let url = URL(string: us) else { return nil }
         var req = PlayRequest(url: url, meta: request.meta, season: ep.season, episode: ep.episode)
         req.episodes = allEpisodes
@@ -2009,9 +2014,12 @@ struct PlayerView: View {
                 savePos(pos, durMs, push: true)
                 // one tiny POST per sit-down (Android: exit / episode switch / finish)
                 session.reportProgress(id: request.meta.id, season: request.season,
-                                       episode: request.episode, pos: pos, dur: durMs)
+                                       episode: request.episode, pos: pos, dur: durMs, stop: true)
             }
         }
+        // free this device's streaming slot the INSTANT the player closes (Live TV
+        // close-free parity) — the stop-tagged report above has its own guards, this never
+        if !isLive { session.beat(stop: true) }
         pip.stop()
         hideTask?.cancel(); hideTask = nil
         shuttleTimer?.invalidate(); shuttleTimer = nil; shuttleLevel = 0

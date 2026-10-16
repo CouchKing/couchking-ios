@@ -393,14 +393,25 @@ final class Session: ObservableObject {
 
     /// One tiny POST per beat/sit-down (Android Ck.reportServer): powers For You's
     /// completion signal, cross-device resume, and the learned credits timing.
-    func reportProgress(id: String, season: Int?, episode: Int?, pos: Int, dur: Int) {
+    func reportProgress(id: String, season: Int?, episode: Int?, pos: Int, dur: Int, stop: Bool = false) {
         let k = subKey
         guard !k.isEmpty, dur > 0, pos >= 5000 else { return }
-        let body: [String: Any] = ["k": k, "u": profileSeg, "i": id,
+        var body: [String: Any] = ["k": k, "u": profileSeg, "i": id,
                                    "s": season.map(String.init) ?? "",
                                    "e": episode.map(String.init) ?? "",
                                    "pos": pos, "dur": dur]
+        if stop { body["stop"] = 1 }   // sit-down over → server frees this device's streaming slot
         Task { _ = try? await API.postJSON("/player/progress", body: body) }
+    }
+
+    /// Streaming-slot heartbeat (AJ Oct 16, Live TV parity): tiny GET every ~15s while the
+    /// player is actually playing claims/refreshes this device's slot; stop=true frees it
+    /// the instant the player closes, so the next device never waits.
+    func beat(stop: Bool = false) {
+        let k = subKey
+        guard !k.isEmpty else { return }
+        let u = profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        Task { _ = try? await API.json("/player/beat?k=\(k)&u=\(u)\(stop ? "&stop=1" : "")") }
     }
 
     /// Wipe the server's resume for a title (Android Ck.clearServer) — without it the

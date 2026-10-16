@@ -468,6 +468,13 @@ struct StreamList: View {
                 let body = r.0, code = r.1
                 if let reason = API.gateReason(code) { gate = reason; loading = false; warming = false; return }
                 if body["ckExpired"] as? Bool == true { expired = true; loading = false; warming = false; return }
+                // VOD device limit (AJ Oct 16 "a banner that pops up, no streams"): another IP
+                // holds the account's streaming slot — the same centered modal Live TV uses.
+                if let s = body["streams"] as? [[String: Any]], s.first?["ckBlocked"] as? Bool == true {
+                    gate = (s.first?["title"] as? String)
+                        ?? "Too many devices are streaming on this account.\nStop one, then press play again."
+                    loading = false; warming = false; return
+                }
                 if let n = body["ckNotice"] as? String { notice = n }
                 else if let n = body["ckNotice"] as? Bool, n { notice = "Some streams may take a moment to appear." }
                 if let s = body["streams"] as? [[String: Any]], !s.isEmpty {
