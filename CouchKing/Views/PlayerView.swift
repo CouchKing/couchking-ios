@@ -42,6 +42,8 @@ struct PlayerView: View {
     @State var sessionStartMs = 0     // where this sit-down began (resume point)
     @State var beatCount = 0
     @State var lastBeatPos = -1       // zombie guard: only a MOVING position beats
+    @State var vodMiss = 0            // consecutive "no slot" beat answers (3 = kicked)
+    @State var vodKicked = false      // device limit took the slot mid-play → alert + close
     @State var startStamped = false
     @State var firstReported = false
     @State var finishedHandled = false
@@ -206,6 +208,11 @@ struct PlayerView: View {
         #endif
         .onAppear { Task { await start() } }
         .onDisappear { stop() }
+        // device limit took the slot mid-play (another device started) — stop and say so,
+        // the VOD version of Live TV's mid-stream cutoff (AJ Oct 16 "playing on both")
+        .alert("Too many devices", isPresented: $vodKicked) {
+            Button("OK") { close() }
+        } message: { Text("Too many devices are streaming on this account.\nStop one, then press play again.") }
         #if os(tvOS) || os(macOS)
         .sheet(isPresented: $showSubPanel) {
             SubtitlePanel(tracks: subTracks, index: $subIndex, onPick: { i in
@@ -1421,8 +1428,19 @@ struct PlayerView: View {
         // (AJ Oct 5 "3 minutes into the getting-ready screen = show starts at 3 minutes")
         guard !placeholder, player.rate > 0, durMs > 0, !finishedHandled else { return }
         // streaming-slot beat (AJ Oct 16, Live TV parity): claims/refreshes this device's
-        // VOD slot every 15s while actually playing — Live TV has its own slot system
-        if beatCount % 15 == 0 && !isLive { session.beat() }
+        // VOD slot every 15s while actually playing — Live TV has its own slot system.
+        // 3 consecutive "no slot" answers (~45s, so a brief carrier IP flap never kicks the
+        // only watcher) = another device took over → stop with the banner (mid-play
+        // enforcement, the VOD version of Live TV's 429 mid-stream).
+        if beatCount % 15 == 0 && !isLive {
+            Task {
+                let ok = await session.beat()
+                await MainActor.run {
+                    if ok { vodMiss = 0 }
+                    else { vodMiss += 1; if vodMiss >= 3 { vodMiss = 0; vodKicked = true; player.pause() } }
+                }
+            }
+        }
         if !startStamped {
             startStamped = true
             savePos(max(posMs, 500), durMs, push: true)
@@ -2019,7 +2037,7 @@ struct PlayerView: View {
         }
         // free this device's streaming slot the INSTANT the player closes (Live TV
         // close-free parity) — the stop-tagged report above has its own guards, this never
-        if !isLive { session.beat(stop: true) }
+        if !isLive { Task { await session.beat(stop: true) } }
         pip.stop()
         hideTask?.cancel(); hideTask = nil
         shuttleTimer?.invalidate(); shuttleTimer = nil; shuttleLevel = 0

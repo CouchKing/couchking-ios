@@ -406,12 +406,16 @@ final class Session: ObservableObject {
 
     /// Streaming-slot heartbeat (AJ Oct 16, Live TV parity): tiny GET every ~15s while the
     /// player is actually playing claims/refreshes this device's slot; stop=true frees it
-    /// the instant the player closes, so the next device never waits.
-    func beat(stop: Bool = false) {
+    /// the instant the player closes. Returns false when another IP holds the slot — the
+    /// player kicks after 3 consecutive misses (network blips return true: never kick on
+    /// an error, only on an explicit "no slot" answer).
+    @discardableResult
+    func beat(stop: Bool = false) async -> Bool {
         let k = subKey
-        guard !k.isEmpty else { return }
+        guard !k.isEmpty else { return true }
         let u = profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        Task { _ = try? await API.json("/player/beat?k=\(k)&u=\(u)\(stop ? "&stop=1" : "")") }
+        guard let r = try? await API.json("/player/beat?k=\(k)&u=\(u)\(stop ? "&stop=1" : "")") else { return true }
+        return !(r["ok"] as? Bool == false)
     }
 
     /// Wipe the server's resume for a title (Android Ck.clearServer) — without it the
