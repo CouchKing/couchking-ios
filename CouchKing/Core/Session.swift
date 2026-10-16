@@ -286,7 +286,14 @@ final class Session: ObservableObject {
         if contentOwner.isEmpty { contentOwner = email }
         let e = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         let t = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? token
-        guard let r = try? await API.jsonStatus("/tvapp/state?e=\(e)&t=\(t)"), r.1 == 200 else { return false }
+        guard let r = try? await API.jsonStatus("/tvapp/state?e=\(e)&t=\(t)") else { return false }
+        // 401/403 = token revoked server-side (/logout, password change) — sign this device
+        // out for real instead of living on local state forever (AJ Oct 16, Brandon)
+        if r.1 == 401 || r.1 == 403 {
+            await MainActor.run { signOut() }
+            return false
+        }
+        guard r.1 == 200 else { return false }
         apply(r.0)
         pulledOk = true
         push()   // push the union straight back (Android Sync.pullMerge: merge, then push)
