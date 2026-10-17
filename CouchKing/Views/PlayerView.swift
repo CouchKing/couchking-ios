@@ -50,6 +50,7 @@ struct PlayerView: View {
     // ---- "Are you still watching?" — 2 input-less auto-advances arm the modal ----
     @State var epTouched = false
     @State var showStillWatching = false
+    @State var showReport = false
     @State var timeObserver: Any?
     @State var observers: [NSObjectProtocol] = []
     @State var rate: Float = 1.0      // playback speed (Android speed picker)
@@ -187,6 +188,11 @@ struct PlayerView: View {
             if showStillWatching { stillWatchingCard }
             #endif
             if failed { errorCard }
+            if showReport {
+                ReportProblemCard(ctx: "Player — \(request.meta.name) @ \(posMs/60000)m\((posMs/1000)%60)s",
+                                  dismiss: { showReport = false })
+                    .environmentObject(session)
+            }
             #if os(iOS)
             if showSubPanel { subSidePanel.transition(.move(edge: .trailing)) }
             if showMiniGuide { miniGuidePanel.transition(.move(edge: .trailing)) }
@@ -701,6 +707,9 @@ struct PlayerView: View {
                     }
                 }
                 if !isLive { barButton("Stats", "chart.bar") { showStats.toggle() } }
+                // 🛟 end of the controls row (AJ Oct 17): report a problem right where it's
+                // happening — the title + position attach automatically
+                barButton("Report", "exclamationmark.bubble") { showReport = true; hideTask?.cancel() }
             }
             .padding(.horizontal, 20)
         }

@@ -425,6 +425,17 @@ final class Session: ObservableObject {
         return !(r["ok"] as? Bool == false)
     }
 
+    /// 🛟 Report a problem (AJ Oct 17, parity with the Android/web clients): fire the user's
+    /// text to the server's Problem Reports channel with who/where/version attached.
+    /// Returns true on a confirmed send so the UI can confirm.
+    @discardableResult
+    func reportProblem(text: String, ctx: String) async -> Bool {
+        let body: [String: Any] = ["text": text, "u": profileSeg, "key": subKey,
+                                   "v": Session.appVer, "model": API.deviceModel, "ctx": ctx]
+        guard let r = try? await API.postJSON("/tvapp/report", body: body) else { return false }
+        return (r["ok"] as? Bool) == true
+    }
+
     /// Wipe the server's resume for a title (Android Ck.clearServer) — without it the
     /// other device re-fetches ckpos and a finished/cleared title comes right back.
     func clearServerResume(id: String) {

@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var showLogin = false
     @State private var confirmDelete = false
     @State private var syncMsg = ""
+    @State private var showReport = false
 
     /// Apple TV hosts Settings in the shell's own navigation stack (so the Menu button knows
     /// when it's at the root); everywhere else it brings its own.
@@ -78,6 +79,10 @@ struct SettingsView: View {
                 }
                 NavigationLink { LegalView() } label: { SettingRowLabel(label: "Legal & About", value: "") }
             }
+            // 🛟 the very bottom (AJ Oct 17): say or type what's wrong, it reaches us right away
+            Section {
+                SettingRow(label: "🛟 Report a problem", value: "Say or type it") { showReport = true }
+            }
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
@@ -101,6 +106,10 @@ struct SettingsView: View {
                         }
                     }
                 } cancel: { confirmDelete = false }
+            }
+            if showReport {
+                ReportProblemCard(ctx: "Settings", dismiss: { showReport = false })
+                    .environmentObject(session)
             }
         }
     }
@@ -687,5 +696,59 @@ struct ConfirmCard: View {
             .overlay(RoundedRectangle(cornerRadius: 18).stroke(Theme.accent.opacity(0.6), lineWidth: 1))
             .padding(30)
         }
+    }
+}
+
+/// 🛟 Report a problem (AJ Oct 17, parity with Android/web/player): say it (dictation mic on
+/// the keyboard) or type it, Send → the server's Problem Reports channel with who/where/
+/// version attached. `ctx` says the screen/title they were on. Used from Settings, the detail
+/// page, and the player.
+struct ReportProblemCard: View {
+    @EnvironmentObject var session: Session
+    let ctx: String
+    let dismiss: () -> Void
+    @State private var text = ""
+    @State private var sending = false
+    @State private var done: Bool? = nil
+    @FocusState private var focused: Bool
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.6).ignoresSafeArea().onTapGesture(perform: dismiss)
+            VStack(alignment: .leading, spacing: 14) {
+                Text("🛟 Report a problem").font(.title3.bold())
+                if let ok = done {
+                    Text(ok ? "Sent — thank you!" : "Couldn't send — try again in a minute")
+                        .foregroundStyle(.secondary)
+                } else {
+                    TextField("What's wrong? Tap the mic on the keyboard to say it", text: $text, axis: .vertical)
+                        .lineLimit(3...5).textFieldStyle(.plain).focused($focused)
+                        .padding(12).background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
+                    HStack(spacing: 12) {
+                        Button {
+                            let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                            guard !t.isEmpty, !sending else { return }
+                            sending = true
+                            Task { let ok = await session.reportProblem(text: t, ctx: ctx)
+                                done = ok
+                                try? await Task.sleep(for: .seconds(ok ? 1.4 : 2.2)); dismiss() }
+                        } label: {
+                            Text(sending ? "Sending…" : "Send").font(.headline)
+                                .padding(.horizontal, 20).padding(.vertical, 10)
+                                .background(Theme.accent, in: Capsule()).foregroundStyle(.white)
+                        }
+                        Button(action: dismiss) {
+                            Text("Cancel").font(.headline).padding(.horizontal, 20).padding(.vertical, 10)
+                                .background(Theme.card, in: Capsule())
+                        }
+                    }
+                }
+            }
+            .padding(24)
+            .frame(maxWidth: 460)
+            .background(Theme.panel, in: RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(Theme.accent.opacity(0.6), lineWidth: 1))
+            .padding(24)
+        }
+        .onAppear { focused = true }
     }
 }

@@ -16,6 +16,7 @@ struct DetailView: View {
     @State private var providers: TMDB.Providers?
     @State private var providersLoaded = false
     @State private var person: TMDB.Person?
+    @State private var showReport = false
 
     private var rich: Meta { Meta(full, type: meta.type) ?? meta }
 
@@ -56,6 +57,12 @@ struct DetailView: View {
             NavigationStack {
                 PersonView(person: p)
                     .navigationDestination(for: Meta.self) { DetailView(meta: $0) }
+            }
+        }
+        .overlay {
+            if showReport {
+                ReportProblemCard(ctx: "Detail — \(meta.name)", dismiss: { showReport = false })
+                    .environmentObject(session)
             }
         }
     }
@@ -180,6 +187,8 @@ struct DetailView: View {
             ActionCircle(icon: "hand.thumbsdown", active: session.rating(meta.id) == -1, label: "Not for me") {
                 session.setRating(meta.id, -1)
             }
+            // 🛟 next to the thumbs (AJ Oct 17): report a problem with this title
+            ActionCircle(icon: "exclamationmark.bubble", active: false, label: "Report") { showReport = true }
             Spacer()
         }
     }

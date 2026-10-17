@@ -180,6 +180,8 @@ extension PlayerView {
         }
         out.append(TVControl(id: "speed", caption: "Speed", icon: "speedometer") { speedMenu = true; hideTask?.cancel() })
         out.append(TVControl(id: "info", caption: "Info", icon: "info.circle") { showStats.toggle() })
+        // 🛟 end of the row (AJ Oct 17): report a problem from the TV player too
+        out.append(TVControl(id: "report", caption: "Report", icon: "exclamationmark.bubble") { showReport = true; hideTask?.cancel() })
         return out
     }
 
