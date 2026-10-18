@@ -425,6 +425,23 @@ final class Session: ObservableObject {
         return !(r["ok"] as? Bool == false)
     }
 
+    /// 🔴 Creator live (AJ's Twitch): is AJ streaming right now + the stream metadata. The
+    /// apps show a banner on Home when live; nil = offline (hide everything).
+    func creatorLive() async -> CreatorLive? {
+        let k = subKey.isEmpty ? "x" : subKey
+        guard let r = try? await API.json("/live/\(k)/creator.json"),
+              (r["live"] as? Bool) == true else { return nil }
+        return CreatorLive(
+            channel: r["channel"] as? String ?? "",
+            name: r["name"] as? String ?? "KruzAurora",
+            platform: r["platform"] as? String ?? "Twitch",
+            title: r["title"] as? String ?? "",
+            game: r["game"] as? String ?? "",
+            viewers: r["viewers"] as? Int ?? 0,
+            thumb: r["thumb"] as? String ?? "",
+            embedPath: (r["embedPath"] as? String) ?? "/live/twitchembed?c=\(r["channel"] as? String ?? "")")
+    }
+
     /// 🛟 Report a problem (AJ Oct 17, parity with the Android/web clients): fire the user's
     /// text to the server's Problem Reports channel with who/where/version attached.
     /// Returns true on a confirmed send so the UI can confirm.

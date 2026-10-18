@@ -14,6 +14,7 @@ struct HomeView: View {
     @State private var loading = true
     @State private var loadGen = 0
     @State private var resume: CWItem?
+    @State private var creator: CreatorLive?
 
     var body: some View {
         NavigationStack {
@@ -21,6 +22,7 @@ struct HomeView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 4) {
                     if !hero.isEmpty { HeroPager(metas: hero) }
+                    if let c = creator { CreatorBanner(info: c) }   // 🔴 only when AJ is live
                     if session.canStream && !cw.isEmpty {
                         ContinueRow(items: cw) { item in
                             session.dismissNewEpsBadge(item.meta.id, latestKey: item.latestKey)
@@ -78,6 +80,7 @@ struct HomeView: View {
         loadGen += 1
         let gen = loadGen
         loading = true
+        creator = await session.creatorLive()   // 🔴 fresh frame/title each Home load
         cw = session.canStream ? await session.continueWatchingOrdered() : []
         // hero + Top 10 = TODAY's trending movies + shows interleaved (independent of the shelves)
         let (tm, ts) = await Catalog.trending(session: session)
