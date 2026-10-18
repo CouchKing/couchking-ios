@@ -24,6 +24,7 @@ struct LiveTVView: View {
     @State var favDirty = false
     @State var tune: Meta?
     @State var gamesTask: Task<Void, Never>?
+    @State var creator: CreatorLive?
 
     var searching: Bool { !q.trimmingCharacters(in: .whitespaces).isEmpty }
     var chips: [String] {
@@ -77,6 +78,7 @@ struct LiveTVView: View {
                     if locked {
                         lockedPanel
                     } else {
+                        if !searching, let c = creator { CreatorBanner(info: c) }   // 🔴 only when AJ is live
                         if !searching { gamesBanner }
                         if !searching { chipsRow }
                         if searching { searchResults }
@@ -288,6 +290,7 @@ struct LiveTVView: View {
 
     /// Build the page (Android liveRenderGuide): guide + games, stamped for the 60s staleness rule.
     func build(force: Bool) async {
+        creator = await session.creatorLive()   // 🔴 fresh each open; nil when AJ is offline
         guard session.catalogs.contains(where: { $0.isLive }) else { loading = false; return }
         loading = true
         now = LiveTV.nowMs()
