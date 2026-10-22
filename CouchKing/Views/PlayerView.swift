@@ -1733,7 +1733,9 @@ struct PlayerView: View {
             // in-video tracks are cut for the exact file being played = best sync — list
             // them above the external OpenSubtitles entries (matches Android's ordering)
             if s["embedded"] != nil { sc += 10 }
-            if name.contains("sdh") || name.contains("hearing") { sc -= 5 }
+            // SDH/EMBEDDED-FIRST default (AJ Oct 22, reverses Sep 3): the release's own SDH
+            // track ranks TOP (embedded SDH > embedded plain > external plain > external SDH)
+            if name.contains("sdh") || name.contains("hearing") { sc += s["embedded"] != nil ? 5 : -5 }
             if name.contains("forced") { sc -= 20 }
             return sc
         }
