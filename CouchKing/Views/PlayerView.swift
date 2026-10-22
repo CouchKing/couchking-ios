@@ -120,6 +120,17 @@ struct PlayerView: View {
     @State var placeholder = false
     @State var placeholderPoll: Task<Void, Never>?
     @State var swapped: [String: Any]?   // the real stream once it lands
+    // ---- notice clips: short server MESSAGE videos 302-served on the episode's own url ----
+    // ck-toomany (~24s device limit) / ck-notreleased (20s) / ck-unaired / ck-nostream. The
+    // stream list usually tags these (ckBlocked / ⏳ names) but one can land UNTAGGED when the
+    // slot/state flips between the list fetch and the press — the duration tripwire (a 3-90s
+    // file where a real episode/movie was expected) catches those so the clip's clock never
+    // becomes the episode's progress (same family as the Oct 5 placeholder-clock-as-resume bug).
+    @State var notice = false            // a message clip is looping in place of the episode
+    @State var noticeConfirmed = false   // the redirect probe actually saw a notice file in the chain
+    @State var noticeCleared = false     // tripwire fired but the chain was clean (a real short video) — stand down for good
+    @State var noticePoll: Task<Void, Never>?
+    static let noticeMarks = ["_downloading", "ck-toomany", "ck-notreleased", "ck-unaired", "ck-nostream"]
     // ---- /webplay/probe (IOS_CONTRACTS §4) ----
     @State var probeInfo = ""
     @State var probedDurMs = 0   // true media duration from /webplay/probe (the remux HLS playlist only reports what's transcoded)
@@ -141,10 +152,11 @@ struct PlayerView: View {
     @FocusState var pfocus: PFocus?
 
     var isLive: Bool { request.meta.type == "tv" }
-    /// The url actually playing (the real file after a placeholder hot-swap).
+    /// The url actually playing (the real file after a placeholder hot-swap), always carrying
+    /// `&d=<device id>` on /tbplay/ · /play/ urls so the server knows WHICH device holds the slot.
     var playURL: URL {
-        if let u = swapped?["url"] as? String, let url = URL(string: u) { return url }
-        return request.url
+        if let u = swapped?["url"] as? String, let url = URL(string: u) { return API.withDevice(url) }
+        return API.withDevice(request.url)
     }
 
     init(request: PlayRequest) { self.initialRequest = request }
@@ -315,7 +327,7 @@ struct PlayerView: View {
     /// of the screen (AJ: "can't play pause in the middle of the screen or skip 10 secs").
     var centerCluster: some View {
         HStack(spacing: 44) {
-            if !isLive && !placeholder {
+            if !isLive && !placeholder && !notice {
                 // TAP = ±step every time; HOLD = Netflix scan; taps then change speed (AJ Oct 11)
                 let step = session.pref("seekStep", 10)
                 SeekButton(icon: shuttleLevel < 0 ? "backward.fill" : "gobackward",
@@ -334,7 +346,7 @@ struct PlayerView: View {
             }
             .accessibilityLabel(playing ? "Pause" : "Play")
             .focused($pfocus, equals: .play)
-            if !isLive && !placeholder {
+            if !isLive && !placeholder && !notice {
                 let step = session.pref("seekStep", 10)
                 SeekButton(icon: shuttleLevel > 0 ? "forward.fill" : "goforward",
                            label: shuttleLevel > 0 ? "\(shuttleRates[abs(shuttleLevel) - 1] / 1000)×" : "\(step)",
@@ -587,7 +599,7 @@ struct PlayerView: View {
             Spacer()
             // "Ends 9:47 PM" — hidden in live mode (rolling HLS duration lies) and while a
             // placeholder clip loops. Android ticker.
-            if durMs > 1000 && !isLive && !placeholder {
+            if durMs > 1000 && !isLive && !placeholder && !notice {
                 Text(endsText).font(.caption).foregroundStyle(.white.opacity(0.85))
                     .padding(.horizontal, 10).padding(.vertical, 6)
                     .background(.black.opacity(0.5), in: Capsule())
@@ -623,7 +635,7 @@ struct PlayerView: View {
                     .background(.red, in: RoundedRectangle(cornerRadius: 4))
                     .foregroundStyle(.white)
                 Spacer()
-            } else if durMs > 0 && !placeholder {
+            } else if durMs > 0 && !placeholder && !notice {
                 let shown = scrubbing ? Int(scrubMs) : posMs
                 Text(clock(shown)).font(.caption.monospacedDigit()).foregroundStyle(.white)
                 #if os(tvOS)
@@ -700,7 +712,7 @@ struct PlayerView: View {
                 }
                 #endif
                 // Restart = play from the very beginning (AJ Oct 11 "everyone wants a restart button")
-                if !isLive && !placeholder {
+                if !isLive && !placeholder && !notice {
                     barButton("Restart", "arrow.counterclockwise") {
                         shuttleStop(resume: false)
                         seek(ms: 0); player.play(); playing = true; scheduleHide()
@@ -766,7 +778,7 @@ struct PlayerView: View {
     // The scan only moves the TIMELINE preview (posMs) — ONE seek fires on resume, because
     // remuxed seeks past the transcode edge reopen the ffmpeg session.
     func shuttleStep(_ dir: Int) {
-        guard !isLive, !placeholder else { return }
+        guard !isLive, !placeholder, !notice else { return }
         epTouched = true
         let lvl = max(-3, min(3, shuttleLevel + dir))
         if lvl == 0 { shuttleStop(resume: true); return }
@@ -797,7 +809,7 @@ struct PlayerView: View {
     }
 
     func remoteSeek(_ dir: Int) {
-        guard !isLive, !placeholder else { showControls(); return }
+        guard !isLive, !placeholder, !notice else { showControls(); return }
         let step = session.pref("seekStep", 10) * 1000
         seek(ms: max(0, posMs + dir * step))
         flashLabel(dir < 0 ? "⟲ \(step / 1000)s" : "⟳ \(step / 1000)s")
@@ -806,7 +818,7 @@ struct PlayerView: View {
     func showControls() {
         controlsVisible = true
         #if os(tvOS)
-        pfocus = (isLive || placeholder) ? .play : .seek   // Firestick focuses the time bar
+        pfocus = (isLive || placeholder || notice) ? .play : .seek   // Firestick focuses the time bar
         #endif
         scheduleHide()
     }
@@ -947,7 +959,7 @@ struct PlayerView: View {
     }
 
     @ViewBuilder var skipButton: some View {
-        if placeholder { EmptyView() }
+        if placeholder || notice { EmptyView() }
         else if let st = skipState {
             // Dismiss beside Skip hides the pill for the rest of this window, like the
             // next-up card's Dismiss (AJ Oct 15). Focus still lands on Skip on appear.
@@ -1124,7 +1136,7 @@ struct PlayerView: View {
         }
         player.allowsExternalPlayback = true   // native AirPlay — sends the real video to the TV
         placeholder = request.placeholder
-        let item = AVPlayerItem(url: request.url)
+        let item = AVPlayerItem(url: playURL)   // playURL = request.url + &d=<device id>
         player.replaceCurrentItem(with: item)
         observeItem(item)
         if placeholder { startPlaceholderPoll() }
@@ -1386,6 +1398,15 @@ struct PlayerView: View {
         if windows.introTo > 0 && prev < windows.introTo && ms >= windows.introTo { introHandled = true }
         if windows.recapTo > 0 && prev < windows.recapTo && ms >= windows.recapTo { recapHandled = true }
         if isLive || placeholder { return }
+        // NOTICE-CLIP TRIPWIRE: a "real" VOD open whose file turns out to be 3-90s long is a
+        // server message clip (29-31s / 295-305s = the WAITING clip's signature → full
+        // placeholder mode instead). Checked BEFORE the heartbeat ever sees a duration, so
+        // the clip's clock can't reach progress/watched/next-up even when detection raced.
+        if !notice, !noticeCleared {
+            let d = remuxed ? probedDurMs : Self.safeMs(player.currentItem?.duration.seconds ?? .nan)
+            if d > 0 { noticeCheck(d) }
+        }
+        if notice { return }
         heartbeat()
         stingerNudge()
         nextUpTick()
@@ -1443,7 +1464,7 @@ struct PlayerView: View {
         // never track progress on the "getting this ready" loop — its clock was being saved
         // as the EPISODE's position (local + server), so the real file resumed minutes in
         // (AJ Oct 5 "3 minutes into the getting-ready screen = show starts at 3 minutes")
-        guard !placeholder, player.rate > 0, durMs > 0, !finishedHandled else { return }
+        guard !placeholder, !notice, player.rate > 0, durMs > 0, !finishedHandled else { return }
         // streaming-slot beat (AJ Oct 16, Live TV parity): claims/refreshes this device's
         // VOD slot every 15s while actually playing — Live TV has its own slot system.
         // 3 consecutive "no slot" answers (~45s, so a brief carrier IP flap never kicks the
@@ -1918,7 +1939,7 @@ struct PlayerView: View {
             // instead of letting AVPlayer fail and reopen at a stale clock
             playRemux(fromMs: 0)
         } else {
-            let item = AVPlayerItem(url: url)
+            let item = AVPlayerItem(url: API.withDevice(url))
             player.replaceCurrentItem(with: item)
             observeItem(item)
             player.play()
@@ -1927,6 +1948,88 @@ struct PlayerView: View {
             await probeMedia()
             if subIndex < 0, !subTracks.isEmpty, session.pref("subLang", "off") != "off" { pickSub(0) }
         }
+    }
+
+    // MARK: notice clips (ck-toomany / ck-notreleased / ck-unaired / ck-nostream)
+
+    /// Duration tripwire, run by the tick the moment the loaded item's duration is known.
+    func noticeCheck(_ d: Int) {
+        // the WAITING clip's signature durations (server contract: those files MUST stay
+        // 29-31s or 295-305s — Android detects them the same way): full placeholder mode NOW
+        // (banner + stream-list poll + plays-from-0 hot-swap) instead of waiting for
+        // onEnded's fallback to catch the first loop
+        if (29_000...31_000).contains(d) || (295_000...305_000).contains(d) {
+            placeholder = true
+            startPlaceholderPoll()
+            return
+        }
+        guard (3_000...90_000).contains(d) else { return }
+        // live-style: no scrubber/Ends, no seeks, no progress, loop on end — the clip IS the
+        // message, so no banner either
+        notice = true
+        subCues = []; currentCue = ""   // episode-timed cues must not draw over the clip
+        showNextUp = false
+        controlsVisible = true
+        startNoticePoll()
+    }
+
+    /// Every ~20s (first check fast) walk the ORIGINAL stream url's redirect chain by hand —
+    /// HEAD hops with redirects stopped, never a second playback (API.redirectChain). Chain
+    /// still lands on a notice file → keep looping the clip. Chain comes back clean AFTER a
+    /// confirmed notice → the same url now 302s to the real episode, swap it in. Clean on the
+    /// FIRST look = the tripwire caught a real short video (shorts, minisodes) → restore the
+    /// normal UI untouched and stand down for the rest of this sit-down.
+    func startNoticePoll() {
+        noticePoll?.cancel()
+        noticePoll = Task {
+            var first = true
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(first ? 2 : 20))
+                first = false
+                guard !Task.isCancelled, notice else { return }
+                // probe WITH the device id — blocked-or-clear is a per-device answer;
+                // nil = network blip → inconclusive, keep the gates up and retry
+                guard let chain = await API.redirectChain(playURL) else { continue }
+                let blocked = chain.contains { hop in
+                    let h = hop.lowercased()
+                    return Self.noticeMarks.contains { h.contains($0) }
+                }
+                if blocked { await MainActor.run { noticeConfirmed = true }; continue }
+                await MainActor.run {
+                    if noticeConfirmed { noticeSwap() }
+                    else { notice = false; noticeCleared = true; scheduleHide() }
+                }
+                return
+            }
+        }
+    }
+
+    /// The chain cleared — the same url serves the EPISODE now. Fresh AVPlayerItem (the old
+    /// one cached the clip redirect) at the position the open INTENDED — the clip's loop
+    /// clock is discarded wholesale, parity with hotSwap's hard reset (the Oct 5
+    /// placeholder-clock-as-resume bug class).
+    func noticeSwap() {
+        noticePoll?.cancel(); noticePoll = nil
+        notice = false; noticeConfirmed = false
+        firstFrame = false
+        // same >2min bar the open uses: trivial resumes restart from the top
+        let target = openResumeMs > 120_000 ? openResumeMs : 0
+        posMs = target; lastTickPos = target; sessionStartMs = target
+        remuxed = false; remuxBaseMs = 0; durMs = 0; probedDurMs = 0
+        startStamped = false; firstReported = false; lastBeatPos = -1
+        flashLabel(target > 0 ? "Here we go — picking up where you left off" : "Here we go!")
+        if request.url.path.lowercased().hasSuffix(".mkv") {
+            playRemux(fromMs: target)   // known-bad container: straight to the remux, like the open
+        } else {
+            pendingSeekMs = target > 0 ? target : -1   // the tick applies it the moment the item is ready
+            let item = AVPlayerItem(url: playURL)
+            player.replaceCurrentItem(with: item)
+            observeItem(item)
+            player.play()
+        }
+        // episode-timed extras back on: re-download the cue list we wiped + probe the real file
+        if subIndex >= 0, subIndex < subTracks.count { pickSub(subIndex) }
+        Task { await probeMedia() }
     }
 
     // MARK: next episode
@@ -1979,8 +2082,8 @@ struct PlayerView: View {
     /// Swap the loaded episode without opening a new player screen (Android = same activity,
     /// new media). Tears the current session down, resets per-episode state, reopens.
     func reloadInPlace(_ r: PlayRequest) async {
-        // save where we were leaving before we drop the old item
-        if !isLive && !placeholder && durMs > 0 {
+        // save where we were leaving before we drop the old item — never a message clip's clock
+        if !isLive && !placeholder && !notice && durMs > 0 {
             savePos(posMs, durMs, push: true)
         }
         shuttleTimer?.invalidate(); shuttleTimer = nil; shuttleLevel = 0
@@ -1995,6 +2098,8 @@ struct PlayerView: View {
         posMs = 0; durMs = 0; probedDurMs = 0; pendingSeekMs = -1
         subCues = []; currentCue = ""; subTracks = []; subIndex = -1
         nextEp = nil; nextReq = nil; showNextUp = false; nextUpDismissed = false
+        noticePoll?.cancel(); noticePoll = nil
+        notice = false; noticeConfirmed = false; noticeCleared = false
         introHandled = false; recapHandled = false; acDismissed = false
         finishedHandled = false; startStamped = false; controlsVisible = true
         windows = PlayerWindows()
@@ -2003,6 +2108,8 @@ struct PlayerView: View {
 
     func onEnded() {
         if placeholder { seek(ms: 0); player.play(); return }   // loop the clip until the real file lands
+        // notice clip: loop live-style — NEVER finish/mark-watched/advance off a message video
+        if notice { player.seek(to: .zero); player.play(); return }
         // SIGNATURE-DURATION FALLBACK (AJ Oct 16): the waiting clips are exactly ~30s/~300s —
         // if detection missed, ending one must loop + enter placeholder mode, never "finish"
         if (29_000...31_000).contains(durMs) || (295_000...305_000).contains(durMs), !isLive {
@@ -2042,7 +2149,7 @@ struct PlayerView: View {
         posMs = pos
         if remuxed { if probedDurMs > 0 { durMs = probedDurMs } }
         else if let d = player.currentItem?.duration.seconds, d.isFinite, d > 0 { durMs = Int(d * 1000) }
-        if !isLive && !placeholder && !finishedHandled {
+        if !isLive && !placeholder && !notice && !finishedHandled {
             if qualifiesWatched {
                 finishEpisode()
             } else if pos > 5000 {
@@ -2059,6 +2166,7 @@ struct PlayerView: View {
         hideTask?.cancel(); hideTask = nil
         shuttleTimer?.invalidate(); shuttleTimer = nil; shuttleLevel = 0
         placeholderPoll?.cancel(); placeholderPoll = nil
+        noticePoll?.cancel(); noticePoll = nil
         subxTask?.cancel(); subxTask = nil
         if let t = timeObserver { player.removeTimeObserver(t) }
         timeObserver = nil

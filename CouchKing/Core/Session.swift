@@ -421,7 +421,7 @@ final class Session: ObservableObject {
         let k = subKey
         guard !k.isEmpty else { return true }
         let u = profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        guard let r = try? await API.json("/player/beat?k=\(k)&u=\(u)\(stop ? "&stop=1" : "")") else { return true }
+        guard let r = try? await API.json("/player/beat?k=\(k)&u=\(u)&d=\(API.deviceId)\(stop ? "&stop=1" : "")") else { return true }
         return !(r["ok"] as? Bool == false)
     }
 
@@ -884,7 +884,7 @@ struct PlayerWindows {
         let k = session.subKey
         guard !k.isEmpty else { return w }
         let u = session.profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        var path = "/player/resume?k=\(k)&u=\(u)&i=\(id)"
+        var path = "/player/resume?k=\(k)&u=\(u)&i=\(id)&d=\(API.deviceId)"
         if let s = season, let e = episode { path += "&s=\(s)&e=\(e)" }
         guard let r = try? await API.json(path) else { return w }
         w.introFrom = r["introFrom"] as? Int ?? 0

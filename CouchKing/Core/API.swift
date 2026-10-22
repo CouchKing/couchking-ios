@@ -38,6 +38,19 @@ struct API {
         req.setValue(deviceModel, forHTTPHeaderField: "X-CK-Model")
     }
 
+    /// Stream urls (/tbplay/ · /play/) carry the device id as `&d=` so the server's per-device
+    /// slot accounting works even where the X-CK headers can't ride along (AVPlayer's own
+    /// media fetches don't go through stampDevice). No-op for any other url; never doubles up.
+    static func withDevice(_ url: URL) -> URL {
+        let p = url.path
+        guard p.contains("/tbplay/") || p.contains("/play/"),
+              var c = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return url }
+        let q = c.percentEncodedQuery ?? ""
+        guard !q.split(separator: "&").contains(where: { $0.hasPrefix("d=") }) else { return url }
+        c.percentEncodedQuery = q.isEmpty ? "d=\(deviceId)" : q + "&d=\(deviceId)"
+        return c.url ?? url
+    }
+
     /// The account service base: the user's override when set, else the default.
     static var serviceBase: String {
         get {
@@ -110,6 +123,30 @@ struct API {
         return (r.1 as? HTTPURLResponse)?.statusCode ?? 0
     }
 
+    /// Walk a stream url's redirect chain BY HAND — HEAD each hop with redirects STOPPED
+    /// (delegate answers nil), read Location ourselves, up to `maxHops` — so the player can
+    /// ask "is this url still 302-ing to a notice clip?" without ever starting a second
+    /// playback. Returns every url in the chain (start + each Location); nil when the very
+    /// first request couldn't be made at all (network blip = inconclusive, NOT "clean").
+    static func redirectChain(_ url: URL, maxHops: Int = 4) async -> [String]? {
+        var chain = [url.absoluteString]
+        var cur = url
+        for hop in 0..<maxHops {
+            var req = URLRequest(url: cur)
+            req.httpMethod = "HEAD"
+            req.timeoutInterval = 8
+            stampDevice(&req)
+            guard let (_, resp) = try? await URLSession.shared.data(for: req, delegate: RedirectStopper.shared),
+                  let http = resp as? HTTPURLResponse else { return hop == 0 ? nil : chain }
+            guard (300..<400).contains(http.statusCode),
+                  let loc = http.value(forHTTPHeaderField: "Location"),
+                  let next = URL(string: loc, relativeTo: cur)?.absoluteURL else { return chain }
+            chain.append(next.absoluteString)
+            cur = next
+        }
+        return chain
+    }
+
     /// base64url (IOS_CONTRACTS §4): standard base64 with + → -, / → _, padding stripped.
     static func b64url(_ s: String) -> String {
         Data(s.utf8).base64EncodedString()
@@ -125,6 +162,18 @@ struct API {
         case 503: return "CouchKing is at full capacity right now — try again in a few minutes."
         case 403: return "This isn't part of your plan. Upgrade to watch it."
         default: return nil
+        }
+    }
+
+    /// Task delegate that refuses every redirect, so the 3xx response itself (with its
+    /// Location header) comes back to the caller — redirectChain's one moving part.
+    final class RedirectStopper: NSObject, URLSessionTaskDelegate {
+        static let shared = RedirectStopper()
+        func urlSession(_ session: URLSession, task: URLSessionTask,
+                        willPerformHTTPRedirection response: HTTPURLResponse,
+                        newRequest request: URLRequest,
+                        completionHandler: @escaping (URLRequest?) -> Void) {
+            completionHandler(nil)
         }
     }
 

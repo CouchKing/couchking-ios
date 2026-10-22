@@ -34,7 +34,7 @@ extension PlayerView {
                 }
                 .allowsHitTesting(false)
             }
-            if !placeholder, let st = skipState { tvSkipPill(st) }
+            if !placeholder, !notice, let st = skipState { tvSkipPill(st) }
             if !flash.isEmpty { tvFlash }
             if showStats {
                 VStack { HStack {
@@ -82,7 +82,7 @@ extension PlayerView {
                 .frame(maxWidth: .infinity, alignment: .leading)
             VStack(alignment: .trailing, spacing: 0) {
                 Text(Date.now, format: .dateTime.hour().minute()).font(.system(size: TV.sp(18), weight: .bold)).foregroundStyle(.white)
-                if durMs > 1000 && !isLive && !placeholder {
+                if durMs > 1000 && !isLive && !placeholder && !notice {
                     Text(endsText).font(.system(size: TV.sp(14))).foregroundStyle(TV.captionGrey)
                 }
             }
@@ -103,7 +103,7 @@ extension PlayerView {
             if isLive {
                 Text("🔴 LIVE").font(.system(size: TV.sp(14), weight: .bold)).foregroundStyle(.white)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, TV.dp(24))
-            } else if !placeholder && durMs > 0 {
+            } else if !placeholder && !notice && durMs > 0 {
                 HStack(spacing: TV.dp(8)) {
                     Text(clock(posMs)).font(.system(size: TV.sp(14))).foregroundStyle(.white)
                     TVTimeBar(pos: posMs, dur: durMs, buffered: bufferedMs)

@@ -31,7 +31,7 @@ extension PlayerView {
                 .allowsHitTesting(false)
             }
             // skip pill — left 2rem, bottom 170px
-            if !placeholder, let st = skipState {
+            if !placeholder, !notice, let st = skipState {
                 VStack { Spacer()
                     HStack {
                         DeskPill(text: deskSkipLabel(st.0)) {
@@ -88,7 +88,7 @@ extension PlayerView {
                     Text("🔴 LIVE").font(.system(size: 16, weight: .bold)).foregroundStyle(Desk.hex(0xFF5B5B))
                 }
                 Text(Date.now, format: .dateTime.hour().minute()).font(.system(size: 16, weight: .heavy)).foregroundStyle(.white)
-                if durMs > 1000 && !isLive && !placeholder {
+                if durMs > 1000 && !isLive && !placeholder && !notice {
                     Text(endsText).font(.system(size: 12.8, weight: .bold)).foregroundStyle(Desk.text2)
                 }
             }
@@ -107,7 +107,7 @@ extension PlayerView {
     // MARK: bottom (.wp-bottom)
     private var deskBottom: some View {
         VStack(spacing: 0) {
-            if !isLive && !placeholder && durMs > 0 {
+            if !isLive && !placeholder && !notice && durMs > 0 {
                 deskScrubber.padding(.bottom, 6.4)
                 HStack {
                     Text(clock(posMs)); Spacer(); Text(durMs > 0 ? clock(durMs) : "–:––")
@@ -116,12 +116,12 @@ extension PlayerView {
                 .padding(.bottom, 8)
             }
             HStack(alignment: .bottom, spacing: 25.6) {
-                if !isLive && !placeholder {
+                if !isLive && !placeholder && !notice {
                     let step = session.pref("seekStep", 10)
                     deskCell("Back \(step)s") { Button("⏪") { epTouched = true; remoteSeek(-1) } }
                 }
                 deskCell("Play / Pause") { Button(playing ? "⏸" : "▶") { togglePlay() } }
-                if !isLive && !placeholder {
+                if !isLive && !placeholder && !notice {
                     let step = session.pref("seekStep", 10)
                     deskCell("Forward \(step)s") { Button("⏩") { epTouched = true; remoteSeek(1) } }
                 }
