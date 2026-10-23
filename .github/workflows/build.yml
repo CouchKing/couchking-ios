@@ -102,19 +102,25 @@ jobs:
           mkdir -p ~/.appstoreconnect/private_keys
           echo "$APPSTORE_P8" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8
           chmod 600 ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8
-      - name: Archive (unsigned — the export step does distribution signing)
+      - name: Archive (signed — so the aps-environment entitlement is embedded)
         if: steps.gate.outputs.go == 'yes'
         run: |
           set -o pipefail
-          # Archive WITHOUT signing: automatic signing during archive requests a *development*
-          # profile (needs a registered device). The export step below signs for App Store
-          # distribution instead, whose profiles need no device.
+          # MUST sign at archive time. The old pipeline archived UNSIGNED
+          # (CODE_SIGNING_ALLOWED=NO), which produced an .app with NO embedded entitlements —
+          # so when the export step re-signed it, `aps-environment` had nothing to carry over
+          # and EVERY build shipped without push (fleet-wide zero APNs tokens, Oct 23). Signing
+          # here with cloud-managed automatic signing (the ASC API key + -allowProvisioningUpdates
+          # fetches/creates the App Store distribution profile, which now includes Push because
+          # the App ID has the capability) embeds the real entitlements into the archive.
           xcodebuild -project CouchKing.xcodeproj -scheme CouchKing \
             -configuration Release -destination 'generic/platform=iOS' \
             -archivePath build/CouchKing.xcarchive \
-            DEVELOPMENT_TEAM="$TEAM_ID" \
+            DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Automatic \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8 \
+            -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER_ID" \
             archive 2>&1 | tee archive.log | tail -30
       - name: Export IPA
         if: steps.gate.outputs.go == 'yes'
@@ -138,6 +144,23 @@ jobs:
             -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8 \
             -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER_ID" \
             2>&1 | tee export.log | tail -20
+      - name: Verify push entitlement is in the IPA (never ship push-broken again)
+        if: steps.gate.outputs.go == 'yes'
+        run: |
+          set -o pipefail
+          IPA=$(find build/export -name '*.ipa' | head -1)
+          echo "checking aps-environment in: $IPA"
+          rm -rf _ipacheck && mkdir _ipacheck
+          unzip -q "$IPA" -d _ipacheck
+          APP=$(find _ipacheck/Payload -maxdepth 1 -name '*.app' | head -1)
+          ENT=$(codesign -d --entitlements :- "$APP" 2>/dev/null || true)
+          echo "$ENT" | grep -A1 'aps-environment' || true
+          if echo "$ENT" | grep -q 'aps-environment'; then
+            echo "✅ aps-environment present — push will register"
+          else
+            echo "❌ FATAL: aps-environment entitlement MISSING from the signed app — push would be dead. Failing the build."
+            exit 1
+          fi
       - name: Validate binary (surfaces missing-icon / bad-plist / SDK issues BEFORE upload)
         if: steps.gate.outputs.go == 'yes'
         continue-on-error: true   # informational — don't block the real upload, but DO show the result
