@@ -156,6 +156,9 @@ final class Session: ObservableObject {
             unstashAccount(email)
             self.token = t
             UserDefaults.standard.set(t, forKey: "token")
+            #if os(iOS)
+            Push.register()   // fresh sign-in → APNs prompt + token upload (Oct 22)
+            #endif
             profilePicked = false
             pulledOk = false
             setOnboarded(true)

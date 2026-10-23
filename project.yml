@@ -21,6 +21,11 @@ targets:
     type: application
     platform: iOS
     sources: [CouchKing]
+    entitlements:
+      path: CouchKing/CouchKing.entitlements
+      properties:
+        aps-environment: production   # REAL PUSH (Oct 22) — APNs key 5DUT38R3M8 on the server
+
     info:
       path: CouchKing/Info.plist
       properties:
