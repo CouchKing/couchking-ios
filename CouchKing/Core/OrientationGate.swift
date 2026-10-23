@@ -22,6 +22,12 @@ final class CKAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
         Push.upload(tokenHex: deviceToken.map { String(format: "%02x", $0) }.joined())
     }
 
+    func application(_ application: UIApplication,
+                     didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        // was invisible — now a device that never registers tells us WHY (Oct 23)
+        Push.reportRegisterFailure(error)
+    }
+
     /// pushes show as banners even while the app is open (game starting = you want it NOW)
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification,
