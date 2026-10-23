@@ -426,7 +426,7 @@ extension PlayerView {
     }
 }
 
-/// DefaultTimeBar: played + scrubber #7B5BF5, buffered #667B5BF5, unplayed #33FFFFFF.
+/// DefaultTimeBar: played + scrubber = per-profile accent, buffered = accent @40%, unplayed #33FFFFFF.
 struct TVTimeBar: View {
     let pos: Int, dur: Int, buffered: Int
     @Environment(\.isFocused) private var focused
@@ -437,7 +437,7 @@ struct TVTimeBar: View {
             let b = CGFloat(Double(buffered) / Double(max(dur, 1)))
             ZStack(alignment: .leading) {
                 Capsule().fill(TV.argb(0x33FFFFFF)).frame(height: TV.dp(4))
-                Capsule().fill(TV.argb(0x667B5BF5)).frame(width: w * min(1, b), height: TV.dp(4))
+                Capsule().fill(TV.accent.opacity(0.4)).frame(width: w * min(1, b), height: TV.dp(4))
                 Capsule().fill(TV.accent).frame(width: w * min(1, p), height: TV.dp(4))
                 Circle().fill(TV.accent).frame(width: TV.dp(focused ? 14 : 8), height: TV.dp(focused ? 14 : 8))
                     .offset(x: w * min(1, p) - TV.dp(focused ? 7 : 4))
