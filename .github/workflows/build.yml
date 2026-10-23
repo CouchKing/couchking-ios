@@ -116,22 +116,6 @@ jobs:
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             archive 2>&1 | tee archive.log | tail -30
-      - name: Embed entitlements in the archive (so export signs in aps-environment)
-        if: steps.gate.outputs.go == 'yes'
-        run: |
-          set -o pipefail
-          # THE push fix. An UNSIGNED archive carries no entitlements, so exportArchive's re-sign
-          # had no aps-environment to apply → every build shipped push-dead (fleet-wide zero APNs
-          # tokens, Oct 23). Xcode records an archive's entitlements in the app bundle as
-          # `archived-expanded-entitlements.xcent`; export reads THAT when it re-signs. We drop the
-          # XcodeGen-generated entitlements plist in as that file so distribution signing carries
-          # the push entitlement — no device / development profile needed.
-          APP=build/CouchKing.xcarchive/Products/Applications/CouchKing.app
-          SRC=CouchKing/CouchKing.entitlements
-          test -f "$SRC" || { echo "❌ entitlements plist missing at $SRC (xcodegen didn't emit it)"; exit 1; }
-          grep -q 'aps-environment' "$SRC" || { echo "❌ $SRC has no aps-environment"; exit 1; }
-          cp "$SRC" "$APP/archived-expanded-entitlements.xcent"
-          echo "embedded entitlements into the archive:"; cat "$APP/archived-expanded-entitlements.xcent"
       - name: Export IPA
         if: steps.gate.outputs.go == 'yes'
         run: |
@@ -154,6 +138,41 @@ jobs:
             -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8 \
             -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER_ID" \
             2>&1 | tee export.log | tail -20
+      - name: Re-sign IPA to add aps-environment (export's auto-signing drops it)
+        if: steps.gate.outputs.go == 'yes'
+        run: |
+          set -eo pipefail
+          # ROOT CAUSE of fleet-wide zero APNs tokens (Oct 23): exportArchive's automatic signing
+          # regenerates entitlements from the provisioning profile and drops aps-environment — the
+          # archived entitlements don't survive. Fix: re-sign the exported .app with the push
+          # entitlement, reusing the SAME cloud-managed distribution identity Xcode just created in
+          # the keychain during export (no new secret needed). Entitlements are built from the known
+          # team + bundle so there's no fragile parsing of codesign output. Apple accepts
+          # aps-environment=production because the App ID has the Push capability enabled.
+          IPA=$(find build/export -name '*.ipa' | head -1)
+          WORK=_resign; rm -rf "$WORK"; mkdir "$WORK"
+          ( cd "$WORK" && unzip -q "../$IPA" )
+          APP="$WORK/Payload/CouchKing.app"
+          cat > ent.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>application-identifier</key><string>${TEAM_ID}.app.couchking.ios</string>
+            <key>com.apple.developer.team-identifier</key><string>${TEAM_ID}</string>
+            <key>aps-environment</key><string>production</string>
+            <key>get-task-allow</key><false/>
+          </dict></plist>
+          EOF
+          echo "entitlements to apply:"; cat ent.plist
+          IDENT=$(security find-identity -v -p codesigning | awk '/Distribution/{print $2; exit}')
+          test -n "$IDENT" || { echo "❌ no distribution identity in keychain"; security find-identity -v -p codesigning; exit 1; }
+          echo "re-signing with identity $IDENT"
+          codesign --force --sign "$IDENT" --entitlements ent.plist "$APP"
+          codesign -d --entitlements :- "$APP" 2>/dev/null | grep -q aps-environment \
+            && echo "✅ aps-environment now in the .app" || { echo "❌ re-sign didn't take"; exit 1; }
+          rm -f "$IPA"
+          ( cd "$WORK" && zip -qr "../$IPA" Payload )
+          echo "repackaged $IPA"
       - name: Verify push entitlement is in the IPA (never ship push-broken again)
         if: steps.gate.outputs.go == 'yes'
         run: |
