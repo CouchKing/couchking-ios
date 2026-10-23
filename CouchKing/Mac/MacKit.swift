@@ -13,7 +13,7 @@ enum Desk {
     static let bg = hex(0x0C0B14)          // --bg
     static let card = hex(0x1B1830)        // --card
     static let card2 = hex(0x241F3D)       // --card2
-    static let accent = hex(0x7B5BF5)      // --accent
+    static var accent: Color { Theme.accent }   // per-profile accent (follows Theme.accent)
     static let muted = hex(0xA9A5C0)       // --muted
     static let fg = Color.white            // --fg
     // named colors

@@ -9,7 +9,7 @@ import SwiftUI
 // Apple TV: 1dp = 2pt, rows fill #2C2649 on focus (no ring). Mac: rows max 560px, hover #241F3D.
 // Sub-pages are value routes so the Apple TV shell's Menu button pops them one at a time.
 
-enum HubRoute: Hashable { case signIn, forgot, player, addons, about, terms, privacy, shelves, reorder }
+enum HubRoute: Hashable { case signIn, forgot, player, addons, about, terms, privacy, shelves, reorder, accent }
 
 struct SettingsHub: View {
     @EnvironmentObject var session: Session
@@ -36,17 +36,33 @@ struct SettingsHub: View {
                 if !err.isEmpty { HubDim(text: err) }
             }
             HubSection(text: "SETTINGS")
-            HubLink(label: "Shelves", value: "\(session.enabledShelves().count) shelves", route: .shelves)
-            HubLink(label: "Reorder shelves", value: "Set the order they show on Home", route: .reorder)
-            HubRow(label: "Blur unwatched episode images", value: blur ? "On" : "Off") {
-                session.setPref("blurUnwatched", !blur)
+            Group {
+                HubLink(label: "Shelves", value: "\(session.enabledShelves().count) shelves", route: .shelves)
+                HubLink(label: "Reorder shelves", value: "Set the order they show on Home", route: .reorder)
+                HubRow(label: "Blur unwatched episode images", value: blur ? "On" : "Off") {
+                    session.setPref("blurUnwatched", !blur)
+                }
+                HubRow(label: "Show titles under posters", value: titles ? "On" : "Off") {
+                    session.setPref("showTitles", !titles)
+                }
+                HubRow(label: "Hide watched titles", value: hideWatched ? "On" : "Off") {
+                    session.setPref("hideWatched", !hideWatched)
+                }
+                HubLink(label: "Accent color", value: session.pref("accentName", "Royal (default)"), route: .accent)
+                HubRow(label: "Open on", value: landingValue) {
+                    let opts = landingOptions
+                    let i = opts.firstIndex(of: landingValue) ?? 0
+                    session.setPref("landingTab", opts[(i + 1) % opts.count])
+                }
+                // Player settings only exist when there's something to play
+                if session.hasAddon { HubLink(label: "Player", route: .player) }
+                HubLink(label: "Addons", value: session.signedIn ? "\(session.addons.count) added" : "sign in to add", route: .addons)
             }
-            HubRow(label: "Show titles under posters", value: titles ? "On" : "Off") {
-                session.setPref("showTitles", !titles)
+            HubSection(text: "NOTIFICATIONS")
+            HubRow(label: "New episode notifications", value: notif ? "On" : "Off") {
+                session.setPref("notifNewEps", !notif)
             }
-            // Player settings only exist when there's something to play
-            if session.hasAddon { HubLink(label: "Player", route: .player) }
-            HubLink(label: "Addons", value: session.signedIn ? "\(session.addons.count) added" : "sign in to add", route: .addons)
+            HubSection(text: "ABOUT")
             HubLink(label: "Legal & About", route: .about)
         }
         .navigationDestination(for: HubRoute.self) { r in
@@ -60,6 +76,7 @@ struct SettingsHub: View {
             case .privacy: HubText(title: "Privacy Policy", text: Legal.privacy)
             case .shelves: HubShelves()
             case .reorder: HubReorder()
+            case .accent: HubAccent()
             }
         }
         // silent service-assignment refresh on open (showSettings)
@@ -78,6 +95,15 @@ struct SettingsHub: View {
 
     private var blur: Bool { session.pref("blurUnwatched", false) }
     private var titles: Bool { session.pref("showTitles", true) }
+    private var hideWatched: Bool { session.pref("hideWatched", false) }
+    private var notif: Bool { session.pref("notifNewEps", false) }
+    private var landingOptions: [String] {
+        (session.liveTvOn && session.canStream) ? ["Home", "Live TV", "Library"] : ["Home", "Library"]
+    }
+    private var landingValue: String {
+        let v = session.pref("landingTab", "Home")
+        return landingOptions.contains(v) ? v : "Home"
+    }
 
     private var accessLine: String {
         if !session.signedIn { return "Tap to sign in" }
@@ -382,16 +408,38 @@ struct HubPlayer: View {
         let cur: Int = sizes.firstIndex { abs($0.1 - scale) < 0.01 } ?? 1
         let subLang: String = session.pref("subLang", "off")
         let subOff = subLang == "off"
+        let subBg: Bool = session.pref("subBg", false)
+        let subOutline: Bool = session.pref("subOutline", true)
+        let subPos: Int = session.pref("subPos", 0)
+        let posNames = ["Normal", "Raised", "High"]
+        let audioLang: String = session.pref("audioLang", "en")
         let autoNext: Bool = session.pref("autoplayNext", true)
         let seek: Int = session.pref("seekStep", 10)
         HubPage(title: "Player") {
             HubSection(text: "SUBTITLES")
-            sample(scale)
-            HubRow(label: "Subtitle size", value: sizes[cur].0) {
-                session.setPref("subScale", sizes[(cur + 1) % sizes.count].1)
+            Group {
+                sample(scale)
+                HubRow(label: "Subtitle size", value: sizes[cur].0) {
+                    session.setPref("subScale", sizes[(cur + 1) % sizes.count].1)
+                }
+                HubRow(label: "Subtitles", value: subOff ? "Off" : "English") {
+                    session.setPref("subLang", subOff ? "en" : "off")
+                }
+                HubRow(label: "Background", value: subBg ? "On" : "Off") {
+                    session.setPref("subBg", !subBg)
+                }
+                HubRow(label: "Outline", value: subOutline ? "On" : "Off") {
+                    session.setPref("subOutline", !subOutline)
+                }
+                HubRow(label: "Position", value: posNames[min(subPos, 2)]) {
+                    session.setPref("subPos", (subPos + 1) % 3)
+                }
             }
-            HubRow(label: "Subtitles", value: subOff ? "Off" : "English") {
-                session.setPref("subLang", subOff ? "en" : "off")
+            HubSection(text: "AUDIO")
+            HubRow(label: "Audio language", value: PlayerSettingsView.audioName(audioLang)) {
+                let codes = PlayerSettingsView.audioCodes
+                let i = codes.firstIndex(of: audioLang) ?? 0
+                session.setPref("audioLang", codes[(i + 1) % codes.count])
             }
             HubSection(text: "PLAYBACK")
             HubRow(label: "Autoplay next episode", value: autoNext ? "On" : "Off") {
@@ -408,12 +456,12 @@ struct HubPlayer: View {
     /// The live sample: black r10, 110 tall, "This is what subtitles will look like" at 15 × scale.
     private func sample(_ scale: Double) -> some View {
         let outline: Bool = session.pref("subOutline", true)
-        let pos: String = session.pref("subPos", "normal")
+        let pos: Int = session.pref("subPos", 0)
         let boxed: Bool = session.pref("subBg", false)
         let unit: CGFloat = Platform.isTV ? 2 : 1
         let size: CGFloat = 15 * unit * CGFloat(scale)
         var lift: CGFloat = 10
-        if pos == "raised" { lift = 26 } else if pos == "high" { lift = 46 }
+        if pos == 1 { lift = 26 } else if pos == 2 { lift = 46 }
         let maxW: CGFloat = Platform.isMac ? 560 : .infinity
         let shade: Double = outline ? 1 : 0
         return ZStack(alignment: .bottom) {
@@ -520,6 +568,48 @@ struct HubAbout: View {
             HubLink(label: "Privacy Policy", route: .privacy)
             HubRow(label: "Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0.0",
                    isStatic: true) {}
+        }
+    }
+}
+
+/// Accent color (Android showAccentPicker): the 8 choices as swatch + name rows; the pick writes
+/// the synced accentColor/accentName prefs and re-themes the app live (follows the profile).
+struct HubAccent: View {
+    @EnvironmentObject var session: Session
+    var body: some View {
+        let cur: String = session.pref("accentColor", "#7B5BF5")
+        HubPage(title: "Accent color") {
+            ForEach(Theme.accentChoices, id: \.hex) { choice in
+                let on = cur.lowercased() == choice.hex.lowercased()
+                Button {
+                    session.setPref("accentColor", choice.hex)
+                    session.setPref("accentName", choice.name)
+                    session.applyAccentFromPrefs()
+                } label: {
+                    #if os(tvOS)
+                    HStack(spacing: TV.dp(14)) {
+                        Circle().fill(Color(hex: choice.hex)).frame(width: TV.dp(26), height: TV.dp(26))
+                        Text(choice.name).font(.system(size: TV.sp(16))).foregroundStyle(.white)
+                        Spacer(minLength: TV.dp(8))
+                        if on { Text("✓").font(.system(size: TV.sp(16), weight: .bold)).foregroundStyle(.white) }
+                    }
+                    .padding(.horizontal, TV.dp(14)).padding(.vertical, TV.dp(13))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    #else
+                    HStack(spacing: 14) {
+                        Circle().fill(Color(hex: choice.hex)).frame(width: 24, height: 24)
+                        Text(choice.name).font(.system(size: 16, weight: .bold)).foregroundStyle(Desk.fg)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if on { Text("✓").font(.system(size: 16, weight: .black)).foregroundStyle(Desk.accent) }
+                    }
+                    .padding(.horizontal, 16).padding(.vertical, 13.6)
+                    .frame(maxWidth: 560, alignment: .leading)
+                    .contentShape(Rectangle())
+                    #endif
+                }
+                .buttonStyle(HubRowStyle())
+                .padding(.vertical, HubRowGap.v)
+            }
         }
     }
 }

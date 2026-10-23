@@ -69,6 +69,9 @@ struct RootView: View {
                 MainTabs()
             }
         }
+        // repaint the whole tree when the per-profile accent changes (load / switch / pick).
+        // themeTick only moves on those events, so this never churns during normal use.
+        .id(session.themeTick)
         .onChange(of: session.signedIn) { on in if !on { firstRun = .none } }
     }
 
@@ -97,7 +100,18 @@ struct RootView: View {
 
 struct MainTabs: View {
     @EnvironmentObject var session: Session
-    @State private var tab = 1   // Home is the landing tab (Android opens on Home)
+    @State private var tab = 1   // default Home; overridden by the landingTab pref on cold open
+    @State private var landed = false
+
+    /// Tab tag the `landingTab` pref maps to (Android showMain(landingTab)): Home / Live TV /
+    /// Library. Live TV falls back to Home when the tab isn't available for this account.
+    private func landingTag() -> Int {
+        switch session.pref("landingTab", "Home") {
+        case "Live TV": return (session.liveTvOn && session.canStream) ? 4 : 1
+        case "Library": return 3
+        default: return 1
+        }
+    }
     var body: some View {
         #if os(macOS)
         MacShell()   // the desktop app's hover rail (reference/desktop)
@@ -158,6 +172,7 @@ struct MainTabs: View {
             .background(Theme.bg)
         }
         .background(Theme.bg)
+        .onAppear { if !landed { landed = true; tab = landingTag() } }
     }
     #endif
 }
@@ -165,7 +180,24 @@ struct MainTabs: View {
 // Palette = the Android app's (res/colors.xml brand_bg + MainActivity fg/dim/card/accent):
 // bg #0C0B14, panel #1B1830, card #2C2649, accent #7B5BF5, dim #A9A5C0.
 enum Theme {
-    static let accent = Color(red: 0x7B / 255.0, green: 0x5B / 255.0, blue: 0xF5 / 255.0)   // #7B5BF5
+    // Per-profile accent (Android Store.accentColor): defaults to Royal #7B5BF5, overridden
+    // live by applyAccent(hex) when a profile's `accentColor` pref loads. A `var` so the whole
+    // tree can repaint onto a new hue (RootView keys its body on session.themeTick).
+    static var accent = Color(hex: "#7B5BF5")   // #7B5BF5 Royal (default)
+    /// Set the app-wide accent from a hex string; blank/nil/invalid keeps the Royal default.
+    static func applyAccent(_ hex: String?) {
+        let h = (hex ?? "").trimmingCharacters(in: .whitespaces)
+        accent = h.isEmpty ? Color(hex: "#7B5BF5") : Color(hex: h)
+    }
+    /// The 8 pickable accents — identical to Android's list (MainActivity L8141): name + hex
+    /// round-trip across devices (Android's default name is "Royal (default)"). A struct (not a
+    /// tuple) so ForEach can key on \.hex — Swift has no key paths into tuple elements.
+    struct AccentChoice: Identifiable { let name: String; let hex: String; var id: String { hex } }
+    static let accentChoices: [AccentChoice] = [
+        .init(name: "Royal (default)", hex: "#7B5BF5"), .init(name: "Gold", hex: "#E0A400"),
+        .init(name: "Ocean", hex: "#2E86F5"), .init(name: "Crimson", hex: "#E23B4E"),
+        .init(name: "Emerald", hex: "#1DB954"), .init(name: "Pink", hex: "#E754A6"),
+        .init(name: "Sunset", hex: "#F0702A"), .init(name: "Teal", hex: "#18B8A8")]
     static let bg = Color(red: 0x0C / 255.0, green: 0x0B / 255.0, blue: 0x14 / 255.0)       // brand_bg
     static let panel = Color(red: 0x1B / 255.0, green: 0x18 / 255.0, blue: 0x30 / 255.0)    // #1B1830
     static let card = Color(red: 0x2C / 255.0, green: 0x26 / 255.0, blue: 0x49 / 255.0)     // #2C2649
@@ -177,6 +209,20 @@ enum Theme {
     /// Brand gradient (Android's crown/gradient span on "CouchKing").
     static let brand = LinearGradient(colors: [accent, Color(red: 0.93, green: 0.45, blue: 0.85)],
                                       startPoint: .leading, endPoint: .trailing)
+}
+
+extension Color {
+    /// `Color(hex: "#7B5BF5")` — 6-digit RGB (with or without leading '#'); invalid → Royal.
+    init(hex: String) {
+        var h = hex.trimmingCharacters(in: .whitespaces)
+        if h.hasPrefix("#") { h.removeFirst() }
+        guard h.count == 6, let v = UInt32(h, radix: 16) else {
+            self = Color(red: 0x7B / 255.0, green: 0x5B / 255.0, blue: 0xF5 / 255.0); return
+        }
+        self = Color(red: Double((v >> 16) & 0xFF) / 255.0,
+                     green: Double((v >> 8) & 0xFF) / 255.0,
+                     blue: Double(v & 0xFF) / 255.0)
+    }
 }
 
 /// The title-bar brand: logo + "CouchKing" (Android brandSpan: "Couch" purple, "King" white).

@@ -61,9 +61,9 @@ extension PlayerView {
     }
 
     private var deskCueBottom: CGFloat {
-        switch session.pref("subPos", "normal") {
-        case "high": return 1080 * 0.24
-        case "raised": return 1080 * 0.16
+        switch session.pref("subPos", 0) {
+        case 2: return 1080 * 0.24
+        case 1: return 1080 * 0.16
         default: return 1080 * 0.09
         }
     }

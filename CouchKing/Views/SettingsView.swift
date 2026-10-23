@@ -60,11 +60,25 @@ struct SettingsView: View {
                 NavigationLink { ShelfReorderView() } label: {
                     SettingRowLabel(label: "Reorder shelves", value: "Set the order they show on Home")
                 }
-                SettingRow(label: "Blur unwatched episode images", value: session.pref("blurUnwatched", false) ? "On" : "Off") {
-                    session.setPref("blurUnwatched", !session.pref("blurUnwatched", false))
-                }
-                SettingRow(label: "Show titles under posters", value: session.pref("showTitles", true) ? "On" : "Off") {
-                    session.setPref("showTitles", !session.pref("showTitles", true))
+                Group {
+                    SettingRow(label: "Blur unwatched episode images", value: session.pref("blurUnwatched", false) ? "On" : "Off") {
+                        session.setPref("blurUnwatched", !session.pref("blurUnwatched", false))
+                    }
+                    SettingRow(label: "Show titles under posters", value: session.pref("showTitles", true) ? "On" : "Off") {
+                        session.setPref("showTitles", !session.pref("showTitles", true))
+                    }
+                    SettingRow(label: "Hide watched titles", value: session.pref("hideWatched", false) ? "On" : "Off") {
+                        session.setPref("hideWatched", !session.pref("hideWatched", false))
+                    }
+                    NavigationLink { AccentPickerView() } label: {
+                        SettingRowLabel(label: "Accent color", value: session.pref("accentName", "Royal (default)"))
+                    }
+                    SettingRow(label: "Open on", value: landingValue) {
+                        let opts = landingOptions
+                        let cur = session.pref("landingTab", "Home")
+                        let i = opts.firstIndex(of: cur) ?? 0
+                        session.setPref("landingTab", opts[(i + 1) % opts.count])
+                    }
                 }
                 // Player settings only exist when there's something to PLAY
                 if session.hasAddon {
@@ -78,6 +92,15 @@ struct SettingsView: View {
                     }
                 }
                 NavigationLink { LegalView() } label: { SettingRowLabel(label: "Legal & About", value: "") }
+            }
+            // New-episode push: writes the synced `notifNewEps` pref the server gates push on,
+            // and asks iOS for notification permission the moment it's switched on.
+            Section("NOTIFICATIONS") {
+                SettingRow(label: "New episode notifications", value: session.pref("notifNewEps", false) ? "On" : "Off") {
+                    let on = !session.pref("notifNewEps", false)
+                    session.setPref("notifNewEps", on)
+                    if on { Push.register() }
+                }
             }
             // 🛟 the very bottom (AJ Oct 17): say or type what's wrong, it reaches us right away
             Section {
@@ -133,6 +156,15 @@ struct SettingsView: View {
             .padding(.vertical, 4)
         }
         .buttonStyle(.plain)
+    }
+
+    /// Landing tab options (Android landingTab): Live TV only offered when the tab exists.
+    private var landingOptions: [String] {
+        (session.liveTvOn && session.canStream) ? ["Home", "Live TV", "Library"] : ["Home", "Library"]
+    }
+    private var landingValue: String {
+        let v = session.pref("landingTab", "Home")
+        return landingOptions.contains(v) ? v : "Home"
     }
     #endif
 
@@ -190,10 +222,22 @@ struct SettingRow: View {
 struct PlayerSettingsView: View {
     @EnvironmentObject var session: Session
     private let sizes: [(String, Double)] = [("Small", 0.8), ("Normal", 1.0), ("Large", 1.3), ("Huge", 1.6)]
+    /// Audio-track preference codes (Android audioLang): the language the player defaults to,
+    /// "any" = whatever the file's first/original track is. Matched by language-code prefix.
+    static let audioCodes = ["en", "es", "fr", "de", "it", "pt", "ja", "any"]
+    static func audioName(_ c: String) -> String {
+        ["en": "English", "es": "Spanish", "fr": "French", "de": "German", "it": "Italian",
+         "pt": "Portuguese", "ja": "Japanese", "any": "Original"][c] ?? "English"
+    }
     var body: some View {
         let scale: Double = session.pref("subScale", 1.0)
         let cur: Int = sizes.firstIndex { abs($0.1 - scale) < 0.01 } ?? 1
         let subLang: String = session.pref("subLang", "off")
+        let subBg: Bool = session.pref("subBg", false)
+        let subOutline: Bool = session.pref("subOutline", true)
+        let subPos: Int = session.pref("subPos", 0)
+        let posNames = ["Normal", "Raised", "High"]
+        let audioLang: String = session.pref("audioLang", "en")
         let autoNext: Bool = session.pref("autoplayNext", true)
         let seek: Int = session.pref("seekStep", 10)
         List {
@@ -204,6 +248,22 @@ struct PlayerSettingsView: View {
                 }
                 SettingRow(label: "Subtitles", value: subLang == "off" ? "Off" : "English") {
                     session.setPref("subLang", subLang == "off" ? "en" : "off")
+                }
+                SettingRow(label: "Background", value: subBg ? "On" : "Off") {
+                    session.setPref("subBg", !subBg)
+                }
+                SettingRow(label: "Outline", value: subOutline ? "On" : "Off") {
+                    session.setPref("subOutline", !subOutline)
+                }
+                SettingRow(label: "Position", value: posNames[min(subPos, 2)]) {
+                    session.setPref("subPos", (subPos + 1) % 3)
+                }
+            }
+            Section("AUDIO") {
+                SettingRow(label: "Audio language", value: PlayerSettingsView.audioName(audioLang)) {
+                    let codes = PlayerSettingsView.audioCodes
+                    let i = codes.firstIndex(of: audioLang) ?? 0
+                    session.setPref("audioLang", codes[(i + 1) % codes.count])
                 }
             }
             Section("PLAYBACK") {
@@ -223,6 +283,46 @@ struct PlayerSettingsView: View {
         #endif
         .background(Theme.bg)
         .navigationTitle("Player")
+    }
+}
+
+/// Accent color picker (Android showAccentPicker): the 8 choices as swatch + name rows; the
+/// pick writes the synced `accentColor`/`accentName` prefs and re-themes the app live. Follows
+/// the profile across every device (setPref syncs).
+struct AccentPickerView: View {
+    @EnvironmentObject var session: Session
+    var body: some View {
+        let cur: String = session.pref("accentColor", "#7B5BF5")
+        List {
+            Section {
+                ForEach(Theme.accentChoices, id: \.hex) { choice in
+                    Button {
+                        session.setPref("accentColor", choice.hex)
+                        session.setPref("accentName", choice.name)
+                        session.applyAccentFromPrefs()
+                    } label: {
+                        HStack(spacing: 14) {
+                            Circle().fill(Color(hex: choice.hex)).frame(width: 26, height: 26)
+                                .overlay(Circle().stroke(.white.opacity(0.25), lineWidth: 1))
+                            Text(choice.name).font(.system(size: 16)).foregroundStyle(.primary)
+                            Spacer()
+                            if cur.lowercased() == choice.hex.lowercased() {
+                                Image(systemName: "checkmark").font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(Theme.accent)
+                            }
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        #if os(iOS)
+        .listStyle(.insetGrouped)
+        .scrollContentBackground(.hidden)
+        #endif
+        .background(Theme.bg)
+        .navigationTitle("Accent color")
     }
 }
 
@@ -475,8 +575,9 @@ struct SubtitlePreview: View {
         ZStack(alignment: .bottom) {
             LinearGradient(colors: [Theme.panel, .black], startPoint: .top, endPoint: .bottom)
             SubtitleText(text: "This is how your subtitles will look.")
-                .padding(.bottom, session.pref("subPos", "normal") == "high" ? 40
-                         : session.pref("subPos", "normal") == "raised" ? 22 : 8)
+                .padding(.bottom, { () -> CGFloat in
+                    switch session.pref("subPos", 0) { case 2: return 40; case 1: return 22; default: return 8 }
+                }())
         }
         .frame(height: 110)
         .clipShape(RoundedRectangle(cornerRadius: 10))

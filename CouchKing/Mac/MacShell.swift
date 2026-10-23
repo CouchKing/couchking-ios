@@ -22,8 +22,19 @@ struct MacShell: View {
         }
     }
     @State private var nav: Nav = .home
+    @State private var landed = false
     @State private var open = false
     @ObservedObject private var overlayHost = MacOverlayHost.shared
+
+    /// The `landingTab` pref as a Nav (Android showMain(landingTab)); Live TV only when it exists.
+    private func landingNav() -> Nav? {
+        switch session.pref("landingTab", "Home") {
+        case "Live TV": return session.liveTvOn ? .live : .home
+        case "Library": return .library
+        case "Home": return .home
+        default: return nil
+        }
+    }
 
     var body: some View {
         ZStack {
@@ -42,6 +53,7 @@ struct MacShell: View {
         .background(Desk.bg)
         .overlay { DeskToastView() }
         .toolbar(.hidden, for: .windowToolbar)
+        .onAppear { if !landed { landed = true; if let n = landingNav() { nav = n } } }
         .onChange(of: session.liveTvOn) { on in if !on && nav == .live { nav = .home } }
     }
 

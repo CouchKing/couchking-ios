@@ -18,6 +18,12 @@ final class Session: ObservableObject {
     @Published var catalogs: [AddonCatalog] = []   // the addon manifest's catalog list
     /// Bumped by the player on exit (Android `homeStale`) so Home re-pulls + repaints CW.
     @Published var homeStale = 0
+    /// Bumped whenever the active accent changes (per-profile load / switch / pick). RootView
+    /// keys its body on this so the whole tree repaints onto the new hue (Android recreate()).
+    @Published var themeTick = 0
+    /// The last accent hex pushed to Theme — lets the 60s pull skip a tree rebuild when the
+    /// synced accent is unchanged (only load / switch / pick / a real cross-device change repaint).
+    private var lastAccentHex = ""
     /// Mandatory store update gate (Android showStoreMandatoryUpdate): set → blocking screen.
     @Published var updateRequired: StoreVersion?
     @Published var state: [String: Any] = [:]   // full account blob; states[pid] = per-profile
@@ -58,6 +64,11 @@ final class Session: ObservableObject {
                 guard let u = $0["url"] as? String, !u.isEmpty else { return nil }
                 return Addon(url: u, name: $0["name"] as? String ?? "Addon")
             }
+        }
+        // cold start: paint the already-picked profile's accent before the first frame
+        if !currentProfile.isEmpty {
+            lastAccentHex = pref("accentColor", "")
+            Theme.applyAccent(lastAccentHex)
         }
     }
 
@@ -364,6 +375,9 @@ final class Session: ObservableObject {
             return Addon(url: u, name: $0["name"] as? String ?? "Addon")
         }
         persist()
+        // a sync may carry an accent change made on another device — re-apply for the
+        // active profile (no-op visually when unchanged; themeTick only matters to RootView).
+        if !currentProfile.isEmpty { applyAccentFromPrefs(force: false) }
         objectWillChange.send()
     }
 
@@ -490,6 +504,7 @@ final class Session: ObservableObject {
         UserDefaults.standard.set(id, forKey: "curProfile")
         profilePicked = !id.isEmpty
         homeStale += 1
+        applyAccentFromPrefs()   // the new person's accent takes over immediately
         objectWillChange.send()
     }
 
@@ -665,6 +680,17 @@ extension Session {
         prefs[key] = value
         ps["prefs"] = prefs
         setPstate(ps)
+    }
+
+    /// Push the active profile's accent pref into Theme and repaint the tree (Android
+    /// applyAccent on profile load / switch). Blank → Royal default. `force` always repaints
+    /// (profile switch / pick); otherwise the tree only rebuilds when the hue actually changed
+    /// — so the 60s background pull can call this every minute without churning the UI.
+    func applyAccentFromPrefs(force: Bool = true) {
+        let hex = pref("accentColor", "")
+        Theme.applyAccent(hex)
+        if force || hex != lastAccentHex { themeTick += 1 }
+        lastAccentHex = hex
     }
 
     // ---- profiles CRUD (Android parity: max 5, tombstoned deletes) ----

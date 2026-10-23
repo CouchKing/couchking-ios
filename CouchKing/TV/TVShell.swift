@@ -25,6 +25,7 @@ struct TVShell: View {
         }
     }
     @State private var tab: Tab = Tab(rawValue: UserDefaults.standard.string(forKey: "lastTab") ?? "") ?? .home
+    @State private var landed = false
     @State private var cameFrom: Tab = .home
     @State private var paths: [Tab: NavigationPath] = [:]
     @FocusState private var railFocus: String?      // "profile" or a Tab rawValue
@@ -32,6 +33,16 @@ struct TVShell: View {
 
     private var expanded: Bool { railFocus != nil }
     private var tabs: [Tab] { Tab.allCases.filter { $0 != .live || session.liveTvOn } }
+
+    /// The `landingTab` pref as a Tab (Android showMain(landingTab)); Live TV only when it exists.
+    private func landingTab() -> Tab? {
+        switch session.pref("landingTab", "Home") {
+        case "Live TV": return session.liveTvOn ? .live : .home
+        case "Library": return .library
+        case "Home": return .home
+        default: return nil
+        }
+    }
     private var atRoot: Bool { (paths[tab]?.count ?? 0) == 0 }
 
     var body: some View {
@@ -41,6 +52,7 @@ struct TVShell: View {
             if tab != .settings { rail }   // Settings is a full-screen page with no rail
         }
         .onExitCommand(perform: interceptExit ? handleExit : nil)
+        .onAppear { if !landed { landed = true; if let t = landingTab() { tab = t } } }
         .onChange(of: session.liveTvOn) { on in if !on && tab == .live { select(.home) } }
         .fullScreenCover(isPresented: $picker) {
             TVWhoIsWatching(onDone: { picker = false }).environmentObject(session)

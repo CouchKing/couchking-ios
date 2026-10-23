@@ -52,9 +52,9 @@ extension PlayerView {
     }
 
     private var tvCueFraction: CGFloat {
-        switch session.pref("subPos", "normal") {
-        case "high": return 0.26
-        case "raised": return 0.16
+        switch session.pref("subPos", 0) {
+        case 2: return 0.26
+        case 1: return 0.16
         default: return 0.08
         }
     }

@@ -349,6 +349,8 @@ struct TVLibrary: View {
 
     private func visible(_ type: String) -> [Meta] {
         var list = watchlist.filter { $0.type == type }
+        // "Hide watched titles" (Android Store.hideWatched) — the Watched sort still shows them.
+        if session.pref("hideWatched", false) && sort != 4 { list = list.filter { !session.isWatched($0.id) } }
         let added = session.pstate()["addedTs"] as? [String: Any] ?? [:]
         switch sort {
         case 1: list = list.filter { (newEps[$0.id]?.count ?? 0) > 0 }.sorted { (newEps[$0.id]?.count ?? 0) > (newEps[$1.id]?.count ?? 0) }

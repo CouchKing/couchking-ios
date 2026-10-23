@@ -872,9 +872,9 @@ struct PlayerView: View {
 
     /// Subtitle position pref: normal / raised / high (Android applySubtitle position).
     var subBottomPad: CGFloat {
-        switch session.pref("subPos", "normal") {
-        case "high": return 90
-        case "raised": return 48
+        switch session.pref("subPos", 0) {
+        case 2: return 90
+        case 1: return 48
         default: return 8
         }
     }
@@ -2241,8 +2241,8 @@ struct SubtitleLookSheet: View {
                                options: [(0.6, "Tiny"), (0.8, "Small"), (1.0, "Normal"), (1.3, "Large"), (1.6, "Huge")])
                     PrefToggle(label: "Background", key: "subBg", def: false)
                     PrefToggle(label: "Outline", key: "subOutline", def: true)
-                    PrefPicker(label: "Position", key: "subPos", def: "normal",
-                               options: [("normal", "Normal"), ("raised", "Raised"), ("high", "High")])
+                    PrefPicker(label: "Position", key: "subPos", def: 0,
+                               options: [(0, "Normal"), (1, "Raised"), (2, "High")])
                 }
             }
             .navigationTitle("Subtitle style").ckInlineTitle()
@@ -2282,8 +2282,8 @@ struct SubtitlePanel: View {
                                options: [(0.6, "Tiny"), (0.8, "Small"), (1.0, "Normal"), (1.3, "Large"), (1.6, "Huge")])
                     PrefToggle(label: "Background", key: "subBg", def: false)
                     PrefToggle(label: "Outline", key: "subOutline", def: true)
-                    PrefPicker(label: "Position", key: "subPos", def: "normal",
-                               options: [("normal", "Normal"), ("raised", "Raised"), ("high", "High")])
+                    PrefPicker(label: "Position", key: "subPos", def: 0,
+                               options: [(0, "Normal"), (1, "Raised"), (2, "High")])
                     SubtitlePreview()
                 }
             }

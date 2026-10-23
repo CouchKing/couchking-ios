@@ -16,7 +16,7 @@ enum TV {
     static let card = rgb(0x1B1830)
     static let card2 = rgb(0x241F3D)       // dropdowns, stream cards, programme blocks
     static let chip = rgb(0x2C2649)        // chips, icon buttons, focused settings row
-    static let accent = rgb(0x7B5BF5)
+    static var accent: Color { Theme.accent }   // per-profile accent (follows Theme.accent)
     static let dim = rgb(0xA9A5C0)
     static let gold = rgb(0xF5C518)
     static let favGold = rgb(0xF5C542)

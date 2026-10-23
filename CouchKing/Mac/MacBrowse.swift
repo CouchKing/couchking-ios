@@ -257,6 +257,8 @@ struct MacLibrary: View {
 
     private func visible(_ type: String) -> [Meta] {
         var list = watchlist.filter { $0.type == type }
+        // "Hide watched titles" (Android Store.hideWatched) — the Watched sort still shows them.
+        if session.pref("hideWatched", false) && sort != 4 { list = list.filter { !session.isWatched($0.id) } }
         let text = q.trimmingCharacters(in: .whitespaces).lowercased()
         if !text.isEmpty { list = list.filter { $0.name.lowercased().contains(text) } }
         let added = session.pstate()["addedTs"] as? [String: Any] ?? [:]

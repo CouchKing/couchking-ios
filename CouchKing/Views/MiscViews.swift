@@ -188,6 +188,9 @@ struct LibraryView: View {
     private func visible(_ type: String?) -> [Meta] {
         var list = watchlist
         if let t = type { list = list.filter { $0.type == t } }
+        // "Hide watched titles" (Android Store.hideWatched): drop fully-watched titles from the
+        // library grid. The Watched sort (case 4) still shows them so they're never lost.
+        if session.pref("hideWatched", false) && sort != 4 { list = list.filter { !session.isWatched($0.id) } }
         let text = q.trimmingCharacters(in: .whitespaces).lowercased()
         if !text.isEmpty { list = list.filter { $0.name.lowercased().contains(text) } }
         let added = session.pstate()["addedTs"] as? [String: Any] ?? [:]
