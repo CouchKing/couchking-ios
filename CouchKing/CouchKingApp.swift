@@ -110,8 +110,16 @@ struct RootView: View {
                 guard !notifPromptDone else { return }
                 notifPromptDone = true
                 switch s.authorizationStatus {
-                case .notDetermined: Push.register()   // first time → system Allow/Deny prompt
-                case .denied:        notifNudge = true  // can't re-prompt → one tap into Settings
+                case .notDetermined:
+                    Push.register()                     // first time → system Allow/Deny prompt (iOS shows it once)
+                case .denied:
+                    // already said no — the system won't re-prompt, so nudge with the in-app
+                    // card, but AT MOST ONCE A WEEK (AJ Oct 23: don't ask every time).
+                    let now = Date().timeIntervalSince1970
+                    if now - UserDefaults.standard.double(forKey: "notifNudgeTs") > 7 * 86400 {
+                        UserDefaults.standard.set(now, forKey: "notifNudgeTs")
+                        notifNudge = true
+                    }
                 default: break                          // authorized / provisional → already on
                 }
             }
