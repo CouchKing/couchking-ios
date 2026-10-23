@@ -25,12 +25,18 @@ struct LiveTVView: View {
     @State var tune: Meta?
     @State var gamesTask: Task<Void, Never>?
     @State var creator: CreatorLive?
+    @State var reminders: Set<String> = []     // game ids this profile has a 🔔 on
 
     var searching: Bool { !q.trimmingCharacters(in: .whitespaces).isEmpty }
     var chips: [String] {
         ["Guide", "★ Favorites"] + guide.sections + (region.isEmpty ? ["Local", "24/7"] : []) + ["All Channels"]
     }
     var catalogChip: Bool { ["Local", "24/7", "All Channels"].contains(chip) }
+    /// Country dropdown: the full list the server sends in guide.json (France, Germany, India,
+    /// Australia, …), falling back to the baked USA/UK/Canada only until the guide loads.
+    var regionOptions: [LiveRegion] {
+        guide.regions.isEmpty ? LiveTV.regions : guide.regions
+    }
 
     #if os(tvOS)
     @Namespace var liveNS
@@ -103,11 +109,11 @@ struct LiveTVView: View {
             .toolbar {
                 ToolbarItem(placement: .ckTrailing) {
                     Menu {
-                        ForEach(LiveTV.regions, id: \.0) { code, label in
-                            Button(code == region ? "✓ " + label : label) { setRegion(code) }
+                        ForEach(regionOptions) { r in
+                            Button(r.code == region ? "✓ " + r.chip : r.chip) { setRegion(r.code) }
                         }
                     } label: {
-                        Text((LiveTV.regions.first { $0.0 == region }?.1 ?? "🌎 USA") + " ▾").font(.caption)
+                        Text((regionOptions.first { $0.code == region }?.chip ?? "🌎 USA") + " ▾").font(.caption)
                             .padding(.horizontal, 10).padding(.vertical, 6)
                             .background(Theme.card, in: Capsule())
                     }
@@ -169,6 +175,7 @@ struct LiveTVView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: Platform.isTV ? 40 : 8) {
                     ForEach(games) { g in
+                        let hasRem = !live && reminders.contains(LiveTV.gameRemID(g))
                         Button { tune = g.meta } label: {
                             HStack(spacing: 8) {
                                 AsyncImage(url: URL(string: g.logo)) { img in
@@ -176,7 +183,7 @@ struct LiveTVView: View {
                                 } placeholder: { Image(systemName: "sportscourt").foregroundStyle(.secondary) }
                                 .frame(width: 36, height: 28)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(g.t).font(.caption.bold()).lineLimit(1)
+                                    Text((hasRem ? "🔔 " : "") + g.t).font(.caption.bold()).lineLimit(1)
                                     // WHEN leads and is bright — long channel names were eating
                                     // the kickoff time ("can't see when they're playing")
                                     if live {
@@ -191,9 +198,12 @@ struct LiveTVView: View {
                             }
                             .padding(8).frame(width: 210, alignment: .leading)
                             .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(live ? Color.red.opacity(0.7) : .clear, lineWidth: 1))
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(live ? Color.red.opacity(0.7) : (hasRem ? Theme.gold.opacity(0.8) : .clear), lineWidth: 1))
                         }
                         .ckTile()
+                        // UPCOMING games get a reminder toggle on long-press (Android parity):
+                        // the server pushes ~10 min before kickoff to every device on this profile.
+                        .ckGameReminderMenu(show: !live, on: hasRem) { toggleReminder(g) }
                     }
                 }
                 .padding(.horizontal, Platform.gutter)
@@ -307,9 +317,26 @@ struct LiveTVView: View {
             if list.count == 1 && list[0].id == "cklive:upgrade" { locked = true }
         }
         sports = await LiveTV.games(session)
+        reminders = await LiveTV.reminders(session)   // 🔔 which upcoming games already have one
         if catalogChip { await loadCatalog() }
         builtAt = LiveTV.nowMs()
         loading = false
+    }
+
+    /// Long-press an upcoming game → set/cancel its reminder. Optimistic: flip the 🔔 instantly,
+    /// POST the desired state, roll back if the server rejects (matches Android's toggle + flash).
+    func toggleReminder(_ g: LiveGame) {
+        guard !session.email.isEmpty else { return }
+        let id = LiveTV.gameRemID(g)
+        let on = !reminders.contains(id)
+        if on { reminders.insert(id) } else { reminders.remove(id) }
+        #if os(iOS)
+        if on { Push.register() }   // make sure a push token exists so the reminder can land
+        #endif
+        Task {
+            let ok = await LiveTV.setReminder(session, game: g, on: on)
+            if !ok { if on { reminders.remove(id) } else { reminders.insert(id) } }   // roll back
+        }
     }
 
     /// Back from the player: freeze-and-rebuild the guide centered on NOW; refetch favs +
@@ -346,9 +373,26 @@ struct LiveTVView: View {
                 guard !Task.isCancelled else { return }
                 now = LiveTV.nowMs()
                 n += 1
-                if n % 3 == 0 { sports = await LiveTV.games(session) }
+                if n % 3 == 0 {
+                    sports = await LiveTV.games(session)
+                    reminders = await LiveTV.reminders(session)
+                }
             }
         }
+    }
+}
+
+extension View {
+    /// Long-press reminder toggle for an UPCOMING game tile (no-op for a live game). Uses the
+    /// system contextMenu so it coexists with the horizontal scroll — a plain long-press gesture
+    /// would steal the pan (same reason channel ★ uses a context menu, not onLongPressGesture).
+    @ViewBuilder func ckGameReminderMenu(show: Bool, on: Bool, _ toggle: @escaping () -> Void) -> some View {
+        if show {
+            self.contextMenu {
+                Button(on ? "Cancel reminder" : "Remind me ~10 min before",
+                       systemImage: on ? "bell.slash" : "bell") { toggle() }
+            }
+        } else { self }
     }
 }
 

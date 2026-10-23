@@ -37,12 +37,29 @@ struct LiveChannel: Identifiable, Hashable {
     func hash(into h: inout Hasher) { h.combine(id) }
 }
 
+/// A selectable Live TV region/country from the guide payload (code + label + flag emoji).
+/// The server returns USA first, then every provider country with ≥5 live channels, so the
+/// list grows as feeds come and go — the dropdown must be built from this, not hardcoded.
+struct LiveRegion: Identifiable, Hashable {
+    let code: String, label: String, flag: String
+    var id: String { code }
+    var chip: String { (flag.isEmpty ? "🌎" : flag) + " " + label }
+    init(code: String, label: String, flag: String) { self.code = code; self.label = label; self.flag = flag }
+    init?(_ o: [String: Any]) {
+        guard let label = o["label"] as? String, !label.isEmpty else { return nil }
+        code = o["code"] as? String ?? ""
+        self.label = label
+        flag = o["flag"] as? String ?? ""
+    }
+}
+
 struct LiveGuide {
     var at = 0, devices = 0
     var favs: [String] = []
     var favChannels: [LiveChannel] = []
     var recent: [String] = []
     var channels: [LiveChannel] = []
+    var regions: [LiveRegion] = []
     var sections: [String] {
         var out: [String] = []
         for c in channels where !c.section.isEmpty && !out.contains(c.section) { out.append(c.section) }
@@ -55,6 +72,7 @@ struct LiveGuide {
         favChannels = (o["favChannels"] as? [[String: Any]] ?? []).compactMap(LiveChannel.init)
         recent = o["recent"] as? [String] ?? []
         channels = (o["channels"] as? [[String: Any]] ?? []).compactMap(LiveChannel.init)
+        regions = (o["regions"] as? [[String: Any]] ?? []).compactMap(LiveRegion.init)
     }
 }
 
@@ -99,7 +117,10 @@ struct LiveSport: Identifiable {
 
 enum LiveTV {
     static let et = TimeZone(identifier: "America/New_York") ?? .current
-    static let regions: [(String, String)] = [("", "🌎 USA"), ("UK", "🇬🇧 UK"), ("CA", "🇨🇦 Canada")]
+    /// Baked fallback only — the real list comes from guide.json `regions` (LiveGuide.regions).
+    static let regions: [LiveRegion] = [LiveRegion(code: "", label: "USA", flag: "🌎"),
+                                        LiveRegion(code: "UK", label: "UK", flag: "🇬🇧"),
+                                        LiveRegion(code: "CA", label: "Canada", flag: "🇨🇦")]
     static let sportsOrder = ["Football", "Baseball", "Basketball", "Hockey", "Fights", "Fútbol", "Tennis", "Golf", "More Sports"]
 
     static func nowMs() -> Int { Int(Date().timeIntervalSince1970 * 1000) }
@@ -192,6 +213,40 @@ enum LiveTV {
         gamesCache = (nowMs(), sports)
         return sports
     }
+
+    // MARK: game reminders (Android parity — press-and-hold an upcoming game)
+    // Stored per PROFILE on the server (notif:games:<email>:<pid>); the reminder id matches
+    // Android EXACTLY — "<chid>:<startMs>" — so a reminder set on the phone and one set on the
+    // TV are the same record. The server fires an APNs/FCM push ~10 min before kickoff.
+
+    /// The reminder id for a game — must equal Android's `chid + ":" + startMs`.
+    static func gameRemID(_ g: LiveGame) -> String { g.chid + ":" + String(g.s) }
+
+    /// GET /tvapp/notif-feed — the set of game ids this profile currently has a reminder on.
+    @MainActor
+    static func reminders(_ session: Session) async -> Set<String> {
+        let e = session.email, t = session.token
+        guard !e.isEmpty, !t.isEmpty else { return [] }
+        let pid = profile(session).addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
+        let ee = e.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? e
+        guard let r = try? await API.json("/tvapp/notif-feed?e=\(ee)&t=\(t)&pid=\(pid)") else { return [] }
+        let games = r["games"] as? [[String: Any]] ?? []
+        return Set(games.compactMap { $0["id"] as? String })
+    }
+
+    /// POST /tvapp/notif-game — set (`on`) or cancel a reminder for a game on THIS profile.
+    @MainActor
+    static func setReminder(_ session: Session, game: LiveGame, on: Bool) async -> Bool {
+        let e = session.email, t = session.token
+        guard !e.isEmpty, !t.isEmpty else { return false }
+        let r = try? await API.postJSON("/tvapp/notif-game", body: [
+            "e": e, "t": t, "pid": profile(session),
+            "id": gameRemID(game), "title": game.t,
+            "start": g_startSeconds(game), "on": on])
+        return (r?["ok"] as? Bool) ?? false
+    }
+    /// server wants seconds; games.json `s` is epoch MS.
+    private static func g_startSeconds(_ g: LiveGame) -> Int { g.s / 1000 }
 
     /// Category / search channels from the addon's tv catalog. "24/7" goes over as `24-7`.
     @MainActor
