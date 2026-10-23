@@ -90,15 +90,18 @@ extension Session {
             return info
         }
 
-        // BINGEING OLD SEASONS: everything after you is technically newer, but the badge only
-        // means something when you're caught up to the current (or previous) season — else a
-        // show you're 5 seasons behind on shows "+9" forever (the 200+ over-count bug).
+        // BINGEING OLD SEASONS: don't flash the whole "+9" backlog — but a genuinely-new drop
+        // (aired in the last ~2 weeks) SHOULD still pop a +1 and move the show to front even
+        // many seasons behind (AJ Oct 23, Grey's at S12 while S23 airs). Far behind = count
+        // only recently-aired fresh eps; caught-up = unchanged.
         let maxSeason = aired.map { $0.season }.max() ?? 0
-        if ls < maxSeason - 1 { return NewEpsInfo() }
-
-        let fresh = aired.filter {
+        let freshAll = aired.filter {
             ($0.season > ls || ($0.season == ls && $0.episode > le)) && !watched.contains($0.id)
         }
+        let recentCut = Int(Date().timeIntervalSince1970 * 1000) - 14 * 86_400_000
+        let fresh = ls < maxSeason - 1
+            ? freshAll.filter { Session.airMs($0.released) > recentCut }
+            : freshAll
         var info = NewEpsInfo()
         info.count = min(9, fresh.count)
         info.latestAir = fresh.map { Session.airMs($0.released) }.max() ?? 0
