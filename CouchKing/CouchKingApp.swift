@@ -1,4 +1,8 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+import UserNotifications
+#endif
 
 // CouchKing iOS — mirror of the Android app (2.0.93 feature line).
 // Tracker-mode for guests; streaming appears only when the signed-in account
@@ -52,6 +56,11 @@ struct RootView: View {
     @EnvironmentObject var session: Session
     enum FirstRun { case none, shelves }
     @State private var firstRun: FirstRun = .none
+    #if os(iOS)
+    @Environment(\.scenePhase) private var scenePhaseR
+    @State private var notifNudge = false        // show the "open Settings" card (already denied)
+    @State private var notifPromptDone = false    // once per launch
+    #endif
 
     var body: some View {
         Group {
@@ -73,7 +82,42 @@ struct RootView: View {
         // themeTick only moves on those events, so this never churns during normal use.
         .id(session.themeTick)
         .onChange(of: session.signedIn) { on in if !on { firstRun = .none } }
+        #if os(iOS)
+        // NOTIFICATION ASK ON OPEN (AJ Oct 23 "I want the prompt when I open and allow, like
+        // everything else — not go dig in Settings"). iOS only shows its SYSTEM popup once ever,
+        // so: not-yet-asked → fire the system Allow/Deny prompt; already-denied → an in-app card
+        // whose Allow button jumps straight into CouchKing's notification settings (the only path
+        // iOS leaves). Runs on open and each return to foreground, once per launch.
+        .task { checkNotifPrompt() }
+        .onChange(of: scenePhaseR) { phase in if phase == .active { checkNotifPrompt() } }
+        .alert("Turn on notifications", isPresented: $notifNudge) {
+            Button("Allow") {
+                if let u = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(u) }
+            }
+            Button("Not now", role: .cancel) {}
+        } message: {
+            Text("So CouchKing can tell you about new episodes and game reminders. You stay in control — episode alerts only send for shows you turn on.")
+        }
+        #endif
     }
+
+    #if os(iOS)
+    /// Decide what (if anything) to do about notification permission on open. Once per launch.
+    private func checkNotifPrompt() {
+        guard session.signedIn, !notifPromptDone else { return }
+        UNUserNotificationCenter.current().getNotificationSettings { s in
+            DispatchQueue.main.async {
+                guard !notifPromptDone else { return }
+                notifPromptDone = true
+                switch s.authorizationStatus {
+                case .notDetermined: Push.register()   // first time → system Allow/Deny prompt
+                case .denied:        notifNudge = true  // can't re-prompt → one tap into Settings
+                default: break                          // authorized / provisional → already on
+                }
+            }
+        }
+    }
+    #endif
 
     // "Create your profile" (Android showProfileCreate(first = true)): THEY name it, then pick
     // their Home shelves, then land on Home.
