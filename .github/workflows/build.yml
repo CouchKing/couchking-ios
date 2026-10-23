@@ -102,26 +102,36 @@ jobs:
           mkdir -p ~/.appstoreconnect/private_keys
           echo "$APPSTORE_P8" | base64 --decode > ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8
           chmod 600 ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8
-      - name: Archive (signed — so the aps-environment entitlement is embedded)
+      - name: Archive (unsigned — the export step does distribution signing)
         if: steps.gate.outputs.go == 'yes'
         run: |
           set -o pipefail
-          # MUST sign at archive time. The old pipeline archived UNSIGNED
-          # (CODE_SIGNING_ALLOWED=NO), which produced an .app with NO embedded entitlements —
-          # so when the export step re-signed it, `aps-environment` had nothing to carry over
-          # and EVERY build shipped without push (fleet-wide zero APNs tokens, Oct 23). Signing
-          # here with cloud-managed automatic signing (the ASC API key + -allowProvisioningUpdates
-          # fetches/creates the App Store distribution profile, which now includes Push because
-          # the App ID has the capability) embeds the real entitlements into the archive.
+          # Archive WITHOUT signing: automatic signing during archive requests a *development*
+          # profile (needs a registered device, which the team has none of). The export step
+          # below signs for App Store distribution instead, whose profiles need no device.
           xcodebuild -project CouchKing.xcodeproj -scheme CouchKing \
             -configuration Release -destination 'generic/platform=iOS' \
             -archivePath build/CouchKing.xcarchive \
-            DEVELOPMENT_TEAM="$TEAM_ID" CODE_SIGN_STYLE=Automatic \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${KEY_ID}.p8 \
-            -authenticationKeyID "$KEY_ID" -authenticationKeyIssuerID "$ISSUER_ID" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
             archive 2>&1 | tee archive.log | tail -30
+      - name: Embed entitlements in the archive (so export signs in aps-environment)
+        if: steps.gate.outputs.go == 'yes'
+        run: |
+          set -o pipefail
+          # THE push fix. An UNSIGNED archive carries no entitlements, so exportArchive's re-sign
+          # had no aps-environment to apply → every build shipped push-dead (fleet-wide zero APNs
+          # tokens, Oct 23). Xcode records an archive's entitlements in the app bundle as
+          # `archived-expanded-entitlements.xcent`; export reads THAT when it re-signs. We drop the
+          # XcodeGen-generated entitlements plist in as that file so distribution signing carries
+          # the push entitlement — no device / development profile needed.
+          APP=build/CouchKing.xcarchive/Products/Applications/CouchKing.app
+          SRC=CouchKing/CouchKing.entitlements
+          test -f "$SRC" || { echo "❌ entitlements plist missing at $SRC (xcodegen didn't emit it)"; exit 1; }
+          grep -q 'aps-environment' "$SRC" || { echo "❌ $SRC has no aps-environment"; exit 1; }
+          cp "$SRC" "$APP/archived-expanded-entitlements.xcent"
+          echo "embedded entitlements into the archive:"; cat "$APP/archived-expanded-entitlements.xcent"
       - name: Export IPA
         if: steps.gate.outputs.go == 'yes'
         run: |
