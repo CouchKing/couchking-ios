@@ -11,6 +11,8 @@ export ANDROID_SERIAL="$TV"
 LAUNCHER_PKG="app.couchking.launcher"
 LAUNCHER="$LAUNCHER_PKG/.HomeActivity"
 STOCK_HOME="com.google.android.apps.tv.launcherx"
+# Google TV's fallback HOME (setup wizard recovery); takes over once launcherx is off.
+RECOVERY_HOME="com.google.android.tungsten.setupwraith"
 LOG="$PWD/disabled-by-couchking.txt"
 
 KEEP="app.mediaboard com.google.android.youtube.tv com.spotify.tv.android com.esaba.downloader $LAUNCHER_PKG"
@@ -156,7 +158,17 @@ else
   if ask "Disable $STOCK_HOME so CouchKing owns Home?"; then
     disable_pkg "$STOCK_HOME"
     sh_tv cmd package set-home-activity --user 0 "$LAUNCHER"
-    home_is_ours && ok "Home key now opens CouchKing." || warn "Still not ours — tell Claude what's on screen."
+    if home_is_ours; then
+      ok "Home key now opens CouchKing."
+    else
+      warn "Google TV's fallback home ($RECOVERY_HOME, the setup-wizard recovery screen) took over."
+      info "It's only needed during first-time TV setup. Reversible with --undo."
+      if ask "Disable $RECOVERY_HOME too?"; then
+        disable_pkg "$RECOVERY_HOME"
+        sh_tv cmd package set-home-activity --user 0 "$LAUNCHER"
+        home_is_ours && ok "Home key now opens CouchKing." || warn "Still not ours — tell Claude what's on screen."
+      fi
+    fi
   fi
 fi
 
