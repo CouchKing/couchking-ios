@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Shown instantly as the window background, before the activity draws. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <gradient android:angle="315" android:startColor="#2C2649" android:centerColor="#1B1830" android:endColor="#0E0C1A" />
+</shape>
