@@ -1,8 +1,18 @@
 # CouchKing TV Launcher (onn 4K Google TV)
 
-A custom home screen that replaces Google TV's: CouchKing wordmark, a live clock,
-and four big D-pad tiles — CouchKing, YouTube, Spotify, Downloader — plus a Settings pill.
-BACK is swallowed so you can't fall out of Home.
+A custom home screen that replaces Google TV's, styled after the CouchKing app's own Home:
+
+- **Hero** — full-screen backdrops of today's trending movies & shows (TMDB, same source and
+  key as the app), crossfading every 9s, with title, year, ★ rating and synopsis.
+- **Your apps** — CouchKing, YouTube, Spotify, Downloader as TV-banner tiles.
+- **Top 10 Today on CouchKing** — posters with giant outlined rank numerals; focusing one
+  puts it in the hero, OK opens CouchKing.
+- Header: crown wordmark, greeting, clock/date, ⚙ Settings. BACK is swallowed.
+- Works offline: the last trending list is cached; with none yet, a CouchKing brand hero shows.
+
+Opening a Top 10 title launches CouchKing with extras `ck_tmdb_id` (int), `ck_type`
+(`movie`/`tv`) and `ck_title`. CouchKing doesn't read them yet — once it does, the launcher
+deep-links straight to that title.
 
 ## Run it (on your Mac, same WiFi as the TV)
 
