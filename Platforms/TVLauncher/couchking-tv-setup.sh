@@ -104,10 +104,16 @@ done
 
 # ---------------------------------------------------------------------------
 step "5/7  Building the CouchKing launcher"
-if ! /usr/libexec/java_home -v 17 >/dev/null 2>&1 && [ ! -d "$(brew --prefix 2>/dev/null)/opt/openjdk@17" ]; then
-  info "Installing JDK 17…"; brew install openjdk@17 || exit 1
+# A prebuilt JDK (Temurin cask): the openjdk@17 formula compiles from source on older macOS.
+find_jdk() { /usr/libexec/java_home -v 17 2>/dev/null || /usr/libexec/java_home -v 21 2>/dev/null; }
+if ! find_jdk >/dev/null; then
+  info "Installing JDK 17 (Temurin, prebuilt — macOS may ask for your password)…"
+  brew install --cask temurin@17 || {
+    warn "Couldn't install Java. Download the macOS .pkg for JDK 17 from https://adoptium.net, install it, then re-run."
+    exit 1
+  }
 fi
-JAVA_HOME="$(/usr/libexec/java_home -v 17 2>/dev/null || echo "$(brew --prefix)/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home")"
+JAVA_HOME="$(find_jdk)" || { warn "JDK 17 still not found."; exit 1; }
 export JAVA_HOME
 ok "JDK: $JAVA_HOME"
 
