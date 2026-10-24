@@ -105,7 +105,12 @@ done
 # ---------------------------------------------------------------------------
 step "5/7  Building the CouchKing launcher"
 # A prebuilt JDK (Temurin cask): the openjdk@17 formula compiles from source on older macOS.
-find_jdk() { /usr/libexec/java_home -v 17 2>/dev/null || /usr/libexec/java_home -v 21 2>/dev/null; }
+find_jdk() {
+  # A JDK unpacked by hand (no admin password needed): ~/jdk17, or JAVA_HOME set by the caller.
+  for h in "${JAVA_HOME:-}" "$HOME"/jdk17/Contents/Home "$HOME"/jdk17; do
+    [ -n "$h" ] && [ -x "$h/bin/java" ] && { echo "$h"; return 0; }
+  done
+  /usr/libexec/java_home -v 17 2>/dev/null || /usr/libexec/java_home -v 21 2>/dev/null; }
 if ! find_jdk >/dev/null; then
   info "Installing JDK 17 (Temurin, prebuilt — macOS may ask for your password)…"
   brew install --cask temurin@17 || {
