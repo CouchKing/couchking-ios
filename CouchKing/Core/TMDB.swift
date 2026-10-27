@@ -111,7 +111,7 @@ enum TMDB {
         idLock.lock()
         imdbCache[k] = imdb
         imdbDirty += 1
-        if imdbDirty >= 25 { imdbDirty = 0; UserDefaults.standard.set(imdbCache, forKey: "tmdbImdbMap") }
+        if imdbDirty >= 5 { imdbDirty = 0; UserDefaults.standard.set(imdbCache, forKey: "tmdbImdbMap") }   // 25→5 (Oct 27): persist sooner so a killed cold launch doesn't lose the map and re-pay ~1000 lookups
         idLock.unlock()
         return imdb.hasPrefix("tt") ? imdb : nil
     }

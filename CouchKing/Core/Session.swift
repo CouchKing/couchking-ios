@@ -119,6 +119,13 @@ final class Session: ObservableObject {
     func boot() async {
         await checkStoreVersion()
         guard signedIn else { return }
+        // Oct 27 cold-start: warm TLS/connection to the heavy hosts the first Home load hits so
+        // connection setup overlaps boot instead of blocking the first TMDB fetch.
+        Task.detached {
+            for h in ["https://api.themoviedb.org", "https://image.tmdb.org"] {
+                if let u = URL(string: h) { _ = try? await URLSession.shared.data(from: u) }
+            }
+        }
         await pull()
         await detectLiveTv()
         // 60s live pull, same cadence as Android

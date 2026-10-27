@@ -80,35 +80,45 @@ struct HomeView: View {
         loadGen += 1
         let gen = loadGen
         loading = true
-        creator = await session.creatorLive()   // 🔴 fresh frame/title each Home load
+        // Oct 27 cold-start: the independent network phases now run CONCURRENTLY (was a serial
+        // chain of awaits, nothing painted until each finished). creatorLive is nil 99% of the
+        // time (only when AJ is live) so it's pulled off the critical path — fired here, applied
+        // at the very end so it never gates hero/Top 10.
+        async let creatorT = session.creatorLive()
+        async let trendingT = Catalog.trending(session: session)
+        async let forYouT = Catalog.forYouRows(session: session)
         cw = session.canStream ? await session.continueWatchingOrdered() : []
         // hero + Top 10 = TODAY's trending movies + shows interleaved (independent of the shelves)
-        let (tm, ts) = await Catalog.trending(session: session)
+        let (tm, ts) = await trendingT
         guard gen == loadGen else { return }
         let mix = Catalog.interleave(tm, ts, count: 40)
         top10 = Array(mix.prefix(10))
         hero = Array(mix.filter { $0.background != nil || $0.poster != nil }.prefix(7))
         // For You — Movies then Shows, always on Home (addon algo → library rec graph → trending)
-        let (fyM, fyS) = await Catalog.forYouRows(session: session)
+        let (fyM, fyS) = await forYouT
         guard gen == loadGen else { return }
         var fy: [(String, [Meta])] = []
         if !fyM.isEmpty { fy.append(("For You — Movies", fyM)) }
         if !fyS.isEmpty { fy.append(("For You — Shows", fyS)) }
         forYou = fy
-        // the shelf line-up, in the person's order
+        // the shelf line-up — resolve ALL shelves CONCURRENTLY (was a ~17-deep serial await loop,
+        // each shelf waiting on the one before). Collected by index so row order stays the lineup.
         CrashGuard.crumb("home-shelves")
-        var fresh: [(String, [Meta])] = []
-        rows = []
-        for cat in session.enabledShelves() {
-            // crumb per shelf — "home-shelves" spanned the whole phase (incl. hero/Top10
-            // rendering in parallel), too wide to localize the Oct 5 cold-open crashes
-            CrashGuard.crumb("home-shelf:" + cat.name)
-            let metas = await Catalog.shelf(session: session, cat)
-            guard gen == loadGen else { return }
-            if metas.isEmpty { continue }
-            fresh.append((cat.name, metas))
-            rows = fresh
+        let cats = session.enabledShelves()
+        let fresh = await withTaskGroup(of: (Int, [Meta]?).self) { g -> [(String, [Meta])] in
+            for (i, cat) in cats.enumerated() {
+                g.addTask { (i, await Catalog.shelf(session: session, cat)) }
+            }
+            var acc = [[Meta]?](repeating: nil, count: cats.count)
+            for await (i, metas) in g { acc[i] = metas }
+            var out: [(String, [Meta])] = []
+            for (i, cat) in cats.enumerated() {
+                if let m = acc[i], !m.isEmpty { out.append((cat.name, m)) }
+            }
+            return out
         }
+        guard gen == loadGen else { return }
+        creator = await creatorT   // resolved long ago (fired concurrently) — zero added wait
         rows = fresh
         loading = false
     }
