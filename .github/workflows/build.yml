@@ -119,12 +119,20 @@ jobs:
           # Archive WITHOUT signing: automatic signing during archive requests a *development*
           # profile (needs a registered device, which the team has none of). The export step
           # below signs for App Store distribution instead, whose profiles need no device.
+          # Oct 27: archive with MANUAL distribution signing (identity+profile from make-signing)
+          # instead of unsigned. Unsigned archive never embedded the app's entitlements, so the
+          # re-sign at export had no aps-environment to carry → push-dead IPA. Signing here bakes
+          # aps-environment (from CouchKing.entitlements) in, authorized by the push-enabled profile.
+          # Manual + an App Store profile needs NO registered device (the old reason for unsigned).
           xcodebuild -project CouchKing.xcodeproj -scheme CouchKing \
             -configuration Release -destination 'generic/platform=iOS' \
             -archivePath build/CouchKing.xcarchive \
             DEVELOPMENT_TEAM="$TEAM_ID" \
             CURRENT_PROJECT_VERSION=${{ github.run_number }} \
-            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="$SIGN_IDENTITY" \
+            PROVISIONING_PROFILE_SPECIFIER="$PROFILE_NAME" \
+            OTHER_CODE_SIGN_FLAGS="--keychain $SIGN_KEYCHAIN" \
             archive 2>&1 | tee archive.log | tail -30
       - name: Export IPA
         if: steps.gate.outputs.go == 'yes'

@@ -470,9 +470,12 @@ final class Session: ObservableObject {
     /// text to the server's Problem Reports channel with who/where/version attached.
     /// Returns true on a confirmed send so the UI can confirm.
     @discardableResult
-    func reportProblem(text: String, ctx: String) async -> Bool {
-        let body: [String: Any] = ["text": text, "u": profileSeg, "key": subKey,
+    func reportProblem(text: String, ctx: String, hash: String = "", stitle: String = "") async -> Bool {
+        // hash/stitle (AJ Oct 27): long-pressing a specific stream reports THAT copy, so AJ gets
+        // a one-tap ban button for it. Empty hash = the normal "report a problem" flow.
+        var body: [String: Any] = ["text": text, "u": profileSeg, "key": subKey,
                                    "v": Session.appVer, "model": API.deviceModel, "ctx": ctx]
+        if !hash.isEmpty { body["hash"] = hash; body["stitle"] = stitle }
         guard let r = try? await API.postJSON("/tvapp/report", body: body) else { return false }
         return (r["ok"] as? Bool) == true
     }

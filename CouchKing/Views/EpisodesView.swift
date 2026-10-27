@@ -383,6 +383,7 @@ struct StreamList: View {
                     }
                     .buttonStyle(TVRingButton(radius: 20))
                     .prefersDefaultFocus(i == 0, in: streamNS)
+                    .contextMenu { reportMenu(s) }
                 }
             }
             .padding(.vertical, 20).padding(.horizontal, 8)
@@ -391,6 +392,7 @@ struct StreamList: View {
         #elseif os(macOS)
         ForEach(Array(shown.enumerated()), id: \.offset) { _, s in
             DeskStreamRow(stream: s) { start(s) }
+                .contextMenu { reportMenu(s) }
         }
         #else
         ForEach(Array(shown.enumerated()), id: \.offset) { _, s in
@@ -405,11 +407,39 @@ struct StreamList: View {
                 .background(Theme.card, in: RoundedRectangle(cornerRadius: 10))
             }
             .ckTile()
+            .contextMenu { reportMenu(s) }
         }
         #endif
     }
 
     /// Stream → PlayRequest (windows riding on the stream object override /player/resume).
+    /// infoHash from a resolved /tbplay/<key>/<hash> url ("" for local-cache copies with no hash).
+    private func streamHash(_ s: [String: Any]) -> String {
+        guard let u = s["url"] as? String, let r = u.range(of: "/tbplay/") else { return "" }
+        let parts = u[r.upperBound...].split(separator: "/")
+        guard parts.count >= 2 else { return "" }
+        let h = String(parts[1].prefix { $0 != "?" && $0 != "&" })
+        return ((h.count == 32 || h.count == 40) && h.allSatisfy { $0.isHexDigit }) ? h.lowercased() : ""
+    }
+    /// Long-press → "Report this stream": flags THIS copy so AJ gets a one-tap ban button (AJ Oct 27).
+    private func reportStream(_ s: [String: Any]) {
+        let h = streamHash(s); if h.isEmpty { return }
+        let nm = String(((s["title"] as? String) ?? (s["name"] as? String) ?? "this stream").prefix(90))
+        Task {
+            let ok = await session.reportProblem(text: "Bad stream reported from the stream list.",
+                ctx: "Stream — \(meta.name)", hash: h, stitle: nm)
+            await MainActor.run { gateTitle = "CouchKing"
+                gate = ok ? "Reported — thanks. This copy can be blocked now." : "Couldn't send the report — try again." }
+        }
+    }
+    @ViewBuilder private func reportMenu(_ s: [String: Any]) -> some View {
+        if !streamHash(s).isEmpty {
+            Button(role: .destructive) { reportStream(s) } label: {
+                Label("Report this stream", systemImage: "exclamationmark.bubble")
+            }
+        }
+    }
+
     private func start(_ s: [String: Any]) {
         guard let u = s["url"] as? String, let url = URL(string: u) else { return }
         var req = PlayRequest(url: url, meta: meta, season: season, episode: episode)

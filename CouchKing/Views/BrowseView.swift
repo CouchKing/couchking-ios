@@ -67,6 +67,7 @@ struct BrowseView: View {
     @State private var genre = ""
     @State private var year = 0                          // 0 = All years (TMDB discover reroute)
     @State private var anime: [(String, [Meta])] = []
+    @State private var stacked: [(String, [Meta])] = []   // movie/series as Home-style rows (AJ Oct 27)
     @State private var metas: [Meta] = []
     @State private var page = 0
     @State private var loading = false
@@ -86,9 +87,7 @@ struct BrowseView: View {
             .pickerStyle(.segmented).padding(.horizontal, Platform.gutter)
             .onChange(of: type) { _ in
                 if type == "anime" { loadAnime(); return }
-                catIdx = 0
-                if !genres.contains(genre) { genre = "" }
-                reload()
+                loadStacked()
             }
             if type == "anime" {
                 // Anime = TMDB Animation ∩ Japanese origin (Android "Anime" tab rows)
@@ -101,40 +100,14 @@ struct BrowseView: View {
                     .padding(.bottom, 28)
                 }
             } else {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        // Android Discover dropdowns: catalog · genre · year
-                        Menu {
-                            ForEach(Array(cats.enumerated()), id: \.offset) { i, c in
-                                Button(i == catIdx ? "✓ " + c.label : c.label) { catIdx = i; reload() }
-                            }
-                        } label: { dropdown(cat.label) }
-                        Menu {
-                            Button("All genres") { genre = ""; reload() }
-                            ForEach(genres, id: \.self) { g in
-                                Button(g == genre ? "✓ " + g : g) { genre = g; reload() }
-                            }
-                        } label: { dropdown(genre.isEmpty ? "All genres" : genre) }
-                        Menu {
-                            Button("All years") { year = 0; reload() }
-                            ForEach(TMDB.years, id: \.self) { y in
-                                Button(y == year ? "✓ \(String(y))" : String(y)) { year = y; reload() }
-                            }
-                        } label: { dropdown(year == 0 ? "All years" : String(year)) }
-                    }
-                    .padding(.horizontal, Platform.gutter)
-                }
+                // STACKED Discover (AJ Oct 27 "discover rows & catalogs should be long, like
+                // home … longer rows and columns"): one row PER category — same model as the
+                // Anime tab above — instead of a single dropdown-picked catalog.
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 4) {
-                        let chunks = stride(from: 0, to: metas.count, by: 15).map { Array(metas[$0..<min($0 + 15, metas.count)]) }
-                        ForEach(Array(chunks.enumerated()), id: \.offset) { i, chunk in
-                            PosterRow(title: i == 0 ? cat.label : "", metas: chunk)
-                                .onAppear { if i == chunks.count - 1 { loadMore() } }
-                        }
-                        if loading { ProgressView().frame(maxWidth: .infinity).padding(.top, 20) }
-                        if !loading && metas.isEmpty && done {
-                            Text("Nothing here.").foregroundStyle(.secondary).padding(24)
-                        }
+                        if let first = stacked.first?.1, !first.isEmpty { HeroPager(metas: Array(first.prefix(6))) }
+                        ForEach(stacked, id: \.0) { row in PosterRow(title: row.0, metas: row.1) }
+                        if stacked.isEmpty { ProgressView().frame(maxWidth: .infinity).padding(.top, 40) }
                     }
                     .padding(.bottom, 28)
                 }
@@ -147,7 +120,7 @@ struct BrowseView: View {
                 type = initialType; genre = initialGenre
                 if type == "anime" { loadAnime() }
             }
-            if metas.isEmpty && type != "anime" { reload() }
+            if stacked.isEmpty && type != "anime" { loadStacked() }
         }
     }
 
@@ -163,6 +136,27 @@ struct BrowseView: View {
     private func reload() {
         page = 0; done = false; metas = []; gen += 1; loading = false
         loadMore()
+    }
+
+    /// Build movie/series Discover as stacked Home-style rows — one per catalog (AJ Oct 27).
+    private func loadStacked() {
+        let myType = type, myCats = cats, myGen = gen
+        stacked = []
+        Task {
+            let kind = myType == "series" ? "tv" : "movie"
+            var out: [(String, [Meta])] = []
+            for c in myCats where !c.forYou {   // For You lives on Home, not the browse grid
+                let items: [Meta]
+                if let path = c.tmdb {
+                    items = await TMDB.rowPage(kind: kind, path, page: 1)
+                } else {
+                    items = await Catalog.cinemetaPage(type: myType, id: c.cine.isEmpty ? "top" : c.cine,
+                                                       genre: nil, page: 0)
+                }
+                guard myGen == gen, type == myType else { return }
+                if !items.isEmpty { out.append((c.label, items)); stacked = out }
+            }
+        }
     }
 
     private func loadAnime() {
