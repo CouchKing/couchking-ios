@@ -25,6 +25,7 @@ import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextClock
 import android.widget.TextView
 import android.widget.Toast
@@ -34,13 +35,40 @@ import kotlin.concurrent.thread
 
 /**
  * CouchKing home screen for the onn 4K Google TV, styled after the CouchKing app's own Home:
- * a full-screen hero rotating through today's trending titles, a row of the four kept apps,
- * and a "Top 10 Today" shelf with giant outlined rank numerals.
- * The UI is built in code so the launcher has no library dependencies.
+ * a full-screen hero, then shelves — the four kept apps, the signed-in profile's Continue
+ * Watching and My List (read from the CouchKing account), and a Top 10 Today with giant
+ * outlined rank numerals. The UI is built in code so the launcher has no library dependencies.
  */
 class HomeActivity : Activity() {
 
     private data class App(val pkg: String, val label: String, val accent: Int)
+
+    /** What the hero shows for the focused (or rotating) item. */
+    private data class Hero(
+        val key: String,
+        val badge: String,
+        val title: String,
+        val meta: String,
+        val overview: String,
+        val backdrop: String?,
+        val cta: String,
+    )
+
+    /** One poster on a shelf. */
+    private class Card(
+        val title: String,
+        val poster: String?,
+        val rank: Int? = null,
+        val progress: Double? = null,
+        val chip: String? = null,
+        val hero: () -> Hero,
+        val open: () -> Unit,
+    )
+
+    /** A focus row: the header, the apps shelf, or a poster shelf. */
+    private class Row(val tiles: List<View>, var view: View?) {
+        var last = 0
+    }
 
     private val apps = listOf(
         App(COUCHKING, "CouchKing", GOLD),
@@ -49,13 +77,15 @@ class HomeActivity : Activity() {
         App("com.esaba.downloader", "Downloader", 0xFFFF8A1E.toInt()),
     )
 
-    private val appTiles = mutableListOf<FrameLayout>()
-    private val topTiles = mutableListOf<FrameLayout>()
     private var titles: List<Title> = emptyList()
-    private var lastApp = 0
-    private var lastTop = 0
-    private var heroIndex = 0
-    private var browsingTop10 = false
+    private var library = Library(emptyList(), null, emptyList(), emptyList())
+    private val details = HashMap<String, MetaDetails?>()
+    private var rows: List<Row> = emptyList()
+    private lateinit var headerRow: Row
+    private lateinit var appRow: Row
+    private var heroIndex = -1
+    private var heroKey = ""
+    private var browsing = false   // focus is on a title, so the hero follows it instead of rotating
 
     private lateinit var heroBack: ImageView
     private lateinit var heroFront: ImageView
@@ -66,15 +96,15 @@ class HomeActivity : Activity() {
     private lateinit var heroOverview: TextView
     private lateinit var heroCta: TextView
     private lateinit var greeting: TextView
+    private lateinit var profileChip: TextView
     private lateinit var settingsButton: TextView
-    private lateinit var topLabel: TextView
-    private lateinit var topScroll: HorizontalScrollView
-    private lateinit var topRow: LinearLayout
+    private lateinit var shelves: LinearLayout
+    private lateinit var shelfScroll: ScrollView
 
-    // Idle showcase, like the app: rotate the hero every 9s until someone browses the Top 10.
+    // Idle showcase, like the app: rotate trending in the hero every 9s until someone browses.
     private val rotate = object : Runnable {
         override fun run() {
-            if (!browsingTop10 && titles.isNotEmpty()) showHero((heroIndex + 1) % titles.size)
+            if (!browsing && titles.isNotEmpty()) showTrending((heroIndex + 1) % titles.size)
             heroInfo.postDelayed(this, 9_000)
         }
     }
@@ -86,11 +116,28 @@ class HomeActivity : Activity() {
         }
     }
 
+    // Continue Watching moves while people watch on other devices; re-pull every 5 minutes.
+    private val accountTick = object : Runnable {
+        override fun run() {
+            refreshAccount()
+            shelves.postDelayed(this, 5 * 60_000)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(buildUi())
         hideSystemBars()
-        setTitles(Trending.cached(this))
+        handleAccountIntent(intent)
+        titles = Trending.cached(this)
+        library = Account.library(this, Account.cachedState(this))
+        rebuildShelves()
+        showIdleHero()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleAccountIntent(intent)
     }
 
     override fun onResume() {
@@ -102,13 +149,37 @@ class HomeActivity : Activity() {
         greetingTick.run()
         heroInfo.removeCallbacks(rotate)
         heroInfo.postDelayed(rotate, 9_000)
-        if (currentFocus == null) appTiles.getOrNull(lastApp)?.requestFocus()
+        shelves.removeCallbacks(accountTick)
+        accountTick.run()
+        if (currentFocus == null) focusRow(appRow)
     }
 
     override fun onPause() {
         super.onPause()
         greeting.removeCallbacks(greetingTick)
         heroInfo.removeCallbacks(rotate)
+        shelves.removeCallbacks(accountTick)
+    }
+
+    /**
+     * couchking-tv-setup.sh signs in on the Mac and hands the token over with
+     * `am start --es ck_email … --es ck_token …`; `--ez ck_signout true` forgets it.
+     */
+    private fun handleAccountIntent(i: Intent?) {
+        i ?: return
+        if (i.getBooleanExtra("ck_signout", false)) {
+            Account.signOut(this)
+            library = Account.library(this, null)
+            if (::shelves.isInitialized) rebuildShelves()
+        }
+        val email = i.getStringExtra("ck_email")
+        val token = i.getStringExtra("ck_token")
+        if (!email.isNullOrBlank() && !token.isNullOrBlank()) {
+            Account.save(this, email.trim().lowercase(Locale.US), token.trim())
+            Toast.makeText(this, "Signed in to CouchKing as $email", Toast.LENGTH_LONG).show()
+            refreshAccount()
+        }
+        i.removeExtra("ck_token")
     }
 
     // ---------------------------------------------------------------- keys
@@ -116,28 +187,18 @@ class HomeActivity : Activity() {
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         // Home must never be left with BACK.
         if (event.keyCode == KeyEvent.KEYCODE_BACK) return true
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            val f = currentFocus
-            val inApps = f in appTiles
-            val inTop = f in topTiles
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_DPAD_DOWN -> when {
-                    f === settingsButton -> return focus(appTiles.getOrNull(lastApp))
-                    inApps -> return focus(topTiles.getOrNull(lastTop)) || true
-                    inTop -> return true
-                }
-                KeyEvent.KEYCODE_DPAD_UP -> when {
-                    inTop -> return focus(appTiles.getOrNull(lastApp))
-                    inApps -> return focus(settingsButton)
-                    f === settingsButton -> return true
-                }
-                KeyEvent.KEYCODE_DPAD_LEFT -> when {
-                    f === appTiles.firstOrNull() || f === topTiles.firstOrNull() || f === settingsButton -> return true
-                }
-                KeyEvent.KEYCODE_DPAD_RIGHT -> when {
-                    f === appTiles.lastOrNull() || f === topTiles.lastOrNull() || f === settingsButton -> return true
-                }
-            }
+        if (event.action != KeyEvent.ACTION_DOWN) return super.dispatchKeyEvent(event)
+        val f = currentFocus ?: return super.dispatchKeyEvent(event)
+        val r = rows.indexOfFirst { f in it.tiles }
+        if (r < 0) return super.dispatchKeyEvent(event)
+        val row = rows[r]
+        val i = row.tiles.indexOf(f)
+        // All D-pad moves are explicit so focus never jumps somewhere surprising.
+        when (event.keyCode) {
+            KeyEvent.KEYCODE_DPAD_UP -> { rows.getOrNull(r - 1)?.let { focusRow(it) }; return true }
+            KeyEvent.KEYCODE_DPAD_DOWN -> { rows.getOrNull(r + 1)?.let { focusRow(it) }; return true }
+            KeyEvent.KEYCODE_DPAD_LEFT -> { row.tiles.getOrNull(i - 1)?.requestFocus(); return true }
+            KeyEvent.KEYCODE_DPAD_RIGHT -> { row.tiles.getOrNull(i + 1)?.requestFocus(); return true }
         }
         return super.dispatchKeyEvent(event)
     }
@@ -147,7 +208,16 @@ class HomeActivity : Activity() {
         // Intentionally empty: this is the home screen.
     }
 
-    private fun focus(v: View?): Boolean = v?.requestFocus() ?: false
+    private fun focusRow(row: Row) {
+        row.tiles.getOrNull(row.last.coerceIn(0, maxOf(0, row.tiles.lastIndex)))?.requestFocus()
+    }
+
+    /** Netflix-style: the focused shelf slides to the top of the shelf area. */
+    private fun onRowFocused(row: Row, index: Int) {
+        row.last = index
+        val target = if (row === appRow) 0 else row.view?.top ?: 0
+        shelfScroll.post { shelfScroll.smoothScrollTo(0, target) }
+    }
 
     // ---------------------------------------------------------------- layout
 
@@ -161,44 +231,37 @@ class HomeActivity : Activity() {
         // Scrims keep text readable over any backdrop.
         root.addView(scrim(GradientDrawable.Orientation.LEFT_RIGHT, 0xF21B1830.toInt(), 0x991B1830.toInt(), 0x001B1830),
             FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-        root.addView(scrim(GradientDrawable.Orientation.BOTTOM_TOP, 0xFF0E0C1A.toInt(), 0xCC1B1830.toInt(), 0x001B1830),
-            FrameLayout.LayoutParams(MATCH_PARENT, dp(380), Gravity.BOTTOM))
+        root.addView(scrim(GradientDrawable.Orientation.BOTTOM_TOP, 0xFF0E0C1A.toInt(), 0xE61B1830.toInt(), 0x001B1830),
+            FrameLayout.LayoutParams(MATCH_PARENT, dp(330), Gravity.BOTTOM))
         root.addView(scrim(GradientDrawable.Orientation.TOP_BOTTOM, 0xB30E0C1A.toInt(), 0x400E0C1A, 0x000E0C1A),
             FrameLayout.LayoutParams(MATCH_PARENT, dp(120), Gravity.TOP))
 
-        root.addView(buildHeader(), FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP).apply {
-            setMargins(dp(48), dp(24), dp(48), 0)
-        })
-        root.addView(buildHeroInfo(), FrameLayout.LayoutParams(dp(500), WRAP_CONTENT, Gravity.TOP or Gravity.START).apply {
-            setMargins(dp(48), dp(88), 0, 0)
+        root.addView(buildHeroInfo(), FrameLayout.LayoutParams(dp(520), WRAP_CONTENT, Gravity.TOP or Gravity.START).apply {
+            setMargins(dp(48), dp(84), 0, 0)
         })
 
-        val bottom = LinearLayout(this).apply {
+        shelves = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             clipChildren = false
             clipToPadding = false
-            setPadding(dp(48), 0, 0, dp(18))
+            setPadding(0, dp(6), 0, dp(220))   // tail room so the last shelf can reach the top
         }
-        bottom.addView(buildAppRow(), LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        topLabel = sectionLabel("Top 10 Today on CouchKing").apply { setPadding(dp(4), dp(14), 0, 0) }
-        bottom.addView(topLabel)
-        topRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            clipChildren = false
-            clipToPadding = false
-            setPadding(0, dp(4), dp(48), dp(4))
-        }
-        topScroll = HorizontalScrollView(this).apply {
-            isHorizontalScrollBarEnabled = false
-            clipChildren = false
-            clipToPadding = false
+        shelfScroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
             isFocusable = false
-            addView(topRow)
+            clipChildren = false
+            clipToPadding = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(shelves)
         }
-        bottom.addView(topScroll, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
-        root.addView(bottom, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.BOTTOM))
+        root.addView(shelfScroll, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT).apply { topMargin = dp(248) })
 
-        root.addView(text("Trending data: TMDB", 10f, 0x80A9A5C0.toInt()),
+        appRow = Row(buildAppTiles(), null)
+        root.addView(buildHeader(), FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.TOP).apply {
+            setMargins(dp(48), dp(22), dp(48), 0)
+        })
+
+        root.addView(text("Trending data: TMDB · Details: Cinemeta", 10f, 0x80A9A5C0.toInt()),
             FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.END).apply {
                 setMargins(0, 0, dp(16), dp(6))
             })
@@ -247,6 +310,23 @@ class HomeActivity : Activity() {
         })
         header.addView(clockBox, LinearLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT))
 
+        // Who's watching: shows the CouchKing profile whose shelves are on screen; OK switches.
+        profileChip = text("", 15f, Color.WHITE, bold = true).apply {
+            gravity = Gravity.CENTER
+            isFocusable = true
+            isClickable = true
+            setPadding(dp(16), 0, dp(16), 0)
+            background = pill(false)
+            visibility = View.GONE
+            setOnFocusChangeListener { v, has ->
+                v.background = pill(has)
+                (v as TextView).setTextColor(if (has) BG_DEEP else Color.WHITE)
+                if (has) onRowFocused(headerRow, 0)
+            }
+            setOnClickListener { nextProfile() }
+        }
+        header.addView(profileChip, LinearLayout.LayoutParams(WRAP_CONTENT, dp(44)).apply { marginStart = dp(20) })
+
         settingsButton = text("⚙", 22f, Color.WHITE).apply {
             gravity = Gravity.CENTER
             isFocusable = true
@@ -255,10 +335,12 @@ class HomeActivity : Activity() {
             setOnFocusChangeListener { v, has ->
                 v.background = circle(has)
                 (v as TextView).setTextColor(if (has) BG_DEEP else Color.WHITE)
+                if (has) onRowFocused(headerRow, headerRow.tiles.indexOf(v))
             }
             setOnClickListener { tryStart(Intent(Settings.ACTION_SETTINGS), "Settings") }
         }
-        header.addView(settingsButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(20) })
+        header.addView(settingsButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply { marginStart = dp(12) })
+        headerRow = Row(listOf(settingsButton), null)
         return header
     }
 
@@ -291,95 +373,307 @@ class HomeActivity : Activity() {
         return heroInfo
     }
 
-    private fun buildAppRow(): View {
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            clipChildren = false
-            clipToPadding = false
-            setPadding(0, dp(4), 0, dp(4))
-        }
-        apps.forEachIndexed { i, app ->
-            val tile = FrameLayout(this).apply {
-                isFocusable = true
-                isClickable = true
-                tag = app
-                background = card(false, app.accent)
-                clipToOutline = true
-                outlineProvider = rounded(dp(14))
-                setPadding(dp(3), dp(3), dp(3), dp(3))
-            }
-            tile.addView(ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP },
+    private fun buildAppTiles(): List<View> = apps.mapIndexed { i, app ->
+        FrameLayout(this).apply {
+            isFocusable = true
+            isClickable = true
+            tag = app
+            background = card(false, app.accent)
+            clipToOutline = true
+            outlineProvider = rounded(dp(14))
+            setPadding(dp(3), dp(3), dp(3), dp(3))
+            addView(ImageView(this@HomeActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP },
                 FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-            tile.addView(text(app.label, 15f, Color.WHITE, bold = true).apply {
+            addView(text(app.label, 15f, Color.WHITE, bold = true).apply {
                 setShadowLayer(8f, 0f, 1f, Color.BLACK)
                 setPadding(dp(10), 0, dp(10), dp(6))
             }, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.START))
-            tile.setOnClickListener { launch(app) }
-            tile.setOnFocusChangeListener { v, has ->
+            setOnClickListener { launch(app) }
+            setOnFocusChangeListener { v, has ->
                 if (has) {
-                    lastApp = i
-                    browsingTop10 = false
+                    onRowFocused(appRow, i)
+                    browsing = false
                     heroCta.text = "●  Open ${app.label}"
                 }
                 grow(v, has, 1.1f)
                 v.background = card(has, app.accent)
             }
-            appTiles += tile
-            row.addView(tile, LinearLayout.LayoutParams(dp(160), dp(90)).apply { marginEnd = dp(18) })
         }
-        return row
     }
 
-    /** Netflix-style Top 10 shelf: a giant outlined rank numeral tucked behind each poster. */
-    private fun buildTopRow() {
-        topRow.removeAllViews()
-        topTiles.clear()
-        val top = titles.take(10)
-        topLabel.visibility = if (top.isEmpty()) View.GONE else View.VISIBLE
-        topScroll.visibility = topLabel.visibility
-        top.forEachIndexed { i, t ->
-            val rank = (i + 1).toString()
-            val item = FrameLayout(this).apply {
-                isFocusable = true
-                isClickable = true
-                clipChildren = false
-            }
-            val numeral = text(rank, 88f, MUTED, bold = true).apply {
+    // ---------------------------------------------------------------- shelves
+
+    /** Rebuilds every shelf from the current data, keeping focus on the same shelf + position. */
+    private fun rebuildShelves() {
+        val old = rows.firstOrNull { currentFocus in it.tiles }
+        val oldLabel = old?.view?.tag
+        val keep = old?.last ?: 0
+
+        refreshHeader()
+        shelves.removeAllViews()
+        shelves.addView(shelf("Your apps", appRow.tiles, dp(160), dp(90), dp(18)))
+        val built = mutableListOf(headerRow, appRow)
+
+        val profileName = library.profile?.name?.let { "$it's" } ?: "Your"
+        val cw = library.continueWatching.take(20).map { e -> libraryCard(e, inProgress = true) }
+        val wl = library.watchlist.take(20).map { e -> libraryCard(e, inProgress = false) }
+        val top = titles.take(10).mapIndexed { i, t ->
+            Card(t.name, t.poster, rank = i + 1, hero = { trendingHero(t, i) }, open = { watchOnCouchKing(t) })
+        }
+        for ((label, cards) in listOf(
+            "Continue Watching" to cw,
+            "$profileName List" to wl,
+            "Top 10 Today on CouchKing" to top,
+        )) {
+            if (cards.isEmpty()) continue
+            val tiles = ArrayList<View>()
+            val row = Row(tiles, null)
+            cards.forEachIndexed { i, c -> tiles += posterTile(c, row, i) }
+            row.view = shelf(label, tiles, 0, 0, 0)
+            shelves.addView(row.view)
+            built += row
+        }
+        rows = built
+
+        if (!browsing && (heroKey.isEmpty() || heroKey == "brand")) showIdleHero()
+        if (old == null) return
+        val target = when {
+            oldLabel != null -> rows.firstOrNull { it.view?.tag == oldLabel } ?: appRow
+            old === appRow -> appRow
+            else -> headerRow
+        }
+        target.last = keep.coerceAtMost(maxOf(0, target.tiles.lastIndex))
+        focusRow(target)
+    }
+
+    private fun shelf(label: String, tiles: List<View>, w: Int, h: Int, gap: Int): View {
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            clipChildren = false
+            clipToPadding = false
+            tag = label
+            setPadding(0, 0, 0, dp(10))
+        }
+        box.addView(sectionLabel(label).apply { setPadding(dp(52), 0, 0, dp(4)) })
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            clipChildren = false
+            clipToPadding = false
+            setPadding(dp(48), dp(6), dp(48), dp(6))
+        }
+        tiles.forEach { t ->
+            (t.parent as? LinearLayout)?.removeView(t)
+            val lp = if (w > 0) LinearLayout.LayoutParams(w, h).apply { marginEnd = gap }
+            else t.layoutParams as LinearLayout.LayoutParams
+            row.addView(t, lp)
+        }
+        box.addView(HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            clipChildren = false
+            clipToPadding = false
+            isFocusable = false
+            overScrollMode = View.OVER_SCROLL_NEVER
+            addView(row)
+        }, LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT))
+        return box
+    }
+
+    /** A poster with optional giant rank numeral (Top 10), progress bar and episode chip. */
+    private fun posterTile(c: Card, row: Row, index: Int): View {
+        val item = FrameLayout(this).apply {
+            isFocusable = true
+            isClickable = true
+            clipChildren = false
+            setOnClickListener { c.open() }
+        }
+        var numeral: TextView? = null
+        if (c.rank != null) {
+            numeral = text(c.rank.toString(), 88f, MUTED, bold = true)
+            item.addView(numeral.apply {
                 paint.style = Paint.Style.STROKE
                 paint.strokeWidth = dp(2).toFloat()
                 includeFontPadding = false
                 typeface = Typeface.create("sans-serif-black", Typeface.BOLD)
-            }
-            item.addView(numeral, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply {
+            }, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.BOTTOM or Gravity.START).apply {
                 bottomMargin = -dp(14)
             })
-            val poster = FrameLayout(this).apply {
-                clipToOutline = true
-                outlineProvider = rounded(dp(10))
-                background = GradientDrawable().apply { setColor(CARD) }
+        }
+        val poster = FrameLayout(this).apply {
+            clipToOutline = true
+            outlineProvider = rounded(dp(10))
+            background = GradientDrawable().apply { setColor(CARD) }
+        }
+        val img = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+        poster.addView(img, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
+        Images.into(img, c.poster)
+        if (c.chip != null) {
+            poster.addView(text(c.chip, 10f, Color.WHITE, bold = true).apply {
+                setPadding(dp(6), dp(2), dp(6), dp(2))
+                background = GradientDrawable().apply { cornerRadius = dp(4).toFloat(); setColor(0xCC0E0C1A.toInt()) }
+            }, FrameLayout.LayoutParams(WRAP_CONTENT, WRAP_CONTENT, Gravity.TOP or Gravity.START).apply {
+                setMargins(dp(5), dp(5), 0, 0)
+            })
+        }
+        if (c.progress != null && c.progress > 0) {
+            poster.addView(View(this).apply { setBackgroundColor(0x99000000.toInt()) },
+                FrameLayout.LayoutParams(MATCH_PARENT, dp(4), Gravity.BOTTOM))
+            poster.addView(View(this).apply { setBackgroundColor(GOLD) },
+                FrameLayout.LayoutParams((dp(78) * c.progress.coerceIn(0.04, 1.0)).toInt(), dp(4), Gravity.BOTTOM or Gravity.START))
+        }
+        if (c.poster == null) {
+            poster.addView(text(c.title, 12f, Color.WHITE, bold = true).apply {
+                isSingleLine = false
+                maxLines = 4
+                gravity = Gravity.CENTER
+                setPadding(dp(6), 0, dp(6), 0)
+            }, FrameLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT, Gravity.CENTER))
+        }
+        item.addView(poster, FrameLayout.LayoutParams(dp(78), dp(117), Gravity.END or Gravity.CENTER_VERTICAL))
+        val width = when {
+            c.rank == null -> dp(78)
+            c.rank >= 10 -> dp(156)
+            else -> dp(126)
+        }
+        item.layoutParams = LinearLayout.LayoutParams(width, dp(128)).apply { marginEnd = dp(if (c.rank == null) 16 else 8) }
+        item.setOnFocusChangeListener { _, has ->
+            if (has) {
+                onRowFocused(row, index)
+                browsing = true
+                showHero(c.hero())
             }
-            val img = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
-            poster.addView(img, FrameLayout.LayoutParams(MATCH_PARENT, MATCH_PARENT))
-            Images.into(img, t.poster)
-            item.addView(poster, FrameLayout.LayoutParams(dp(78), dp(117), Gravity.END or Gravity.CENTER_VERTICAL))
+            grow(poster, has, 1.12f)
+            poster.foreground = if (has) GradientDrawable().apply {
+                cornerRadius = dp(10).toFloat()
+                setStroke(dp(3), GOLD)
+            } else null
+            numeral?.setTextColor(if (has) GOLD else MUTED)
+        }
+        return item
+    }
 
-            item.setOnClickListener { watchOnCouchKing(t) }
-            item.setOnFocusChangeListener { _, has ->
-                if (has) {
-                    lastTop = i
-                    browsingTop10 = true
-                    showHero(titles.indexOf(t))
+    private fun libraryCard(e: Entry, inProgress: Boolean): Card {
+        val ep = episodeLabel(e.resumeKey)
+        return Card(
+            title = e.name,
+            poster = e.poster,
+            progress = if (inProgress) e.progress else null,
+            chip = if (inProgress) ep else null,
+            hero = { libraryHero(e, inProgress) },
+            open = { openLibraryTitle(e) },
+        )
+    }
+
+    // ---------------------------------------------------------------- hero
+
+    private fun trendingHero(t: Title, index: Int): Hero {
+        val rank = index + 1
+        return Hero(
+            key = "tmdb:${t.tmdbId}",
+            badge = if (rank <= 10) "#$rank TRENDING TODAY" else "TRENDING TODAY",
+            title = t.name,
+            meta = listOfNotNull(
+                t.year.ifBlank { null },
+                if (t.type == "tv") "Series" else "Movie",
+                if (t.rating > 0) "★ " + String.format(Locale.US, "%.1f", t.rating) else null,
+            ).joinToString("   ·   "),
+            overview = t.overview,
+            backdrop = t.backdrop,
+            cta = if (browsing) "●  Watch on CouchKing" else heroCta.text.toString(),
+        )
+    }
+
+    private fun libraryHero(e: Entry, inProgress: Boolean): Hero {
+        val d = details[e.imdbId]
+        if (!details.containsKey(e.imdbId)) loadDetails(e)
+        val ep = episodeLabel(e.resumeKey)
+        val pct = (e.progress * 100).toInt()
+        return Hero(
+            key = "imdb:${e.imdbId}",
+            badge = if (inProgress) "CONTINUE WATCHING" else "ON YOUR LIST",
+            title = e.name,
+            meta = listOfNotNull(
+                d?.year?.ifBlank { null },
+                if (e.type == "series") "Series" else "Movie",
+                d?.rating?.ifBlank { null }?.let { "★ $it" },
+                ep,
+                if (inProgress && pct in 1..99) "$pct% watched" else null,
+            ).joinToString("   ·   "),
+            overview = d?.description ?: "",
+            backdrop = d?.background,
+            cta = if (inProgress) "●  Resume on CouchKing" else "●  Watch on CouchKing",
+        )
+    }
+
+    private fun loadDetails(e: Entry) {
+        details[e.imdbId] = null
+        thread(isDaemon = true) {
+            val d = Account.details(e.type, e.imdbId) ?: return@thread
+            runOnUiThread {
+                details[e.imdbId] = d
+                // Still looking at this title? Fill in the backdrop + synopsis now.
+                if (heroKey == "imdb:${e.imdbId}") {
+                    val inProgress = library.continueWatching.any { it.imdbId == e.imdbId }
+                    showHero(libraryHero(e, inProgress), force = true)
                 }
-                grow(poster, has, 1.12f)
-                poster.foreground = if (has) GradientDrawable().apply {
-                    cornerRadius = dp(10).toFloat()
-                    setStroke(dp(3), GOLD)
-                } else null
-                numeral.setTextColor(if (has) GOLD else MUTED)
             }
-            topTiles += item
-            val width = if (rank.length > 1) dp(156) else dp(126)
-            topRow.addView(item, LinearLayout.LayoutParams(width, dp(128)).apply { marginEnd = dp(8) })
+        }
+    }
+
+    private fun showTrending(index: Int) {
+        val t = titles.getOrNull(index) ?: return
+        heroIndex = index
+        showHero(trendingHero(t, index))
+        Images.prefetch(titles.getOrNull((index + 1) % titles.size)?.backdrop)
+    }
+
+    /** The resting hero: trending when we have it, else the person's own next watch, else the brand. */
+    private fun showIdleHero() {
+        when {
+            titles.isNotEmpty() -> showTrending(0)
+            library.continueWatching.isNotEmpty() -> showHero(libraryHero(library.continueWatching[0], true))
+            else -> showHero(Hero(
+                key = "brand",
+                badge = "COUCHKING",
+                title = "Movies & shows, all yours",
+                meta = "Trending titles appear here once the TV is online",
+                overview = "Open CouchKing to pick up where you left off.",
+                backdrop = null,
+                cta = "●  Open CouchKing",
+            ))
+        }
+    }
+
+    private fun showHero(h: Hero, force: Boolean = false) {
+        if (h.key == heroKey && !force) return
+        val fade = h.key != heroKey
+        heroKey = h.key
+        heroBadge.text = h.badge
+        heroTitle.text = h.title
+        heroMeta.text = h.meta
+        heroOverview.text = h.overview
+        heroCta.text = h.cta
+        if (fade) {
+            heroInfo.alpha = 0f
+            heroInfo.animate().alpha(1f).setDuration(350).start()
+        }
+        if (h.backdrop == null) {
+            if (fade) {
+                heroFront.animate().alpha(0f).setDuration(400).start()
+                heroBack.setImageDrawable(null)
+            }
+            return
+        }
+        val key = h.key
+        Images.load(h.backdrop) { bmp ->
+            if (bmp == null || heroKey != key) return@load
+            // Crossfade: the new backdrop fades in on top, then becomes the bottom layer.
+            heroFront.animate().cancel()
+            heroFront.setImageBitmap(bmp)
+            heroFront.alpha = 0f
+            heroFront.animate().alpha(1f).setDuration(700).withEndAction {
+                heroBack.setImageBitmap(bmp)
+                heroFront.alpha = 0f
+            }.start()
         }
     }
 
@@ -388,65 +682,58 @@ class HomeActivity : Activity() {
     private fun refreshTrending() {
         thread(isDaemon = true) {
             val fresh = Trending.fetch(applicationContext) ?: return@thread
-            runOnUiThread { if (!isDestroyed) setTitles(fresh) }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                titles = fresh
+                rebuildShelves()
+                if (!browsing) showTrending(0)
+            }
         }
     }
 
-    private fun setTitles(list: List<Title>) {
-        val focusedTop = currentFocus in topTiles
-        titles = list
-        buildTopRow()
-        if (titles.isEmpty()) showBrandHero() else showHero(0)
-        if (focusedTop) focus(topTiles.getOrNull(lastTop.coerceAtMost(topTiles.lastIndex)) ?: appTiles[lastApp])
-    }
-
-    private fun showHero(index: Int) {
-        val t = titles.getOrNull(index) ?: return
-        if (index == heroIndex && heroTitle.text.toString() == t.name) return
-        heroIndex = index
-        val rank = index + 1
-        heroBadge.text = if (rank <= 10) "#$rank TRENDING TODAY" else "TRENDING TODAY"
-        heroTitle.text = t.name
-        heroMeta.text = listOfNotNull(
-            t.year.ifBlank { null },
-            if (t.type == "tv") "Series" else "Movie",
-            if (t.rating > 0) "★ " + String.format(Locale.US, "%.1f", t.rating) else null,
-        ).joinToString("   ·   ")
-        heroOverview.text = t.overview
-        if (browsingTop10) heroCta.text = "●  Watch on CouchKing"
-        heroInfo.alpha = 0f
-        heroInfo.animate().alpha(1f).setDuration(350).start()
-
-        val url = t.backdrop ?: return
-        Images.load(url) { bmp ->
-            if (bmp == null || heroIndex != index) return@load
-            // Crossfade: the new backdrop fades in on top, then becomes the bottom layer.
-            heroFront.setImageBitmap(bmp)
-            heroFront.alpha = 0f
-            heroFront.animate().alpha(1f).setDuration(700).withEndAction {
-                heroBack.setImageBitmap(bmp)
-                heroFront.alpha = 0f
-            }.start()
+    private fun refreshAccount() {
+        if (!Account.signedIn(this)) { refreshHeader(); return }
+        thread(isDaemon = true) {
+            val state = Account.fetchState(applicationContext)
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                library = Account.library(this, state ?: Account.cachedState(this))
+                rebuildShelves()
+            }
         }
-        Images.prefetch(titles.getOrNull((index + 1) % titles.size)?.backdrop)
     }
 
-    /** Offline before the first fetch: show the CouchKing crown instead of an empty hero. */
-    private fun showBrandHero() {
-        heroBack.setImageDrawable(null)
-        heroFront.setImageDrawable(null)
-        heroBadge.text = "COUCHKING"
-        heroTitle.text = "Movies & shows, all yours"
-        heroMeta.text = "Trending titles appear here once the TV is online"
-        heroOverview.text = "Open CouchKing to pick up where you left off."
-        heroCta.text = "●  Open CouchKing"
+    private fun nextProfile() {
+        val ps = library.profiles
+        if (ps.size < 2) return
+        val next = ps[(ps.indexOfFirst { it.id == library.profile?.id } + 1) % ps.size]
+        Account.setProfileId(this, next.id)
+        library = Account.library(this, Account.cachedState(this))
+        rebuildShelves()
+        profileChip.requestFocus()
+        Toast.makeText(this, "Now showing ${next.name}'s shelves", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun refreshHeader() {
+        val p = library.profile
+        if (p != null) {
+            val face = p.avatar.ifBlank { p.name.take(1).uppercase() }
+            profileChip.text = if (library.profiles.size > 1) "$face  ${p.name}  ▾" else "$face  ${p.name}"
+            profileChip.visibility = View.VISIBLE
+            headerRow = Row(listOf(profileChip, settingsButton), null).also { it.last = headerRow.last }
+        } else {
+            profileChip.visibility = View.GONE
+            headerRow = Row(listOf(settingsButton), null)
+        }
+        greeting.text = greetingText()
     }
 
     // ---------------------------------------------------------------- apps
 
     /** Re-read install state each time Home comes back, so a disabled app shows as unavailable. */
     private fun refreshAppTiles() {
-        for (tile in appTiles) {
+        for (tile in appRow.tiles) {
+            tile as FrameLayout
             val app = tile.tag as App
             val art = tile.getChildAt(0) as ImageView
             val label = tile.getChildAt(1) as TextView
@@ -454,6 +741,7 @@ class HomeActivity : Activity() {
             val banner = bannerFor(app.pkg)
             if (banner != null) {
                 art.scaleType = ImageView.ScaleType.CENTER_CROP
+                art.setPadding(0, 0, 0, 0)
                 art.setImageDrawable(banner)
             } else {
                 // No TV banner: centered icon (or the crown) with the name underneath.
@@ -493,13 +781,24 @@ class HomeActivity : Activity() {
      * Opens CouchKing. The extras name the chosen title so CouchKing can jump straight to it
      * once it reads them; until then it simply opens to its Home.
      */
-    private fun watchOnCouchKing(t: Title) {
+    private fun watchOnCouchKing(t: Title) = openCouchKing {
+        putExtra("ck_tmdb_id", t.tmdbId)
+        putExtra("ck_type", if (t.type == "tv") "series" else "movie")
+        putExtra("ck_title", t.name)
+    }
+
+    private fun openLibraryTitle(e: Entry) = openCouchKing {
+        putExtra("ck_imdb_id", e.imdbId)
+        putExtra("ck_type", e.type)
+        putExtra("ck_title", e.name)
+        putExtra("ck_resume", e.resumeKey)
+        library.profile?.let { putExtra("ck_profile", it.id) }
+    }
+
+    private fun openCouchKing(extras: Intent.() -> Unit) {
         val intent = launchIntentFor(COUCHKING)
             ?: return Toast.makeText(this, "CouchKing isn't installed", Toast.LENGTH_SHORT).show()
-        intent.putExtra("ck_tmdb_id", t.tmdbId)
-            .putExtra("ck_type", t.type)
-            .putExtra("ck_title", t.name)
-        tryStart(intent, "CouchKing")
+        tryStart(intent.apply(extras), "CouchKing")
     }
 
     private fun tryStart(intent: Intent, label: String) {
@@ -511,6 +810,12 @@ class HomeActivity : Activity() {
     }
 
     // ---------------------------------------------------------------- helpers
+
+    /** "tt123:2:5" → "S2 E5"; a movie id → null. */
+    private fun episodeLabel(key: String): String? {
+        val p = key.split(":")
+        return if (p.size >= 3) "S${p[1]} E${p[2]}" else null
+    }
 
     private fun hideSystemBars() {
         if (android.os.Build.VERSION.SDK_INT >= 30) {
@@ -533,7 +838,7 @@ class HomeActivity : Activity() {
             in 17..21 -> "Good evening"
             else -> "Late night"
         }
-        return "$part, your Majesty"
+        return "$part, ${library.profile?.name ?: "your Majesty"}"
     }
 
     private fun grow(v: View, focused: Boolean, scale: Float) {
@@ -553,7 +858,6 @@ class HomeActivity : Activity() {
     private fun sectionLabel(s: String) = text(s, 13f, MUTED, bold = true).apply {
         letterSpacing = 0.16f
         isAllCaps = true
-        setPadding(dp(4), 0, 0, dp(4))
     }
 
     private fun card(focused: Boolean, accent: Int) = GradientDrawable().apply {
@@ -564,6 +868,14 @@ class HomeActivity : Activity() {
 
     private fun circle(focused: Boolean) = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
+        if (focused) setColor(GOLD) else {
+            setColor(0x66241F3D)
+            setStroke(dp(1), 0x44FFFFFF)
+        }
+    }
+
+    private fun pill(focused: Boolean) = GradientDrawable().apply {
+        cornerRadius = dp(22).toFloat()
         if (focused) setColor(GOLD) else {
             setColor(0x66241F3D)
             setStroke(dp(1), 0x44FFFFFF)
