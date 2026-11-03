@@ -66,12 +66,25 @@ def api(method, path, body=None):
         print(f"ASC {method} {path} -> {e.code}\n{e.read().decode()}", file=sys.stderr)
         raise
 
-# ---- 1. refuse to blow the 2-cert limit ----
+# ---- 1. the 2-cert limit: clean up after OURSELVES only ----
+# Every run mints a fresh cert whose private key dies with the runner, so any earlier
+# "CouchKing CI Distribution" cert in the portal is unusable dead weight — revoking it
+# breaks nothing (App Store/TestFlight builds already uploaded don't depend on it).
+# A cert we did NOT create (no CouchKing CI in its name) is never touched: if the limit
+# is full of those, stop and ask, same as before (hit twice: #111 era + run 156, Nov 3).
 certs = api("GET", "/v1/certificates?filter[certificateType]=DISTRIBUTION&limit=200").get("data", [])
-if len(certs) >= 2:
-    print("❌ Apple's 2 Apple-Distribution-cert limit is already used up. Free a slot in the portal "
-          "(or export one of the existing certs as a .p12) — I won't revoke one automatically.")
-    sys.exit(1)
+while len(certs) >= 2:
+    ours = [c for c in certs if "couchking ci" in
+            ((c["attributes"].get("displayName") or "") + " " + (c["attributes"].get("name") or "")).lower()]
+    if not ours:
+        print("❌ Apple's 2 Apple-Distribution-cert limit is used up by certs this CI didn't create "
+              "— free a slot in the portal yourself; I won't revoke someone else's cert.")
+        sys.exit(1)
+    victim = sorted(ours, key=lambda c: c["attributes"].get("expirationDate") or "")[0]
+    print(f"♻️  revoking our stale CI cert {victim['id']} "
+          f"({victim['attributes'].get('displayName')}, expires {victim['attributes'].get('expirationDate')})")
+    api("DELETE", f"/v1/certificates/{victim['id']}")
+    certs = [c for c in certs if c["id"] != victim["id"]]
 
 # ---- 2. key + CSR ----
 run(["openssl", "genrsa", "-out", f"{WORK}/dist.key", "2048"])
