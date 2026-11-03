@@ -1550,11 +1550,16 @@ struct PlayerView: View {
         }
         cw.insert(entry, at: 0)
         ps["continue"] = Array(cw.prefix(12))
-        // per-title last-episode pointer — resume-on-tap lands on the right episode
+        // per-title last-episode pointer — resume-on-tap lands on the right episode.
+        // cwlastts = WHEN this pointer was chosen (Nov 3, parity w/ TV 2.0.245): the merge
+        // favors the most recently chosen episode, so going back to an older one sticks.
         if request.season != nil {
             var cwlast = ps["cwlast"] as? [String: Any] ?? [:]
             cwlast[request.meta.id] = posKey()
             ps["cwlast"] = cwlast
+            var cwts = ps["cwlastts"] as? [String: Any] ?? [:]
+            cwts[request.meta.id] = now
+            ps["cwlastts"] = cwts
         }
         session.setPstate(ps, push: push)
     }

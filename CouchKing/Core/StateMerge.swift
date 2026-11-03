@@ -156,18 +156,28 @@ enum StateMerge {
         }
         out["positions"] = pos
 
-        // cwlast resume pointer: the FRESHER episode wins per title, judged by each pointed
-        // episode's own position stamp (local-always-wins kept a stale pointer forever)
+        // cwlast resume pointer: the most recently CHOSEN episode wins per title (cwlastts,
+        // Nov 3 — parity with TV 2.0.245 / server / web): a deliberate jump BACK to an earlier
+        // episode must not be reverted by an older finished one. Falls back to the pointed
+        // episode's own position stamp when either side lacks a choice-stamp (older clients).
         var cwlast: [String: String] = [:]
+        var cwts: [String: Int] = [:]
         let la = a["cwlast"] as? [String: Any] ?? [:]
         let lb = b["cwlast"] as? [String: Any] ?? [:]
+        let ta = a["cwlastts"] as? [String: Any] ?? [:]
+        let tb = b["cwlastts"] as? [String: Any] ?? [:]
         for k in Set(la.keys).union(lb.keys) {
             let ae = la[k] as? String ?? "", be = lb[k] as? String ?? ""
-            let asr = ae.isEmpty ? -1 : posStamp(pos[ae])
-            let bsr = be.isEmpty ? -1 : posStamp(pos[be])
-            cwlast[k] = (ae.isEmpty || bsr > asr) ? be : ae
+            let ats = stamp(ta[k]), bts = stamp(tb[k])
+            let asr = ats > 0 ? ats : (ae.isEmpty ? -1 : posStamp(pos[ae]))
+            let bsr = bts > 0 ? bts : (be.isEmpty ? -1 : posStamp(pos[be]))
+            let useB = ae.isEmpty || bsr > asr
+            cwlast[k] = useB ? be : ae
+            let wts = useB ? bts : ats
+            if wts > 0 { cwts[k] = wts }
         }
         out["cwlast"] = cwlast
+        if !cwts.isEmpty { out["cwlastts"] = cwts }   // pointer + its chosen-at stamp travel together
 
         // prefs: remote wins when present (the server only lets the profile's own device
         // change them, so its copy is the truth)

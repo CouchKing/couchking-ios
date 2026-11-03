@@ -904,6 +904,8 @@ extension Session {
         ps["positions"] = positions
         var cwlast = ps["cwlast"] as? [String: Any] ?? [:]
         cwlast[meta.id] = nil; ps["cwlast"] = cwlast
+        var cwts = ps["cwlastts"] as? [String: Any] ?? [:]
+        cwts[meta.id] = nil; ps["cwlastts"] = cwts   // stamp follows the pointer (Nov 3)
         var removed = ps["removedTs"] as? [String: Any] ?? [:]
         removed["cw:" + meta.id] = nowMs(); ps["removedTs"] = removed
         setPstate(ps)
