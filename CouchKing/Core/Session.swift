@@ -335,7 +335,9 @@ final class Session: ObservableObject {
         guard signedIn else { return false }
         let e = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
         let t = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? token
-        guard let r = try? await API.json("/tvapp/access?e=\(e)&t=\(t)") else { return false }
+        // appVer rides every access check so /stale sees the REAL installed version, not the
+        // sign-in-era one (Nov 3 — devices that stay signed in looked ancient forever)
+        guard let r = try? await API.json("/tvapp/access?e=\(e)&t=\(t)&appVer=\(Self.appVer)") else { return false }
         // `allowed` absent (older service) = the service didn't say no
         let allowed = (r["allowed"] as? Bool) ?? true
         setAccessStatus(expires: r["expires"] as? String ?? "",
