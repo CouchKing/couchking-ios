@@ -104,6 +104,10 @@ struct PlayerView: View {
     @State var holdDry = 0           // ticks since the output last produced a buffer
     @State var seekClearTicks = 0    // dead-output fallback: release the hold after ~2.5s
     static var holdBeaconSent = false
+    /// How many player screens are on screen right now — the foreground-return "Who's
+    /// watching?" re-ask (Netflix-style sessions, Android 2.0.257) skips while one is open,
+    /// so backgrounding mid-watch / PiP / background audio never yanks the picker in.
+    static var openCount = 0
     @State var subOffsetMs = 0   // manual subtitle sync nudge (per sit-down)
     @State var openResumeMs = 0  // the resume target while the open is still settling
     @State var bufferTicks = 0   // consecutive 250ms ticks spent buffering
@@ -224,8 +228,8 @@ struct PlayerView: View {
             if case .active = phase { if !controlsVisible { controlsVisible = true }; scheduleHide() }
         }
         #endif
-        .onAppear { Task { await start() } }
-        .onDisappear { stop() }
+        .onAppear { PlayerView.openCount += 1; Task { await start() } }
+        .onDisappear { PlayerView.openCount = max(0, PlayerView.openCount - 1); stop() }
         // device limit took the slot mid-play (another device started) — stop and say so,
         // the VOD version of Live TV's mid-stream cutoff (AJ Oct 16 "playing on both")
         .alert("Too many devices", isPresented: $vodKicked) {
@@ -672,7 +676,7 @@ struct PlayerView: View {
         #if !os(tvOS)
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                if !subTracks.isEmpty {
+                if !isLive && !subTracks.isEmpty {   // live never shows subtitle controls
                     barButton("Captions", "captions.bubble") { showSubPanel = true; hideTask?.cancel() }
                 }
                 if audioOpts.count > 1 {
@@ -1211,7 +1215,9 @@ struct PlayerView: View {
                                                       queue: .main) { t in
             Task { @MainActor in tick(remuxBaseMs + Self.safeMs(t.seconds)) }
         }
-        subTracks = rankSubtitles(request.subtitles)
+        // LIVE: no subtitle tracks ever (Android 2.0.251/258 parity) — the player's own
+        // legible selection is forced off in observeItem, and no track list = no Captions UI
+        subTracks = isLive ? [] : rankSubtitles(request.subtitles)
         await loadSubtitles()
         await mergeV3Subs()
         // next episode from the REAL episode list (season-crossing, no e+1 guessing)
@@ -1260,6 +1266,22 @@ struct PlayerView: View {
                                                                 object: item, queue: .main) { _ in
             Task { @MainActor in if item.status == .failed { onError() } }
         })
+        // LIVE: never captions (Android 2.0.258 "live captions can never render") — AVPlayer
+        // auto-selects an embedded 608/708 caption track when the system's accessibility
+        // captioning is on. Force the legible selection OFF, and once more at readiness:
+        // the automatic selection lands when the item becomes ready and would override an
+        // earlier nil. VOD subtitles (our own cue overlay) are untouched.
+        if isLive {
+            Task {
+                guard let g = try? await item.asset.loadMediaSelectionGroup(for: .legible) else { return }
+                item.select(nil, in: g)
+                for _ in 0..<40 {   // up to ~10s for readiness; live items start fast
+                    if item.status == .readyToPlay { break }
+                    try? await Task.sleep(for: .milliseconds(250))
+                }
+                item.select(nil, in: g)
+            }
+        }
     }
 
     @State var errorRetried = false
@@ -1795,7 +1817,7 @@ struct PlayerView: View {
     }
 
     func loadSubtitles() async {
-        guard session.pref("subLang", "off") != "off", !placeholder else { subIndex = -1; return }
+        guard session.pref("subLang", "off") != "off", !placeholder, !isLive else { subIndex = -1; return }
         if subTracks.isEmpty, let base = session.addonBase(), !isLive {
             // the addon attaches ranked subtitle files to each stream response — refetch the
             // stream list for this item and take this stream's list

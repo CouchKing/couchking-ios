@@ -1,11 +1,15 @@
 import Foundation
 
 // Continue Watching ordering + "+N new episodes" (Android newEpisodeCount / cwOrder /
-// dismissNewEpsBadge, MainActivity ~L3390-3458):
+// dismissNewEpsBadge):
 //  - a show floats to the FRONT of CW at the air time of its newest unwatched episode
-//    (cwOrder = max(last watch stamp, badge'd air time)), badge "+N"
-//  - opening the show dismisses the badge (newEpsSeen[id] = that air time; highest wins
-//    across devices in the union merge) — the show then sorts by its watch stamp again.
+//    (cwOrder = max(last watch stamp, that air time)), badge "+N"
+//  - opening the show dismisses the NUMBER only (newEpsSeen[id] = latest aired key; highest
+//    wins across devices in the union merge) — the position boost STAYS until the episodes
+//    are actually WATCHED (Android 2.0.251 "peek != reorder": dismissing used to zero the
+//    boost too, so the show sank from mid-row to the back the moment you looked at it).
+//  - the boost is persisted per title (Android 2.0.256 epboost) so a rebuilt row sorts
+//    FINAL on first paint, before the async episode-list pass has run.
 struct NewEpsInfo {
     var count = 0          // unwatched aired episodes after the last watched one
     var latestAir = 0      // epoch ms of the newest of those (drives CW ordering)
@@ -129,19 +133,53 @@ extension Session {
         setPstate(ps)
     }
 
+    // Per-title new-episode ORDER boost (air time of the newest unwatched drop), persisted
+    // like Android's Store.epBoost — so CW sorts the same at cold build and after the async
+    // recompute (the row must never visibly re-sort after first paint).
+    private var epBoostKey: String { "epboost." + currentProfile }
+    func epBoosts() -> [String: Int] {
+        (UserDefaults.standard.dictionary(forKey: epBoostKey) as? [String: Int]) ?? [:]
+    }
+    func setEpBoost(_ id: String, _ v: Int) {
+        var m = epBoosts()
+        if (v > 0 ? m[id] == v : m[id] == nil) { return }   // no-op writes skipped
+        if v > 0 { m[id] = v } else { m.removeValue(forKey: id) }
+        UserDefaults.standard.set(m, forKey: epBoostKey)
+    }
+
+    /// The CW row in its FINAL order, synchronously (Android 2.0.256 first-paint fix): the
+    /// persisted boosts answer before any episode list has loaded. The async pass below only
+    /// adds the +N badges (and any boost the persisted map missed).
+    func continueWatchingSeeded() -> [CWItem] {
+        var items = continueWatching()
+        let boosts = epBoosts()
+        for i in items.indices where items[i].meta.type == "series" {
+            items[i].order = max(items[i].order, boosts[items[i].meta.id] ?? 0)
+        }
+        return items.sorted { $0.order > $1.order }
+    }
+
     /// The CW row fully ordered (Android cwOrder): newest activity first, a show with a fresh
-    /// unwatched episode floats to where that episode's air time lands it.
+    /// unwatched episode floats to where that episode's air time lands it — WHETHER OR NOT
+    /// the +N badge was dismissed (the boost only decays once the episodes are watched:
+    /// latestAir derives from unwatched eps, so watching them zeroes it naturally).
     func continueWatchingOrdered() async -> [CWItem] {
         var items = continueWatching()
+        let boosts = epBoosts()
         for i in items.indices where items[i].meta.type == "series" {
+            let id = items[i].meta.id
             let vids = await MetaCache.shared.videos(for: items[i].meta, session: self)
-            let info = newEpisodes(for: items[i].meta, videos: vids)
-            if newEpsBadgeVisible(items[i].meta.id, info) {
-                items[i].newEps = info.count
-                items[i].latestAir = info.latestAir
-                items[i].latestKey = info.latestKey
-                items[i].order = max(items[i].order, info.latestAir)
+            // in-flight / failed fetch → the persisted boost holds the order steady
+            guard !vids.isEmpty else {
+                items[i].order = max(items[i].order, boosts[id] ?? 0)
+                continue
             }
+            let info = newEpisodes(for: items[i].meta, videos: vids)
+            items[i].latestAir = info.latestAir
+            items[i].latestKey = info.latestKey
+            items[i].order = max(items[i].order, info.latestAir)
+            if newEpsBadgeVisible(id, info) { items[i].newEps = info.count }
+            setEpBoost(id, info.latestAir)
         }
         return items.sorted { $0.order > $1.order }
     }

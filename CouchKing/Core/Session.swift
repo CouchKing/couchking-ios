@@ -38,9 +38,14 @@ final class Session: ObservableObject {
     /// Android Sync.pulledOk: one successful /tvapp/state pull this process — until then an
     /// empty profile list means "couldn't ask", never "brand-new account".
     @Published var pulledOk = false
-    /// Android profilePicked: "Who's watching?" is answered once per process (cold open always
-    /// asks, even with a single profile).
+    /// Android profilePicked: "Who's watching?" is answered once per SITTING (cold open always
+    /// asks, even with a single profile; leaving the app ends the sitting — see wentBackground).
     @Published var profilePicked = false
+    /// Android Ck.wentBackground (2.0.257 Netflix-style sessions): set when the app leaves the
+    /// foreground; the next return re-asks "Who's watching?" — unless a player is still open
+    /// (returning from playback / PiP / background audio never re-asks). Not @Published: it's
+    /// only read at the foreground transition.
+    var wentBackground = false
     /// Onboarding done (signed in once, or chose "Continue as guest") — the login screen is the
     /// front door until then, and again after sign-out.
     @Published var onboarded = UserDefaults.standard.bool(forKey: "onboarded")

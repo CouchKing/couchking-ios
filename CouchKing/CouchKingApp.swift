@@ -33,7 +33,26 @@ struct CouchKingApp: App {
                 // Android onResume parity: every foreground silently pulls state, refreshes
                 // cached expiry, picks up a just-assigned addon, and re-detects Live TV.
                 .onChange(of: scenePhase) { phase in
-                    if phase == .active { Task { await session.foregroundResume() } }
+                    #if !os(macOS)
+                    // NETFLIX-STYLE SITTINGS (Android 2.0.257): leaving the app (home button,
+                    // app switcher, lock) ends the sitting — the next foreground asks "Who's
+                    // watching?" again. Only .background counts (a control-center peek is
+                    // .inactive); playback lives in-scene, so coming back from the player
+                    // never trips this, and a player still open (PiP / background audio)
+                    // keeps the sitting alive. Desktop keeps its windowed habits.
+                    if phase == .background { session.wentBackground = true }
+                    #endif
+                    if phase == .active {
+                        #if !os(macOS)
+                        if session.wentBackground {
+                            session.wentBackground = false
+                            if session.signedIn, !session.profiles.isEmpty, PlayerView.openCount == 0 {
+                                session.profilePicked = false
+                            }
+                        }
+                        #endif
+                        Task { await session.foregroundResume() }
+                    }
                 }
                 #if os(macOS)
                 .frame(minWidth: 960, minHeight: 600)   // desktop app: resizable, never cramped

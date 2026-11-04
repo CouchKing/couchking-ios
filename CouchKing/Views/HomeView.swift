@@ -61,7 +61,7 @@ struct HomeView: View {
             }
             // the 60s pull / any state change repaints the Continue row IN PLACE (no page rebuild)
             .onReceive(session.objectWillChange) { _ in
-                Task { cw = await session.continueWatchingOrdered() }
+                Task { await refreshCW() }
             }
             .refreshable { await load() }
             .sheet(item: $resume) { item in
@@ -87,7 +87,11 @@ struct HomeView: View {
         async let creatorT = session.creatorLive()
         async let trendingT = Catalog.trending(session: session)
         async let forYouT = Catalog.forYouRows(session: session)
-        cw = session.canStream ? await session.continueWatchingOrdered() : []
+        // FINAL order on the FIRST paint (Android 2.0.256 "goes back to old order and then
+        // eventually moves"): the persisted-boost seed sorts the row synchronously; the async
+        // pass only adds the +N badges (same order) and repaints on a REAL change.
+        cw = session.canStream ? session.continueWatchingSeeded() : []
+        Task { await refreshCW() }
         // hero + Top 10 = TODAY's trending movies + shows interleaved (independent of the shelves)
         let (tm, ts) = await trendingT
         guard gen == loadGen else { return }
@@ -121,6 +125,15 @@ struct HomeView: View {
         creator = await creatorT   // resolved long ago (fired concurrently) — zero added wait
         rows = fresh
         loading = false
+    }
+
+    /// Re-derive the Continue row (badges + air-time boosts) and repaint ONLY when something
+    /// on screen actually changes (Android 2.0.256) — identical lists don't churn the row.
+    private func refreshCW() async {
+        guard session.canStream else { if !cw.isEmpty { cw = [] }; return }
+        let fresh = await session.continueWatchingOrdered()
+        let sig = { (l: [CWItem]) in l.map { "\($0.id)|\($0.newEps)|\($0.progress)|\($0.resumeKey)" } }
+        if sig(fresh) != sig(cw) { cw = fresh }
     }
 }
 

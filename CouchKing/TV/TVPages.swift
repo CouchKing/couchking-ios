@@ -63,7 +63,7 @@ struct TVHome: View {
         .focusScope(ns)
         .onAppear { board.session = session }
         .task(id: "\(session.currentProfile)|\(session.homeStale)|\(session.addons.first?.url ?? "")") { await load() }
-        .onReceive(session.objectWillChange) { _ in Task { cw = await session.continueWatchingOrdered() } }
+        .onReceive(session.objectWillChange) { _ in Task { await refreshCW() } }
         .fullScreenCover(item: $resume) { item in
             let p = item.resumeKey.split(separator: ":")
             StreamSheet(meta: item.meta, season: p.count >= 3 ? Int(p[p.count - 2]) : nil,
@@ -75,7 +75,10 @@ struct TVHome: View {
         board.session = session
         loadGen += 1
         let gen = loadGen
-        cw = session.canStream ? await session.continueWatchingOrdered() : []
+        // FINAL order on the FIRST paint (Android 2.0.256): the persisted-boost seed sorts
+        // synchronously; the async pass only adds badges and repaints on a REAL change.
+        cw = session.canStream ? session.continueWatchingSeeded() : []
+        Task { await refreshCW() }
         // trending movies + tv of the day, interleaved: first 10 = Top 10, first 8 = showcase
         async let tm = TMDB.trendingDay(kind: "movie")
         async let tt = TMDB.trendingDay(kind: "tv")
@@ -99,6 +102,15 @@ struct TVHome: View {
             fresh.append((cat.name, Array(metas.prefix(60))))
             rows = fresh
         }
+    }
+
+    /// Re-derive the Continue row (badges + air-time boosts) and repaint ONLY when something
+    /// on screen actually changes (Android 2.0.256) — identical lists don't churn the row.
+    private func refreshCW() async {
+        guard session.canStream else { if !cw.isEmpty { cw = [] }; return }
+        let fresh = await session.continueWatchingOrdered()
+        let sig = { (l: [CWItem]) in l.map { "\($0.id)|\($0.newEps)|\($0.progress)|\($0.resumeKey)" } }
+        if sig(fresh) != sig(cw) { cw = fresh }
     }
 }
 
