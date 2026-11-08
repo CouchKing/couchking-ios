@@ -214,6 +214,22 @@ enum LiveTV {
         return sports
     }
 
+    /// GUIDE V3 (Nov 7): per-channel programme descriptions for the detail card, fetched
+    /// lazily so guide.json stays lean (Android dcDescCache + /live/<KEY>/epgdesc.json?ch=).
+    /// Cached ~5 min per channel; each entry is {s, t, d} keyed back to a prog by its start.
+    private static var descCache: [String: (Int, [[String: Any]])] = [:]
+    @MainActor
+    static func epgDesc(_ session: Session, ch: String) async -> [[String: Any]] {
+        if let c = descCache[ch], nowMs() - c.0 < 300_000 { return c.1 }
+        guard let h = host(session), !key(session).isEmpty else { return [] }
+        let q = ch.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ch
+        guard let r = try? await API.json("/live/\(key(session))/epgdesc.json?ch=\(q)", base: h) else { return [] }
+        let progs = r["progs"] as? [[String: Any]] ?? []
+        if descCache.count > 300 { descCache.removeAll() }   // cheap bound, same spirit as Android's logo cap
+        descCache[ch] = (nowMs(), progs)
+        return progs
+    }
+
     // MARK: game reminders (Android parity — press-and-hold an upcoming game)
     // Stored per PROFILE on the server (notif:games:<email>:<pid>); the reminder id matches
     // Android EXACTLY — "<chid>:<startMs>" — so a reminder set on the phone and one set on the

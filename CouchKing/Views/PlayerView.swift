@@ -171,8 +171,22 @@ struct PlayerView: View {
 
     var body: some View {
         ZStack {
-            PlayerSurface(player: player, gravity: gravity, pip: pip)
-                .ignoresSafeArea()
+            // GUIDE V3 corner player (Android PlayerActivity showFullGuide): ONE surface whose
+            // frame is either the whole screen or ~38%-width top-right while the live guide
+            // overlay is up — the SAME AVPlayerLayer just resizes (no re-prepare, no surface
+            // churn). The modifier chain is identical in both states so SwiftUI keeps the
+            // UIView's identity; only the values move.
+            GeometryReader { geo in
+                let corner = cornerVideoRect(geo.size)
+                PlayerSurface(player: player, gravity: gravity, pip: pip)
+                    .frame(width: corner?.width ?? geo.size.width,
+                           height: corner?.height ?? geo.size.height)
+                    .clipShape(RoundedRectangle(cornerRadius: corner == nil ? 0 : 10))
+                    .position(x: corner?.midX ?? geo.size.width / 2,
+                              y: corner?.midY ?? geo.size.height / 2)
+                    .animation(.easeOut(duration: 0.22), value: corner)
+            }
+            .ignoresSafeArea()
             // tap on the picture = show/hide the controls (buttons above keep their own taps).
             // On Apple TV this layer is the remote's landing spot while the controls are hidden:
             // select shows them, left/right seek by the seek step, up/down show the controls.
@@ -212,11 +226,22 @@ struct PlayerView: View {
             #if os(iOS)
             if showSubPanel { subSidePanel.transition(.move(edge: .trailing)) }
             if showMiniGuide { miniGuidePanel.transition(.move(edge: .trailing)) }
+            if showGuideOverlay { guideV3Overlay.transition(.opacity) }
             #endif
         }
         .background(.black)
         // any tap during an episode = someone's there → the idle chain resets
         .simultaneousGesture(TapGesture().onEnded { epTouched = true })
+        #if os(iOS)
+        // GUIDE V3: swipe DOWN on the live picture opens the guide overlay (the Guide button
+        // on the transport bar does the same). Vertical-dominant drags only, live mode only.
+        .simultaneousGesture(DragGesture(minimumDistance: 50).onEnded { g in
+            guard ckUseGuideV3, isLive, !showGuideOverlay, firstFrame,
+                  g.translation.height > 80,
+                  abs(g.translation.width) < abs(g.translation.height) else { return }
+            openGuideOverlay()
+        })
+        #endif
         #if os(tvOS)
         .onPlayPauseCommand { togglePlay() }
         .onExitCommand { tvBack() }   // Menu peels one layer: panels → next-up → controls → exit
@@ -266,6 +291,20 @@ struct PlayerView: View {
         case "zoom": return .resizeAspectFill
         default: return .resizeAspect
         }
+    }
+
+    /// Where the live video sits while the guide v3 overlay is up: top-right, ~38% of the
+    /// screen width (16:9), 24pt in from the edge — nil = fullscreen. Full-screen coordinate
+    /// space (both the surface's GeometryReader and the overlay's ignore the safe area, so
+    /// the punched hole in the scrim lands exactly on the video).
+    func cornerVideoRect(_ size: CGSize) -> CGRect? {
+        #if os(iOS)
+        guard showGuideOverlay else { return nil }
+        let w = min(size.width * 0.38, 400)
+        return CGRect(x: size.width - w - 24, y: 16, width: w, height: w * 9 / 16)
+        #else
+        return nil
+        #endif
     }
 
     // MARK: overlay
@@ -421,6 +460,95 @@ struct PlayerView: View {
     @State var miniSections: [(String, [LiveChannel])] = []
     @State var miniFavs: Set<String> = []
     @State var curFav = false
+
+    // ---- GUIDE V3 corner-player guide (Android PlayerActivity showFullGuide, Nov 7): the
+    // full guide as an overlay while the SAME live video keeps playing top-right. Tap the
+    // playing channel or the corner video = fullscreen; tap another channel = retune in place
+    // (the guide stays up for back-to-back hops); swipe down = fullscreen. ----
+    @State var showGuideOverlay = false
+    @State var ovGuide = LiveGuide()
+    @State var ovNow = LiveTV.nowMs()
+    @State var ovDayStart = 0
+
+    func openGuideOverlay() {
+        guard isLive else { return }
+        hideTask?.cancel()
+        controlsVisible = false
+        ovNow = LiveTV.nowMs()
+        ovDayStart = LiveTV.dayStart(0, now: ovNow)   // today, floored to the half hour
+        withAnimation(.easeOut(duration: 0.22)) { showGuideOverlay = true }
+    }
+    func closeGuideOverlay() {
+        withAnimation(.easeOut(duration: 0.22)) { showGuideOverlay = false }
+        controlsVisible = true
+        scheduleHide()
+    }
+    /// ★ from the overlay guide: patch the local + LiveTV caches so the star and the
+    /// ★-Favorites re-sort land instantly, then POST the desired state (LiveTVView pattern).
+    func ovToggleFav(_ ch: LiveChannel) {
+        let on = !ovGuide.favs.contains(ch.id)
+        ovGuide.favs.removeAll { $0 == ch.id }
+        ovGuide.favChannels.removeAll { $0.id == ch.id }
+        if on { ovGuide.favs.append(ch.id); ovGuide.favChannels.append(ch) }
+        let region = UserDefaults.standard.string(forKey: "liveRegion") ?? ""
+        LiveTV.patchFav(region: region, id: ch.id, on: on, channel: ch)
+        flashLabel(on ? "★ Added to favorites" : "Removed from favorites")
+        Task { _ = await LiveTV.setFav(session, id: ch.id, on: on) }
+    }
+
+    var guideV3Overlay: some View {
+        GeometryReader { geo in
+            let hole = cornerVideoRect(geo.size)
+                ?? CGRect(x: geo.size.width - 180, y: 16, width: 160, height: 90)
+            ZStack(alignment: .topLeading) {
+                // scrim with the punched hole exactly where the corner video sits
+                PunchedScrim(hole: hole)
+                // tap the corner video = back to fullscreen (Android: OK on the mini player)
+                Color.clear.contentShape(Rectangle())
+                    .frame(width: hole.width, height: hole.height)
+                    .position(x: hole.midX, y: hole.midY)
+                    .onTapGesture { closeGuideOverlay() }
+                VStack(alignment: .leading, spacing: 6) {
+                    if ovGuide.channels.isEmpty {
+                        ProgressView().tint(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        GuideCanvasView(guide: ovGuide, dayStart: ovDayStart,
+                                        winEnd: ovDayStart + 24 * 3_600_000, now: ovNow,
+                                        cornerReserve: CGSize(width: hole.width + 8, height: hole.height + 10),
+                                        onTune: { ch in
+                                            if "cklive:" + ch.id == request.meta.id || ch.id == request.meta.id {
+                                                closeGuideOverlay()   // tap what's playing = fullscreen
+                                            } else {
+                                                flashLabel("Tuning \(ckCleanChannelName(ch.name))…")
+                                                Task { await switchLive(ch) }   // retune, guide stays up
+                                            }
+                                        },
+                                        onFav: { ch in ovToggleFav(ch) })
+                    }
+                    Text("tap a channel to watch · hold for ★ · tap the mini player for fullscreen · swipe down to close")
+                        .font(.system(size: 10.5)).foregroundStyle(Theme.dim.opacity(0.8))
+                        .padding(.leading, 2)
+                }
+                .padding(.leading, 18).padding(.trailing, 20).padding(.top, 12).padding(.bottom, 10)
+            }
+            // swipe down anywhere OUTSIDE the canvas (which owns its own drags) = fullscreen
+            .gesture(DragGesture(minimumDistance: 40).onEnded { g in
+                if g.translation.height > 60, abs(g.translation.width) < g.translation.height {
+                    closeGuideOverlay()
+                }
+            })
+        }
+        .ignoresSafeArea()
+        .task {
+            let region = UserDefaults.standard.string(forKey: "liveRegion") ?? ""
+            if case .ok(let g) = await LiveTV.guide(session, region: region) { ovGuide = g }
+            while !Task.isCancelled {   // clock tick: now-line, live tints, detail progress
+                try? await Task.sleep(for: .seconds(30))
+                guard !Task.isCancelled else { return }
+                ovNow = LiveTV.nowMs()
+            }
+        }
+    }
     var miniGuidePanel: some View {
         HStack(spacing: 0) {
             Spacer()
@@ -704,7 +832,11 @@ struct PlayerView: View {
                 }
                 #if os(iOS)
                 if isLive {
-                    barButton("Guide", "list.bullet.below.rectangle") { showMiniGuide = true; hideTask?.cancel() }
+                    barButton("Guide", "list.bullet.below.rectangle") {
+                        // GUIDE V3: the full corner-player guide; old side strip behind the flag
+                        if ckUseGuideV3 { openGuideOverlay() } else { showMiniGuide = true }
+                        hideTask?.cancel()
+                    }
                     barButton(curFav ? "★ Favorited" : "☆ Favorite", curFav ? "star.fill" : "star") {
                         let raw = request.meta.id.replacingOccurrences(of: "cklive:", with: "")
                         curFav.toggle()

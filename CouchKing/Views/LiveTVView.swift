@@ -89,9 +89,17 @@ struct LiveTVView: View {
                         if !searching { chipsRow }
                         if searching { searchResults }
                         else if chip == "Guide" {
-                            GuideGrid(guide: guide, day: $day, now: now,
-                                      onTune: { tuneChannel($0) },
-                                      onFav: { toggleFav($0) })
+                            // GUIDE V3 (Nov 7): the canvas guide (TV/GuideCanvas+TV.swift) —
+                            // flip ckUseGuideV3 off to get the old GuideGrid back untouched.
+                            if ckUseGuideV3 {
+                                GuideV3Panel(guide: guide, day: $day, now: now,
+                                             onTune: { tuneChannel($0) },
+                                             onFav: { toggleFav($0) })
+                            } else {
+                                GuideGrid(guide: guide, day: $day, now: now,
+                                          onTune: { tuneChannel($0) },
+                                          onFav: { toggleFav($0) })
+                            }
                         }
                         else if chip == "★ Favorites" { channelList(guide.favChannels, empty: "Long-press a channel to add it here.") }
                         else if catalogChip { catalogList }
@@ -102,6 +110,7 @@ struct LiveTVView: View {
                 .padding(.vertical, 8)
                 .frame(width: geo.size.width, alignment: .leading)
                 .environment(\.ckGuideWidth, geo.size.width)
+                .environment(\.ckGuideHeight, geo.size.height)   // guide v3 canvas viewport
             }
             }
             .background(Theme.bg)
