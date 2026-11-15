@@ -590,6 +590,7 @@ struct PlayerView: View {
                                     Spacer(minLength: 0)
                                     // ★ favorite toggle right on the row (Android mini guide)
                                     Button {
+                                        guard LiveTV.favGate(ch.id) else { return }   // 1.2s double-fire guard
                                         let on = !miniFavs.contains(ch.id)
                                         if on { miniFavs.insert(ch.id) } else { miniFavs.remove(ch.id) }
                                         Task { _ = await LiveTV.setFav(session, id: ch.id, on: on) }
@@ -634,7 +635,10 @@ struct PlayerView: View {
             }
         }
     }
-    /// Channel zap without leaving the player (Android mini-guide tune).
+    #endif
+
+    /// Channel zap without leaving the player (Android mini-guide tune) — platform-shared
+    /// so the v3 guide overlay and any tvOS caller can retune in place.
     func switchLive(_ ch: LiveChannel) async {
         guard let base = session.addonBase() else { return }
         let u = session.profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
@@ -646,7 +650,6 @@ struct PlayerView: View {
         }
         await reloadInPlace(PlayRequest(url: url, meta: m, season: nil, episode: nil))
     }
-    #endif
 
     /// Right-side captions strip (Android live-captions panel) — narrow, so you can still
     /// watch while picking a track. Full style options behind the ⚙︎.
@@ -839,6 +842,7 @@ struct PlayerView: View {
                     }
                     barButton(curFav ? "★ Favorited" : "☆ Favorite", curFav ? "star.fill" : "star") {
                         let raw = request.meta.id.replacingOccurrences(of: "cklive:", with: "")
+                        guard LiveTV.favGate(raw) else { return }   // 1.2s double-fire guard
                         curFav.toggle()
                         if curFav { miniFavs.insert(raw) } else { miniFavs.remove(raw) }
                         let on = curFav

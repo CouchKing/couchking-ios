@@ -296,13 +296,16 @@ struct LiveTVView: View {
     func toggleFav(_ ch: LiveChannel) { toggleFavId(ch.id, channel: ch) }
 
     /// Long-press ★ toggle: patch locally so the star shows instantly, then POST the desired state.
+    /// favGate = the Android 1.2s per-channel debounce (fav POSTs fired in identical pairs,
+    /// sometimes add-then-remove, silently un-starring — GuideCanvas.favToggle, Nov 14).
     func toggleFavId(_ id: String, channel: LiveChannel?) {
+        guard LiveTV.favGate(id) else { return }
         let on = !guide.favs.contains(id)
-        let ch = channel ?? guide.channels.first { $0.id == id }
+        let ch = channel ?? (guide.channels + guide.favChannels).first { $0.id == id }
         guide.favs.removeAll { $0 == id }
         guide.favChannels.removeAll { $0.id == id }
         if on { guide.favs.append(id); if let ch { guide.favChannels.append(ch) } }
-        LiveTV.patchFav(region: region, id: id, on: on, channel: ch)
+        LiveTV.patchFav(profile: LiveTV.profile(session), region: region, id: id, on: on, channel: ch)
         favDirty = true
         Task { _ = await LiveTV.setFav(session, id: id, on: on) }
     }
@@ -488,11 +491,20 @@ struct GuideGrid: View {
     private var lines: [Line] {
         var out: [Line] = []
         let favs = Set(guide.favs)
-        let favList = guide.channels.filter { favs.contains($0.id) }
+        // favorited channels OUTSIDE the default lineup (locals, UK/CA — kept off the grid by
+        // design): the server ships them WHOLE in favChannels exactly for this — merge them
+        // into the list BEFORE splitting fav/rest, or a starred local saved fine but never
+        // showed in ★ FAVORITES (Android Nov 14 merge).
+        var all = guide.channels
+        var seen = Set(all.map(\.id))
+        for fc in guide.favChannels where favs.contains(fc.id) && !seen.contains(fc.id) {
+            all.append(fc); seen.insert(fc.id)
+        }
+        let favList = all.filter { favs.contains($0.id) }
         if !favList.isEmpty { out.append(.header("★ FAVORITES")); out += favList.map { .channel($0) } }
         var bySection: [String: [LiveChannel]] = [:]
         var order: [String] = []
-        for c in guide.channels where !favs.contains(c.id) {
+        for c in all where !favs.contains(c.id) {
             if bySection[c.section] == nil { order.append(c.section) }
             bySection[c.section, default: []].append(c)
         }

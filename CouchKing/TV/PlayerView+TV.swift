@@ -187,6 +187,7 @@ extension PlayerView {
 
     private func toggleLiveFav() {
         let id = request.meta.id.replacingOccurrences(of: "cklive:", with: "")
+        guard LiveTV.favGate(id) else { return }   // 1.2s per-channel double-fire guard (Nov 14)
         liveFav.toggle()
         let on = liveFav
         Task { _ = await LiveTV.setFav(session, id: id, on: on) }

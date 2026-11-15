@@ -149,30 +149,38 @@ enum LiveTV {
     @MainActor
     static func profile(_ session: Session) -> String { String(session.currentProfile.prefix(24)) }
 
-    private static var guideCache: [String: (Int, LiveGuide)] = [:]   // region → (fetched ms, guide)
+    // Keyed "profile|region" — favs/recent are PER PROFILE: a region-only key served the
+    // previous profile's favorites for up to 55s after a profile switch (Android liveGuideProf
+    // fix, Nov 14).
+    private static var guideCache: [String: (Int, LiveGuide)] = [:]   // "profile|region" → (fetched ms, guide)
     private static var gamesCache: (Int, [LiveSport])? = nil
 
-    /// GET /live/{KEY}/guide.json?p=&r= — cached ~55s per region; `force` bypasses (fav/recent
-    /// dirty). Returns nil on network failure, `.locked` when the key is invalid/expired (403).
+    /// GET /live/{KEY}/guide.json?p=&r= — cached ~55s per profile+region; `force` bypasses
+    /// (fav/recent dirty). Returns nil on network failure, `.locked` when the key is
+    /// invalid/expired (403).
     enum GuideResult { case ok(LiveGuide), locked, failed }
     @MainActor
     static func guide(_ session: Session, region: String, force: Bool = false) async -> GuideResult {
         guard let h = host(session) else { return .failed }
         let k = key(session)
         guard !k.isEmpty else { return .failed }
-        if !force, let c = guideCache[region], nowMs() - c.0 < 55_000 { return .ok(c.1) }
+        let ck = profile(session) + "|" + region
+        if !force, let c = guideCache[ck], nowMs() - c.0 < 55_000 { return .ok(c.1) }
         let p = profile(session).addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        guard let r = try? await API.jsonStatus("/live/\(k)/guide.json?p=\(p)&r=\(region)", base: h) else { return .failed }
+        // fresh: NEVER let URLCache serve a disk copy of guide.json — a persisted copy
+        // outlives an app kill, so a fav toggle "disappeared" on cold reopen (Android
+        // Http.bust fix, Nov 14). The 55s memory cache above is the only guide cache.
+        guard let r = try? await API.jsonStatus("/live/\(k)/guide.json?p=\(p)&r=\(region)", base: h, fresh: true) else { return .failed }
         if r.1 == 403 { return .locked }
         guard r.1 == 200 else { return .failed }
         let g = LiveGuide(r.0)
-        guideCache[region] = (nowMs(), g)
+        guideCache[ck] = (nowMs(), g)
         return .ok(g)
     }
 
-    /// Patch the cached guide so a ★ shows instantly without a refetch.
-    static func patchFav(region: String, id: String, on: Bool, channel: LiveChannel?) {
-        guard var c = guideCache[region] else { return }
+    /// Patch the cached guide so a ★ shows instantly without a refetch (per profile+region).
+    static func patchFav(profile: String, region: String, id: String, on: Bool, channel: LiveChannel?) {
+        guard var c = guideCache[profile + "|" + region] else { return }
         var g = c.1
         g.favs.removeAll { $0 == id }
         g.favChannels.removeAll { $0.id == id }
@@ -181,7 +189,20 @@ enum LiveTV {
             if let ch = channel { g.favChannels.append(ch) }
         }
         c.1 = g
-        guideCache[region] = c
+        guideCache[profile + "|" + region] = c
+    }
+
+    // ★ double-fire guard (Android GuideCanvas.favToggle, Nov 14): fav POSTs landed in
+    // identical pairs ~1s apart (sometimes add-then-remove, silently un-starring) — one
+    // toggle per channel per 1.2s. Call ONCE at every toggle INITIATOR (the tap/long-press
+    // handler), never both a view and the handler it calls, or the second gate eats the first.
+    private static var favGateId = ""
+    private static var favGateAt = 0
+    static func favGate(_ id: String) -> Bool {
+        let now = nowMs()
+        if id == favGateId && now - favGateAt < 1200 { return false }
+        favGateId = id; favGateAt = now
+        return true
     }
 
     /// POST /live/{KEY}/fav?id=&on=&p= — params in the query string, client sends desired state.

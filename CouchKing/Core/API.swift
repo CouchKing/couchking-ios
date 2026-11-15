@@ -61,11 +61,14 @@ struct API {
     }
 
     /// Raw fetch that keeps the HTTP status (the stream gate answers 429/503/403 with a reason).
-    static func fetch(_ path: String, base: String? = nil, timeout: TimeInterval = 20) async throws -> (Data, Int) {
+    /// `fresh` skips URLCache entirely (never a disk copy) — per-profile payloads like
+    /// guide.json must not survive an app kill (the ★ "disappeared" on cold reopen, Nov 14).
+    static func fetch(_ path: String, base: String? = nil, timeout: TimeInterval = 20, fresh: Bool = false) async throws -> (Data, Int) {
         let b = base ?? serviceBase
         guard !b.isEmpty, let url = URL(string: b + path) else { throw URLError(.badURL) }
         var req = URLRequest(url: url)
         req.timeoutInterval = timeout
+        if fresh { req.cachePolicy = .reloadIgnoringLocalCacheData }
         stampDevice(&req)
         let (data, resp) = try await URLSession.shared.data(for: req)
         return (data, (resp as? HTTPURLResponse)?.statusCode ?? 0)
@@ -108,8 +111,8 @@ struct API {
     }
 
     /// Status-preserving JSON fetch: (body, status). Body is empty on non-JSON.
-    static func jsonStatus(_ path: String, base: String? = nil) async throws -> ([String: Any], Int) {
-        let (d, code) = try await fetch(path, base: base)
+    static func jsonStatus(_ path: String, base: String? = nil, fresh: Bool = false) async throws -> ([String: Any], Int) {
+        let (d, code) = try await fetch(path, base: base, fresh: fresh)
         return ((try? JSONSerialization.jsonObject(with: d) as? [String: Any]) ?? [:], code)
     }
 
