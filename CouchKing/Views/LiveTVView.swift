@@ -85,7 +85,10 @@ struct LiveTVView: View {
                         lockedPanel
                     } else {
                         if !searching, let c = creator { CreatorBanner(info: c) }   // 🔴 only when AJ is live
-                        if !searching { gamesBanner }
+                        // LIVE NOW strips hidden on the Guide view (Android/web parity, Nov 14):
+                        // the v3 canvas carries its own 🔴 per-sport live sections, so the strips
+                        // stacked above it were the same games twice (AJ Nov 15 "wtf").
+                        if !searching && !(chip == "Guide" && ckUseGuideV3) { gamesBanner }
                         if !searching { chipsRow }
                         if searching { searchResults }
                         else if chip == "Guide" {
