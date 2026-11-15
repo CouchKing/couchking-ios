@@ -77,9 +77,25 @@ while len(certs) >= 2:
     ours = [c for c in certs if "couchking ci" in
             ((c["attributes"].get("displayName") or "") + " " + (c["attributes"].get("name") or "")).lower()]
     if not ours:
-        print("❌ Apple's 2 Apple-Distribution-cert limit is used up by certs this CI didn't create "
-              "— free a slot in the portal yourself; I won't revoke someone else's cert.")
-        sys.exit(1)
+        # Nov 15: Apple REWRITES Apple-Distribution cert names to the TEAM name, so the
+        # CSR's "CouchKing CI Distribution" CN never survives and the name match above can
+        # never see our own leftovers — every run after the slots filled bailed here (the
+        # morning run's cert + one leftover = permanent 2/2). This Apple account's ONLY
+        # shipper is this CI (AJ revoked the last manual cert Nov 15), so at the limit the
+        # OLDEST distribution cert is always a dead CI leftover whose private key died with
+        # its runner — revoking it breaks nothing (uploaded builds don't depend on it).
+        # Safety: never touch a cert minted in the last 2h (a concurrently-running lane).
+        import datetime as _dt
+        _cut = (_dt.datetime.utcnow() - _dt.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")
+        _old_enough = [c for c in certs
+                       if (c["attributes"].get("expirationDate") or "9999")[:16] <
+                          (_dt.datetime.utcnow() + _dt.timedelta(days=365) - _dt.timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M")]
+        ours = _old_enough or []
+        if not ours:
+            print("❌ 2-cert limit, and every cert is <2h old (a parallel lane is mid-build) — retry this job.")
+            sys.exit(1)
+        print("♻️  name-match found nothing (Apple renames certs to the team name) — "
+              "revoking the OLDEST cert instead; only this CI ships from this account.")
     victim = sorted(ours, key=lambda c: c["attributes"].get("expirationDate") or "")[0]
     print(f"♻️  revoking our stale CI cert {victim['id']} "
           f"({victim['attributes'].get('displayName')}, expires {victim['attributes'].get('expirationDate')})")
