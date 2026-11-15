@@ -16,7 +16,10 @@ extension LiveTVView {
                     tvLocked
                 } else {
                     tvHead
-                    tvBanner
+                    // LIVE NOW strips hidden on the Guide view (iPhone/Android parity rule,
+                    // Nov 14/15): the guide below carries its own 🔴 sections — the strips
+                    // above it were the same games twice (AJ: "all the live banners at the top")
+                    if chip != "Guide" { tvBanner }
                     tvSearch
                     tvChips
                     tvBody
@@ -127,7 +130,7 @@ extension LiveTVView {
         } else if chip == "Guide" {
             if guide.channels.isEmpty { TVLive.dimText("Loading the guide…") }
             else {
-                TVGuide(guide: guide, day: $day, now: now, onTune: { tuneChannel($0) }, onFav: { toggleFav($0) })
+                TVGuide(guide: guide, sports: regionSports.filter { !$0.live.isEmpty }, day: $day, now: now, onTune: { tuneChannel($0) }, onFav: { toggleFav($0) })
             }
         } else if chip == "★ Favorites" {
             if guide.favChannels.isEmpty {
@@ -269,6 +272,7 @@ extension TVLive {
 /// Focusing a block pans the shared lane so the block is in view (all rows move together).
 struct TVGuide: View {
     let guide: LiveGuide
+    var sports: [LiveSport] = []   // 🔴 per-sport LIVE sections inside the guide (Nov 15)
     @Binding var day: Int
     let now: Int
     let onTune: (LiveChannel) -> Void
@@ -302,6 +306,20 @@ struct TVGuide: View {
         }
         let favRows = all.filter { favs.contains($0.id) }
         if !favRows.isEmpty { out.append(.header("★ Favorites")); out += favRows.map { .channel($0) } }
+        // 🔴 LIVE game sections right under Favorites (iPhone guide-v3 order; only while
+        // games are live — finished games fall off with the games refresh)
+        var inSec = Set<String>()
+        for sp in sports where !sp.live.isEmpty {
+            let chans = sp.live.compactMap { g -> LiveChannel? in
+                let cid = g.chid.replacingOccurrences(of: "cklive:", with: "")
+                guard inSec.insert(cid).inserted else { return nil }
+                return all.first { $0.id == cid }
+            }
+            if !chans.isEmpty {
+                out.append(.header("🔴 \(sp.emoji) \(sp.sport) — LIVE"))
+                out += chans.map { .channel($0) }
+            }
+        }
         var last = ""
         for c in all where !favs.contains(c.id) {
             let sec = !c.section.isEmpty ? c.section : (!c.genre.isEmpty ? c.genre : "More Channels")
@@ -393,7 +411,8 @@ struct TVGuide: View {
 
     private func secHeader(_ t: String) -> some View {
         HStack(spacing: TV.dp(2)) {
-            Text(t.uppercased()).font(.system(size: TV.sp(10.5), weight: .bold)).foregroundStyle(TVLive.secFg)
+            Text(t.uppercased()).font(.system(size: TV.sp(10.5), weight: .bold))
+                .foregroundStyle(t.hasPrefix("🔴") ? TVLive.red : TVLive.secFg)
                 .padding(.leading, TV.dp(6)).padding(.top, TV.dp(3))
                 .frame(width: Self.colW, height: TV.dp(22), alignment: .topLeading)
                 .background(TVLive.secBg)
