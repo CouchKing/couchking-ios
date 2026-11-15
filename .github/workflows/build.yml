@@ -106,6 +106,9 @@ jobs:
         if: steps.gate.outputs.go == 'yes'
         env:
           APPSTORE_P8: ${{ secrets.APPSTORE_P8 }}
+          DIST_P12: ${{ secrets.DIST_P12 }}
+          DIST_P12_PASS: ${{ secrets.DIST_P12_PASS }}
+          CK_PAT: ${{ secrets.CK_PAT }}
         run: |
           set -o pipefail
           # creates an Apple Distribution cert + an App Store profile for the push-enabled App ID,

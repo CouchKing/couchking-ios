@@ -66,13 +66,40 @@ def api(method, path, body=None):
         print(f"ASC {method} {path} -> {e.code}\n{e.read().decode()}", file=sys.stderr)
         raise
 
+# ---- 0. STORED IDENTITY (Nov 15): one long-lived cert, reused every run ----
+# Mint-per-run + revoke-at-limit KILLED the Mac TestFlight beta today: macOS builds keep
+# their original signature (unlike iOS, which Apple re-signs), so revoking any cert that
+# signed one bricks it ("provisioning profile is invalid") — and Apple renames every
+# distribution cert to the team name, so a doomed cert can't be told apart by name.
+# Instead: the first run mints + self-stores the identity as repo secrets DIST_P12 /
+# DIST_P12_PASS (gh CLI with CK_PAT); every later run imports it and never mints or
+# revokes again. End state: 1 stable CI cert + 1 cloud-managed Mac-lane cert = 2/2 slots,
+# stable forever, zero portal visits.
+STORED = os.environ.get("DIST_P12") or ""
+P12PASS = os.environ.get("DIST_P12_PASS") or "ckci"
+cert_id = None
+if STORED:
+    open(f"{WORK}/dist.p12", "wb").write(base64.b64decode(STORED))
+    run(["sh", "-c", f"openssl pkcs12 -in {WORK}/dist.p12 -passin pass:{P12PASS} "
+                     f"-nokeys -clcerts -out {WORK}/dist.pem"])
+    _sn = subprocess.run(["openssl", "x509", "-in", f"{WORK}/dist.pem", "-serial", "-noout"],
+                         capture_output=True, text=True).stdout.strip().split("=")[-1].lstrip("0").upper()
+    for c in api("GET", "/v1/certificates?filter[certificateType]=DISTRIBUTION&limit=200").get("data", []):
+        if (c["attributes"].get("serialNumber") or "").lstrip("0").upper() == _sn:
+            cert_id = c["id"]; break
+    if cert_id:
+        print(f"✅ using STORED distribution identity (cert {cert_id}) — nothing minted, nothing revoked")
+    else:
+        print("⚠️ stored p12 matches no live cert (revoked in the portal?) — minting fresh + re-storing")
+        STORED = ""
+
 # ---- 1. the 2-cert limit: clean up after OURSELVES only ----
 # Every run mints a fresh cert whose private key dies with the runner, so any earlier
 # "CouchKing CI Distribution" cert in the portal is unusable dead weight — revoking it
 # breaks nothing (App Store/TestFlight builds already uploaded don't depend on it).
 # A cert we did NOT create (no CouchKing CI in its name) is never touched: if the limit
 # is full of those, stop and ask, same as before (hit twice: #111 era + run 156, Nov 3).
-certs = api("GET", "/v1/certificates?filter[certificateType]=DISTRIBUTION&limit=200").get("data", [])
+certs = [] if STORED else api("GET", "/v1/certificates?filter[certificateType]=DISTRIBUTION&limit=200").get("data", [])
 while len(certs) >= 2:
     ours = [c for c in certs if "couchking ci" in
             ((c["attributes"].get("displayName") or "") + " " + (c["attributes"].get("name") or "")).lower()]
@@ -102,21 +129,34 @@ while len(certs) >= 2:
     api("DELETE", f"/v1/certificates/{victim['id']}")
     certs = [c for c in certs if c["id"] != victim["id"]]
 
-# ---- 2. key + CSR ----
-run(["openssl", "genrsa", "-out", f"{WORK}/dist.key", "2048"])
-run(["openssl", "req", "-new", "-key", f"{WORK}/dist.key", "-out", f"{WORK}/dist.csr",
-     "-subj", f"/CN=CouchKing CI Distribution/O={TEAM}/C=US"])
-csr = open(f"{WORK}/dist.csr").read()
+if not STORED:
+    # ---- 2. key + CSR ----
+    run(["openssl", "genrsa", "-out", f"{WORK}/dist.key", "2048"])
+    run(["openssl", "req", "-new", "-key", f"{WORK}/dist.key", "-out", f"{WORK}/dist.csr",
+         "-subj", f"/CN=CouchKing CI Distribution/O={TEAM}/C=US"])
+    csr = open(f"{WORK}/dist.csr").read()
 
-# ---- 3. create the cert ----
-cert = api("POST", "/v1/certificates", {"data": {"type": "certificates",
-    "attributes": {"certificateType": "DISTRIBUTION", "csrContent": csr}}})
-cert_id = cert["data"]["id"]
-der = base64.b64decode(cert["data"]["attributes"]["certificateContent"])
-open(f"{WORK}/dist.cer", "wb").write(der)
-run(["openssl", "x509", "-inform", "DER", "-in", f"{WORK}/dist.cer", "-out", f"{WORK}/dist.pem"])
-run(["openssl", "pkcs12", "-export", "-inkey", f"{WORK}/dist.key", "-in", f"{WORK}/dist.pem",
-     "-out", f"{WORK}/dist.p12", "-passout", "pass:ckci", "-name", "ckci"])
+    # ---- 3. create the cert ----
+    cert = api("POST", "/v1/certificates", {"data": {"type": "certificates",
+        "attributes": {"certificateType": "DISTRIBUTION", "csrContent": csr}}})
+    cert_id = cert["data"]["id"]
+    der = base64.b64decode(cert["data"]["attributes"]["certificateContent"])
+    open(f"{WORK}/dist.cer", "wb").write(der)
+    run(["openssl", "x509", "-inform", "DER", "-in", f"{WORK}/dist.cer", "-out", f"{WORK}/dist.pem"])
+    run(["openssl", "pkcs12", "-export", "-inkey", f"{WORK}/dist.key", "-in", f"{WORK}/dist.pem",
+         "-out", f"{WORK}/dist.p12", "-passout", f"pass:{P12PASS}", "-name", "ckci"])
+    # self-store so every future run reuses THIS identity (gh is preinstalled on GH runners)
+    _pat = os.environ.get("CK_PAT") or ""
+    _repo = os.environ.get("GITHUB_REPOSITORY") or ""
+    if _pat and _repo:
+        _b64 = base64.b64encode(open(f"{WORK}/dist.p12", "rb").read()).decode()
+        for _n, _v in (("DIST_P12", _b64), ("DIST_P12_PASS", P12PASS)):
+            _r = subprocess.run(["gh", "secret", "set", _n, "--repo", _repo, "--body", _v],
+                                env=dict(os.environ, GH_TOKEN=_pat), capture_output=True, text=True)
+            print(("✅ stored repo secret " + _n) if _r.returncode == 0
+                  else ("⚠️ couldn't store " + _n + ": " + (_r.stderr or "")[:140]))
+    else:
+        print("ℹ️ CK_PAT missing — identity NOT persisted; next run mints again (Mac beta churn)")
 
 # ---- 4. keychain ----
 KC = f"{WORK}/ck.keychain-db"
@@ -124,7 +164,7 @@ for c in (["security", "delete-keychain", KC],): subprocess.run(c, capture_outpu
 run(["security", "create-keychain", "-p", "ckci", KC])
 run(["security", "set-keychain-settings", "-lut", "21600", KC])
 run(["security", "unlock-keychain", "-p", "ckci", KC])
-run(["security", "import", f"{WORK}/dist.p12", "-k", KC, "-P", "ckci",
+run(["security", "import", f"{WORK}/dist.p12", "-k", KC, "-P", P12PASS,
      "-T", "/usr/bin/codesign", "-T", "/usr/bin/security"])
 run(["security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k", "ckci", KC])
 # make it the default search list (login first so system tools still work)
