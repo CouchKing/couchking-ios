@@ -59,9 +59,10 @@ extension PlayerView {
         }
     }
 
-    /// Menu/BACK — one layer per press: captions panel → sheets → next-up → episode drawer →
-    /// controller → exit.
+    /// Menu/BACK — one layer per press: canvas guide → captions panel → sheets → next-up →
+    /// episode drawer → controller → exit.
     func tvBack() {
+        if showCanvasGuide { showCanvasGuide = false; showControls(); return }
         if showSubPanel { showSubPanel = false; showControls(); return }
         if speedMenu || audioMenu { speedMenu = false; audioMenu = false; showControls(); return }
         if showNextUp { showNextUp = false; nextUpDismissed = true; return }
@@ -158,6 +159,15 @@ extension PlayerView {
     private var tvControls: [TVControl] {
         var out: [TVControl] = []
         if isLive {
+            // guidev2 (same per-profile pref as the main guide): full canvas guide over the
+            // playing video — select tunes in place, long-press ★s, Menu closes (tvBack).
+            // NOT hung off Menu itself: Menu is the only exit path, hijacking it would trap.
+            if session.pref("guidev2", false) {
+                out.append(TVControl(id: "guide", caption: "Guide", icon: "list.bullet.below.rectangle") {
+                    hideTask?.cancel(); controlsVisible = false
+                    showCanvasGuide = true
+                })
+            }
             out.append(TVControl(id: "fav", caption: "Favorite", icon: liveFav ? "star.fill" : "star",
                                  tint: liveFav ? TV.favGold : .white) { toggleLiveFav() })
             return out
@@ -187,6 +197,7 @@ extension PlayerView {
 
     private func toggleLiveFav() {
         let id = request.meta.id.replacingOccurrences(of: "cklive:", with: "")
+        guard LiveTV.favGate(id) else { return }   // 1.2s per-channel double-fire guard (Nov 14)
         liveFav.toggle()
         let on = liveFav
         Task { _ = await LiveTV.setFav(session, id: id, on: on) }

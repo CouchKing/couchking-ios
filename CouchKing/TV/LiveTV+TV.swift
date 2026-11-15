@@ -300,10 +300,17 @@ struct TVGuide: View {
     private var lines: [Line] {
         let favs = Set(guide.favs)
         var out: [Line] = []
-        let favRows = guide.channels.filter { favs.contains($0.id) }
+        // favorited channels OUTSIDE the lineup (locals): the server ships them whole in
+        // favChannels — merge before splitting fav/rest (Android Nov 14 merge)
+        var all = guide.channels
+        var seen = Set(all.map(\.id))
+        for fc in guide.favChannels where favs.contains(fc.id) && !seen.contains(fc.id) {
+            all.append(fc); seen.insert(fc.id)
+        }
+        let favRows = all.filter { favs.contains($0.id) }
         if !favRows.isEmpty { out.append(.header("★ Favorites")); out += favRows.map { .channel($0) } }
         var last = ""
-        for c in guide.channels where !favs.contains(c.id) {
+        for c in all where !favs.contains(c.id) {
             let sec = !c.section.isEmpty ? c.section : (!c.genre.isEmpty ? c.genre : "More Channels")
             if sec != last { out.append(.header(sec)); last = sec }
             out.append(.channel(c))

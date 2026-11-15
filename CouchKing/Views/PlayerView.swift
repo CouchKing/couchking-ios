@@ -209,6 +209,10 @@ struct PlayerView: View {
             if showSubPanel { subSidePanel.transition(.move(edge: .trailing)) }
             if showMiniGuide { miniGuidePanel.transition(.move(edge: .trailing)) }
             #endif
+            #if os(iOS) || os(tvOS)
+            // guidev2: the full canvas guide over the live picture (tune in place / ★)
+            if showCanvasGuide { canvasGuideOverlay.transition(.move(edge: .bottom)) }
+            #endif
         }
         .background(.black)
         // any tap during an episode = someone's there → the idle chain resets
@@ -458,6 +462,7 @@ struct PlayerView: View {
                                     Spacer(minLength: 0)
                                     // ★ favorite toggle right on the row (Android mini guide)
                                     Button {
+                                        guard LiveTV.favGate(ch.id) else { return }   // 1.2s double-fire guard
                                         let on = !miniFavs.contains(ch.id)
                                         if on { miniFavs.insert(ch.id) } else { miniFavs.remove(ch.id) }
                                         Task { _ = await LiveTV.setFav(session, id: ch.id, on: on) }
@@ -502,7 +507,10 @@ struct PlayerView: View {
             }
         }
     }
-    /// Channel zap without leaving the player (Android mini-guide tune).
+    #endif
+
+    /// Channel zap without leaving the player (Android mini-guide tune) — shared by the
+    /// classic iOS strip and the guidev2 canvas overlay (iOS + Apple TV).
     func switchLive(_ ch: LiveChannel) async {
         guard let base = session.addonBase() else { return }
         let u = session.profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
@@ -514,7 +522,75 @@ struct PlayerView: View {
         }
         await reloadInPlace(PlayRequest(url: url, meta: m, season: nil, episode: nil))
     }
-    #endif
+
+    // ---- in-player CANVAS GUIDE (guidev2, Android TV parity): on Android, Guide/back while
+    // watching live opens the full canvas guide with the video shrunk to a corner. v1 here:
+    // GuideCanvasView OVERLAYS the playing video (translucent grid bg + dim scrim — the video
+    // keeps playing, visible behind), tap/select = tune IN PLACE via switchLive, long-press =
+    // ★ toggle. Gated behind the same per-profile `guidev2` pref as the main Live TV guide;
+    // guidev2 OFF keeps the classic channel strip (iOS) / no in-player guide (tvOS).
+    @State var showCanvasGuide = false
+    @State var cgGuide = LiveGuide()
+    @State var cgSports: [LiveSport] = []
+    @State var cgDay = 0
+    @State var cgNow = LiveTV.nowMs()
+
+    var canvasGuideOverlay: some View {
+        GeometryReader { geo in
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    Text("Guide").font(.subheadline.bold()).foregroundStyle(.white)
+                    Spacer()
+                    #if !os(tvOS)
+                    Button { withAnimation { showCanvasGuide = false } } label: {
+                        Image(systemName: "xmark").foregroundStyle(.white)
+                    }
+                    #endif
+                }
+                .padding(.horizontal, Platform.gutter).padding(.vertical, 10)
+                GuideCanvasView(guide: cgGuide, sports: cgSports, day: $cgDay, now: cgNow,
+                                height: max(240, geo.size.height - 100),
+                                onTune: { ch in
+                                    withAnimation { showCanvasGuide = false }
+                                    Task { await switchLive(ch) }
+                                },
+                                onFav: { cgFav($0) },
+                                bgOpacity: 0.82)
+                Spacer(minLength: 0)
+            }
+        }
+        .background(Color.black.opacity(0.55).ignoresSafeArea())   // scrim to the screen edge
+        .task { await loadCanvasGuide() }
+    }
+
+    /// Guide + games for the overlay (same per-profile cached loaders as the Live TV page).
+    func loadCanvasGuide() async {
+        cgNow = LiveTV.nowMs()
+        let region = UserDefaults.standard.string(forKey: "liveRegion") ?? ""
+        if case .ok(let g) = await LiveTV.guide(session, region: region) { cgGuide = g }
+        cgSports = await LiveTV.games(session)
+    }
+
+    /// Long-press ★ from the canvas overlay: favGate = the Android 1.2s per-channel
+    /// double-fire guard; patch the overlay's copy + the shared cache so the ★ repaints
+    /// and re-sorts instantly, then POST the desired state.
+    func cgFav(_ ch: LiveChannel) {
+        guard LiveTV.favGate(ch.id) else { return }
+        let on = !cgGuide.favs.contains(ch.id)
+        cgGuide.favs.removeAll { $0 == ch.id }
+        cgGuide.favChannels.removeAll { $0.id == ch.id }
+        if on { cgGuide.favs.append(ch.id); cgGuide.favChannels.append(ch) }
+        let region = UserDefaults.standard.string(forKey: "liveRegion") ?? ""
+        LiveTV.patchFav(profile: LiveTV.profile(session), region: region, id: ch.id, on: on, channel: ch)
+        // keep the other in-player ★ spots honest about the CURRENT channel
+        if request.meta.id.replacingOccurrences(of: "cklive:", with: "") == ch.id { liveFav = on }
+        #if os(iOS)
+        if on { miniFavs.insert(ch.id) } else { miniFavs.remove(ch.id) }
+        if "cklive:" + ch.id == request.meta.id || ch.id == request.meta.id { curFav = on }
+        #endif
+        flashLabel(on ? "★ Added to Favorites" : "Removed from Favorites")
+        Task { _ = await LiveTV.setFav(session, id: ch.id, on: on) }
+    }
 
     /// Right-side captions strip (Android live-captions panel) — narrow, so you can still
     /// watch while picking a track. Full style options behind the ⚙︎.
@@ -700,9 +776,16 @@ struct PlayerView: View {
                 }
                 #if os(iOS)
                 if isLive {
-                    barButton("Guide", "list.bullet.below.rectangle") { showMiniGuide = true; hideTask?.cancel() }
+                    barButton("Guide", "list.bullet.below.rectangle") {
+                        // guidev2 (same per-profile pref as the main guide): the canvas guide
+                        // overlays the playing video; OFF keeps the classic channel strip
+                        if session.pref("guidev2", false) { withAnimation { showCanvasGuide = true } }
+                        else { showMiniGuide = true }
+                        hideTask?.cancel()
+                    }
                     barButton(curFav ? "★ Favorited" : "☆ Favorite", curFav ? "star.fill" : "star") {
                         let raw = request.meta.id.replacingOccurrences(of: "cklive:", with: "")
+                        guard LiveTV.favGate(raw) else { return }   // 1.2s double-fire guard
                         curFav.toggle()
                         if curFav { miniFavs.insert(raw) } else { miniFavs.remove(raw) }
                         let on = curFav
@@ -750,9 +833,10 @@ struct PlayerView: View {
     @ViewBuilder var pictureCatcher: some View {
         #if os(tvOS)
         // Firestick: hidden controller → OK = play/pause, any arrow shows the controller
+        // (never focusable under the canvas guide — arrows there belong to the grid cursor)
         Color.clear
             .ignoresSafeArea()
-            .focusable(!controlsVisible)
+            .focusable(!controlsVisible && !showCanvasGuide)
             .focused($pfocus, equals: .picture)
             .onTapGesture { epTouched = true; togglePlay(); showControls() }
             .onMoveCommand { _ in epTouched = true; showControls() }

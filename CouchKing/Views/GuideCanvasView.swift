@@ -25,7 +25,13 @@ struct GuideCanvasView: View {
     let now: Int
     let height: CGFloat
     let onTune: (LiveChannel) -> Void
+    // onFav initiators here (long-press / tvOS hold) MUST be gated by LiveTV.favGate in the
+    // HOST's handler (LiveTVView.toggleFavId / PlayerView.cgFav) — the Android 1.2s
+    // per-channel double-fire guard lives there, once per action, never doubled up.
     let onFav: (LiveChannel) -> Void
+    /// < 1 only inside the player's in-guide overlay: the video stays visible playing behind
+    /// the grid (v1 of Android's shrink-to-corner). The main Live TV page keeps it opaque.
+    var bgOpacity: Double = 1
 
     @State private var model = GCModel()
     @State private var shiftX: CGFloat = 0      // horizontal camera (px into the timeline)
@@ -358,7 +364,7 @@ struct GuideCanvasView: View {
 
     private func draw(_ root: GraphicsContext, _ size: CGSize) {
         let w = size.width, h = size.height
-        root.fill(Path(CGRect(origin: .zero, size: size)), with: .color(GCC.bg))
+        root.fill(Path(CGRect(origin: .zero, size: size)), with: .color(GCC.bg.opacity(bgOpacity)))
         guard !model.rows.isEmpty else { return }
         let nowMs = now
 
