@@ -126,6 +126,13 @@ extension LiveTVView {
             ForEach(catalog) { m in tvMetaRow(m) }
         } else if chip == "Guide" {
             if guide.channels.isEmpty { TVLive.dimText("Loading the guide…") }
+            // guidev2 (default OFF): the Android canvas-guide engine (one painted grid, d-pad
+            // cursor + travel axis) behind the synced flag; TVGuide stays the default.
+            else if session.pref("guidev2", false) {
+                GuideCanvasView(guide: guide, sports: sports, day: $day, now: now,
+                                height: TV.dp(400),
+                                onTune: { tuneChannel($0) }, onFav: { toggleFav($0) })
+            }
             else {
                 TVGuide(guide: guide, day: $day, now: now, onTune: { tuneChannel($0) }, onFav: { toggleFav($0) })
             }

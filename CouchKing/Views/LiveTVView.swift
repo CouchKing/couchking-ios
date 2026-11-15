@@ -89,9 +89,19 @@ struct LiveTVView: View {
                         if !searching { chipsRow }
                         if searching { searchResults }
                         else if chip == "Guide" {
-                            GuideGrid(guide: guide, day: $day, now: now,
-                                      onTune: { tuneChannel($0) },
-                                      onFav: { toggleFav($0) })
+                            // guidev2 (default OFF): the Android canvas-guide engine —
+                            // GuideCanvasView — behind the synced per-profile flag until
+                            // device-tested; the classic GuideGrid stays the default.
+                            if session.pref("guidev2", false) {
+                                GuideCanvasView(guide: guide, sports: sports, day: $day, now: now,
+                                                height: max(360, geo.size.height - 140),
+                                                onTune: { tuneChannel($0) },
+                                                onFav: { toggleFav($0) })
+                            } else {
+                                GuideGrid(guide: guide, day: $day, now: now,
+                                          onTune: { tuneChannel($0) },
+                                          onFav: { toggleFav($0) })
+                            }
                         }
                         else if chip == "★ Favorites" { channelList(guide.favChannels, empty: "Long-press a channel to add it here.") }
                         else if catalogChip { catalogList }

@@ -48,6 +48,12 @@ struct SettingsHub: View {
                 HubRow(label: "Hide watched titles", value: hideWatched ? "On" : "Off") {
                     session.setPref("hideWatched", !hideWatched)
                 }
+                // guidev2: opt-in canvas Live TV guide (GuideCanvasView) — default OFF
+                if session.liveTvOn {
+                    HubRow(label: "Live TV canvas guide (beta)", value: guidev2 ? "On" : "Off") {
+                        session.setPref("guidev2", !guidev2)
+                    }
+                }
                 HubLink(label: "Accent color", value: session.pref("accentName", "Royal (default)"), route: .accent)
                 HubRow(label: "Open on", value: landingValue) {
                     let opts = landingOptions
@@ -97,6 +103,7 @@ struct SettingsHub: View {
     private var titles: Bool { session.pref("showTitles", true) }
     private var hideWatched: Bool { session.pref("hideWatched", false) }
     private var notif: Bool { session.pref("notifNewEps", false) }
+    private var guidev2: Bool { session.pref("guidev2", false) }
     private var landingOptions: [String] {
         (session.liveTvOn && session.canStream) ? ["Home", "Live TV", "Library"] : ["Home", "Library"]
     }

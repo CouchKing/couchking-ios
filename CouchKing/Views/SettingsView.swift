@@ -70,6 +70,12 @@ struct SettingsView: View {
                     SettingRow(label: "Hide watched titles", value: session.pref("hideWatched", false) ? "On" : "Off") {
                         session.setPref("hideWatched", !session.pref("hideWatched", false))
                     }
+                    // guidev2: opt-in canvas Live TV guide (GuideCanvasView) — default OFF
+                    if session.liveTvOn {
+                        SettingRow(label: "Live TV canvas guide (beta)", value: session.pref("guidev2", false) ? "On" : "Off") {
+                            session.setPref("guidev2", !session.pref("guidev2", false))
+                        }
+                    }
                     NavigationLink { AccentPickerView() } label: {
                         SettingRowLabel(label: "Accent color", value: session.pref("accentName", "Royal (default)"))
                     }
