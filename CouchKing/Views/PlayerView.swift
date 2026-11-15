@@ -486,12 +486,13 @@ struct PlayerView: View {
     /// ★ from the overlay guide: patch the local + LiveTV caches so the star and the
     /// ★-Favorites re-sort land instantly, then POST the desired state (LiveTVView pattern).
     func ovToggleFav(_ ch: LiveChannel) {
+        guard LiveTV.favGate(ch.id) else { return }   // 1.2s per-channel double-fire guard (Nov 14)
         let on = !ovGuide.favs.contains(ch.id)
         ovGuide.favs.removeAll { $0 == ch.id }
         ovGuide.favChannels.removeAll { $0.id == ch.id }
         if on { ovGuide.favs.append(ch.id); ovGuide.favChannels.append(ch) }
         let region = UserDefaults.standard.string(forKey: "liveRegion") ?? ""
-        LiveTV.patchFav(region: region, id: ch.id, on: on, channel: ch)
+        LiveTV.patchFav(profile: LiveTV.profile(session), region: region, id: ch.id, on: on, channel: ch)
         flashLabel(on ? "★ Added to favorites" : "Removed from favorites")
         Task { _ = await LiveTV.setFav(session, id: ch.id, on: on) }
     }
