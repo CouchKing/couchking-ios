@@ -1,4 +1,4 @@
-#if os(iOS)
+#if os(iOS) || os(tvOS)
 import SwiftUI
 import UIKit
 
@@ -6,7 +6,9 @@ import UIKit
 // GuideCanvas.kt + GUIDE-V3-SPEC.md): every program cell is painted in ONE draw(_:) pass from
 // two camera values (scrollYpx, shiftPx) + a cursor that is pure state — no per-lane scrollers,
 // no view churn, so panning both axes is one setNeedsDisplay and the cursor can never desync.
-// Drag pans both axes, tap = select + tune, long-press = ★ favorite. Row model (Android
+// Drag pans both axes, tap = select + tune, long-press = ★ favorite. On tvOS (Nov 15) the
+// SAME canvas is driven by the remote instead: the host feeds arrows/OK straight into the
+// dpad* funcs (Android sendKey pattern — zero focus dependence). Row model (Android
 // liveRenderGuideRecycler): ★ Favorites FIRST, then 🔴 per-sport LIVE sections from games.json
 // (refreshed every 60s, sig-gated, finished games fall off), then the lineup grouped under
 // purple uppercase section headers. A fixed-height detail card above the grid shows the
@@ -92,6 +94,18 @@ struct CKGuideModel {
 
 // MARK: - the canvas (UIKit, CoreGraphics)
 
+// 10-foot scale: every canvas metric is phone-scale × ckGk — tvOS uses the repo's 1dp = 2pt
+// convention (TV.dp), so the drawn guide matches Android GuideCanvas.kt sizes (AJ Nov 15)
+#if os(tvOS)
+fileprivate let ckGk: CGFloat = 2
+#else
+fileprivate let ckGk: CGFloat = 1
+#endif
+
+/// tvOS d-pad bridge: the SwiftUI focus surface forwards arrows/OK INTO the UIKit canvas —
+/// Android's host→sendKey pattern, no focus dependence (AJ Nov 15).
+final class GuideCanvasProxy { weak var view: GuideCanvasUIView? }
+
 fileprivate func ckRGB(_ v: Int) -> UIColor {
     UIColor(red: CGFloat((v >> 16) & 255) / 255.0, green: CGFloat((v >> 8) & 255) / 255.0,
             blue: CGFloat(v & 255) / 255.0, alpha: 1)
@@ -116,12 +130,12 @@ final class GuideCanvasUIView: UIView {
     var onFav: ((LiveChannel, Bool) -> Void)?          // desired new state
     var onCursor: ((LiveChannel, LiveProg?) -> Void)?
 
-    // metrics (phone-scale; the old GuideGrid used 4px/min · 56pt rows too)
-    let pxPerMin: CGFloat = 4
-    let rowH: CGFloat = 56
-    let hdrRowH: CGFloat = 26
-    let chColW: CGFloat = 104
-    let rulerH: CGFloat = 26
+    // metrics (phone-scale × ckGk; the old GuideGrid used 4px/min · 56pt rows too)
+    let pxPerMin: CGFloat = 4 * ckGk
+    let rowH: CGFloat = 56 * ckGk
+    let hdrRowH: CGFloat = 26 * ckGk
+    let chColW: CGFloat = 104 * ckGk
+    let rulerH: CGFloat = 26 * ckGk
 
     // palette = Android GuideCanvas.kt
     private let bgCol = ckRGB(0x0C0B14)
@@ -139,11 +153,11 @@ final class GuideCanvasUIView: UIView {
     private let timeCol = ckRGB(0x8E88AA)
     var accent = ckRGB(0x7B5BF5) { didSet { setNeedsDisplay() } }
 
-    private let titleFont = UIFont.boldSystemFont(ofSize: 12)
-    private let timeFont = UIFont.systemFont(ofSize: 10)
-    private let chFont = UIFont.systemFont(ofSize: 12)
-    private let secFont = UIFont.boldSystemFont(ofSize: 10)
-    private let rulerFont = UIFont.systemFont(ofSize: 11)
+    private let titleFont = UIFont.boldSystemFont(ofSize: 12 * ckGk)
+    private let timeFont = UIFont.systemFont(ofSize: 10 * ckGk)
+    private let chFont = UIFont.systemFont(ofSize: 12 * ckGk)
+    private let secFont = UIFont.boldSystemFont(ofSize: 10 * ckGk)
+    private let rulerFont = UIFont.systemFont(ofSize: 11 * ckGk)
 
     private static let clockFmt: DateFormatter = {
         let f = DateFormatter(); f.timeZone = LiveTV.et; f.dateFormat = "h:mm a"; return f
@@ -179,6 +193,8 @@ final class GuideCanvasUIView: UIView {
         backgroundColor = bgCol
         isOpaque = true
         contentMode = .redraw   // rotation / layout changes repaint instead of stretching
+        #if os(iOS)
+        // touch is iPhone-only — tvOS feeds the dpad* funcs instead (AJ Nov 15)
         let pan = UIPanGestureRecognizer(target: self, action: #selector(onPan(_:)))
         pan.maximumNumberOfTouches = 1
         addGestureRecognizer(pan)
@@ -186,11 +202,12 @@ final class GuideCanvasUIView: UIView {
         let long = UILongPressGestureRecognizer(target: self, action: #selector(onLong(_:)))
         long.minimumPressDuration = 0.45
         addGestureRecognizer(long)
+        #endif
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func submit(_ model: CKGuideModel) {
-        if model.dayStart != dayStart { shiftPx = 0; scrollYpx = 0; curEntry = 0; inChannelCol = true }
+        if model.dayStart != dayStart { shiftPx = 0; scrollYpx = 0; curEntry = 0; inChannelCol = true; travelMs = -1 }
         dayStart = model.dayStart; winEnd = model.winEnd
         modelSig = model.sig
         // keepRowIndex (AJ Nov 15 "it brings my cursor all the way up there with it"): a ★
@@ -205,7 +222,7 @@ final class GuideCanvasUIView: UIView {
         for r in rows {
             if let h = r.header { red = h.hasPrefix("🔴") }
             redRow.append(red)
-            rowY.append(rowY[rowY.count - 1] + (r.channel != nil ? rowH + 2 : hdrRowH))
+            rowY.append(rowY[rowY.count - 1] + (r.channel != nil ? rowH + 2 * ckGk : hdrRowH))
         }
         contentH = rowY[rowY.count - 1]
         // cursor follows the channel by id across resubmits (fav re-sort, 🔴 section swap)
@@ -256,9 +273,10 @@ final class GuideCanvasUIView: UIView {
         DispatchQueue.main.async { cb?(c, p) }
     }
 
-    // ── touch: drag pans BOTH axes (the canvas owns the gesture, same job as Android's
-    // requestDisallowInterceptTouchEvent — the page scroller can't steal vertical drags),
-    // tap = cursor + tune, long-press = ★ toggle ──
+    // ── touch (iOS only): drag pans BOTH axes (the canvas owns the gesture, same job as
+    // Android's requestDisallowInterceptTouchEvent — the page scroller can't steal vertical
+    // drags), tap = cursor + tune, long-press = ★ toggle ──
+    #if os(iOS)
     @objc private func onPan(_ g: UIPanGestureRecognizer) {
         let t = g.translation(in: self)
         g.setTranslation(.zero, in: self)
@@ -292,11 +310,95 @@ final class GuideCanvasUIView: UIView {
         if !inChannelCol {
             let t = viewLeftMs() + Int((x - chColW) / pxPerMin * 60_000)
             curEntry = entryAtTime(c, t)
+            travelMs = entryStart(c, curEntry)   // travel axis follows the tap (Android tapAt)
         }
         notifyCursor()
         setNeedsDisplay()
         if tune, let ch = rows[curRow].channel { onTune?(ch) }
         return true
+    }
+    #endif
+
+    // ── tvOS d-pad (Android GuideCanvas.sendKey port, AJ Nov 15): the host's focus surface
+    // feeds arrows/OK straight in. ↑/↓ hop channel rows (headers skipped), ←/→ walk entries
+    // (← past the first entry = the channel column), the camera follows the cursor ──
+    private var travelMs = -1   // travel axis: the time ↑/↓ keeps you at (AOSP/Kodi)
+
+    func dpadVertical(_ dir: Int) {
+        let nxt = nextChannelRow(curRow, dir)
+        guard nxt >= 0 else { return }   // top/bottom edge: stay put (overlay has no escape-up)
+        moveRow(nxt)
+    }
+    func dpadLeft() {
+        guard rows.indices.contains(curRow), let c = rows[curRow].channel, !inChannelCol else { return }
+        if curEntry > 0 { curEntry -= 1; travelMs = entryStart(c, curEntry); ensureEntryVisible() }
+        else { inChannelCol = true }
+        notifyCursor(); setNeedsDisplay()
+    }
+    func dpadRight() {
+        guard rows.indices.contains(curRow), let c = rows[curRow].channel else { return }
+        if inChannelCol {
+            inChannelCol = false
+            curEntry = entryAtTime(c, viewLeftMs() + 60_000)
+            travelMs = entryStart(c, curEntry)
+        } else if curEntry < entryCount(c) - 1 {
+            curEntry += 1; travelMs = entryStart(c, curEntry)
+        }
+        ensureEntryVisible(); notifyCursor(); setNeedsDisplay()
+    }
+    /// OK: tune the cursored channel (the host decides fullscreen-vs-retune, like onTap).
+    func dpadSelect() {
+        guard rows.indices.contains(curRow), let c = rows[curRow].channel else { return }
+        onTune?(c)
+    }
+    /// Long-press OK / ⏯: ★ toggle — the resubmit keeps the ROW, not the channel (AJ Nov 15).
+    func dpadFav() {
+        guard rows.indices.contains(curRow), let c = rows[curRow].channel else { return }
+        keepRowOnSubmit = true
+        onFav?(c, !favs.contains(c.id))
+    }
+
+    private func nextChannelRow(_ from: Int, _ dir: Int) -> Int {
+        var i = from + dir
+        while rows.indices.contains(i) { if rows[i].channel != nil { return i }; i += dir }
+        return -1
+    }
+    private func moveRow(_ target: Int) {
+        curRow = target
+        cursorChannel = rows.indices.contains(target) ? rows[target].channel?.id : nil
+        if !inChannelCol, rows.indices.contains(target), let c = rows[target].channel {
+            // travel axis (AOSP): land on the entry at the time you were browsing
+            curEntry = entryAtTime(c, travelMs > 0 ? travelMs : viewLeftMs() + 60_000)
+        }
+        ensureRowVisible(); notifyCursor(); setNeedsDisplay()
+    }
+    private func ensureRowVisible() {
+        guard rows.indices.contains(curRow) else { return }
+        let viewH = max(1, bounds.height - rulerH)
+        let top = rowY[curRow], bot = rowY[curRow + 1]
+        // keep one row of context above when possible
+        if top - scrollYpx < rowH / 2 { scrollYpx = max(0, top - rowH - 2 * ckGk) }
+        else if bot - scrollYpx > viewH { scrollYpx = min(bot - viewH, max(0, contentH - viewH)) }
+    }
+    private func ensureEntryVisible() {
+        guard rows.indices.contains(curRow), let c = rows[curRow].channel else { return }
+        let laneW = max(1, bounds.width - chColW)
+        let l = xOfTime(entryStart(c, curEntry)) + shiftPx - chColW   // absolute px
+        let r = xOfTime(entryEnd(c, curEntry)) + shiftPx - chColW
+        var target = shiftPx
+        if r - shiftPx > laneW { target = r - l >= laneW ? l : r - laneW }
+        if l - target < 0 { target = l }
+        shiftPx = min(max(0, target), maxShift)
+    }
+    // gap-as-entry: a channel with no progs gets ONE full-span synthetic entry (Android)
+    private func entryCount(_ c: LiveChannel) -> Int { c.progs.isEmpty ? 1 : c.progs.count }
+    private func entryStart(_ c: LiveChannel, _ i: Int) -> Int {
+        guard !c.progs.isEmpty else { return dayStart }
+        return max(c.progs[min(max(i, 0), c.progs.count - 1)].s, dayStart)
+    }
+    private func entryEnd(_ c: LiveChannel, _ i: Int) -> Int {
+        guard !c.progs.isEmpty else { return winEnd }
+        return min(c.progs[min(max(i, 0), c.progs.count - 1)].e, winEnd)
     }
 
     // ── logos: async decode → cache → setNeedsDisplay (Android logoFor) ──
@@ -346,15 +448,16 @@ final class GuideCanvasUIView: UIView {
         ctx.fill(CGRect(x: 0, y: 0, width: chColW, height: rulerH))
         let leftMs = viewLeftMs()
         drawText(Self.dayFmt.string(from: Date(timeIntervalSince1970: Double(leftMs) / 1000)),
-                 in: CGRect(x: 8, y: 6, width: chColW - 12, height: 14), font: rulerFont, color: fgCol)
+                 in: CGRect(x: 8 * ckGk, y: 6 * ckGk, width: chColW - 12 * ckGk, height: 14 * ckGk),
+                 font: rulerFont, color: fgCol)
         ctx.saveGState()
         ctx.clip(to: CGRect(x: chColW, y: 0, width: w - chColW, height: rulerH))
         var tick = dayStart - dayStart % 1_800_000
         while tick < winEnd {
             let x = xOfTime(tick)
             if x > w { break }
-            if x + 80 > chColW {
-                drawText(Self.clock(tick), in: CGRect(x: x + 4, y: 7, width: 76, height: 13),
+            if x + 80 * ckGk > chColW {
+                drawText(Self.clock(tick), in: CGRect(x: x + 4 * ckGk, y: 7 * ckGk, width: 76 * ckGk, height: 13 * ckGk),
                          font: rulerFont, color: dimCol)
             }
             tick += 1_800_000
@@ -371,28 +474,28 @@ final class GuideCanvasUIView: UIView {
             let row = rows[i]
             if let hdr = row.header {   // section header band (🔴 live sections draw RED)
                 ctx.setFillColor(secBgCol.cgColor)
-                ctx.fill(CGRect(x: 0, y: y0, width: w, height: hdrRowH - 2))
-                drawText(hdr.uppercased(), in: CGRect(x: 8, y: y0 + 6, width: w - 16, height: 13),
+                ctx.fill(CGRect(x: 0, y: y0, width: w, height: hdrRowH - 2 * ckGk))
+                drawText(hdr.uppercased(), in: CGRect(x: 8 * ckGk, y: y0 + 6 * ckGk, width: w - 16 * ckGk, height: 13 * ckGk),
                          font: secFont, color: hdr.hasPrefix("🔴") ? redCol : secCol)
                 i += 1; continue
             }
             guard let c = row.channel else { i += 1; continue }
             let focusRow = i == curRow
             // channel cell
-            let chRect = CGRect(x: 1, y: y0, width: chColW - 3, height: rowH)
-            let chPath = UIBezierPath(roundedRect: chRect, cornerRadius: 6)
+            let chRect = CGRect(x: ckGk, y: y0, width: chColW - 3 * ckGk, height: rowH)
+            let chPath = UIBezierPath(roundedRect: chRect, cornerRadius: 6 * ckGk)
             (focusRow && inChannelCol ? cellFocus : chColBg).setFill()
             chPath.fill()
             if focusRow && inChannelCol {
-                focusStroke.setStroke(); chPath.lineWidth = 2; chPath.stroke()
+                focusStroke.setStroke(); chPath.lineWidth = 2 * ckGk; chPath.stroke()
             }
-            var tx: CGFloat = 7
+            var tx: CGFloat = 7 * ckGk
             if let bm = logoFor(c) {
-                bm.draw(in: CGRect(x: tx, y: y0 + (rowH - 24) / 2, width: 24, height: 24))
+                bm.draw(in: CGRect(x: tx, y: y0 + (rowH - 24 * ckGk) / 2, width: 24 * ckGk, height: 24 * ckGk))
             }
-            if !c.logo.isEmpty { tx += 30 }
+            if !c.logo.isEmpty { tx += 30 * ckGk }
             let nm = (favs.contains(c.id) ? "★ " : "") + row.display
-            drawText(nm, in: CGRect(x: tx, y: y0 + rowH / 2 - 8, width: chColW - tx - 6, height: 16),
+            drawText(nm, in: CGRect(x: tx, y: y0 + rowH / 2 - 8 * ckGk, width: chColW - tx - 6 * ckGk, height: 16 * ckGk),
                      font: chFont, color: fgCol)
             // programme cells (clipped to the lane)
             ctx.saveGState()
@@ -426,31 +529,31 @@ final class GuideCanvasUIView: UIView {
         let nowX = xOfTime(now)
         if nowX >= chColW && nowX <= w {
             ctx.setFillColor(nowLineCol.cgColor)
-            ctx.fill(CGRect(x: nowX, y: rulerH, width: 2, height: h - rulerH))
+            ctx.fill(CGRect(x: nowX, y: rulerH, width: 2 * ckGk, height: h - rulerH))
         }
     }
 
     private func drawCell(x0: CGFloat, x1: CGFloat, y0: CGFloat, title: String, startMs: Int,
                           live: Bool, past: Bool, focused: Bool, showTime: Bool, red: Bool,
                           cellLive: UIColor, cellLiveRed: UIColor, cellFocus: UIColor, focusStroke: UIColor) {
-        let l = x0 + 1, r = x1 - 1
-        guard r - l >= 3 else { return }
+        let l = x0 + ckGk, r = x1 - ckGk
+        guard r - l >= 3 * ckGk else { return }
         let rect = CGRect(x: l, y: y0, width: r - l, height: rowH)
-        let path = UIBezierPath(roundedRect: rect, cornerRadius: 6)
+        let path = UIBezierPath(roundedRect: rect, cornerRadius: 6 * ckGk)
         let fill: UIColor = focused ? cellFocus : live ? (red ? cellLiveRed : cellLive) : past ? cellPast : cellBase
         fill.setFill(); path.fill()
         (focused ? focusStroke : cellLine).setStroke()
-        path.lineWidth = focused ? 2 : 1
+        path.lineWidth = (focused ? 2 : 1) * ckGk
         path.stroke()
-        guard r - l >= 52 else { return }
+        guard r - l >= 52 * ckGk else { return }
         // LABEL PINNING (Kodi): text starts at the viewport edge while the cell hangs off-left
-        let textL = max(l, chColW) + 6
-        let avail = r - textL - 6
-        guard avail >= 30 else { return }
-        drawText(title, in: CGRect(x: textL, y: y0 + 9, width: avail, height: 15),
+        let textL = max(l, chColW) + 6 * ckGk
+        let avail = r - textL - 6 * ckGk
+        guard avail >= 30 * ckGk else { return }
+        drawText(title, in: CGRect(x: textL, y: y0 + 9 * ckGk, width: avail, height: 15 * ckGk),
                  font: titleFont, color: focused || live ? fgCol : past ? pastTxt : dimCol)
         if showTime {
-            drawText(Self.clock(startMs), in: CGRect(x: textL, y: y0 + 27, width: avail, height: 13),
+            drawText(Self.clock(startMs), in: CGRect(x: textL, y: y0 + 27 * ckGk, width: avail, height: 13 * ckGk),
                      font: timeFont, color: past ? pastTxt : timeCol)
         }
     }
@@ -461,6 +564,7 @@ final class GuideCanvasUIView: UIView {
 struct GuideCanvasRep: UIViewRepresentable {
     let model: CKGuideModel
     let now: Int
+    var proxy: GuideCanvasProxy? = nil   // tvOS d-pad bridge (nil on the phone)
     let onTune: (LiveChannel) -> Void
     let onFav: (LiveChannel, Bool) -> Void
     let onCursor: (LiveChannel, LiveProg?) -> Void
@@ -480,6 +584,7 @@ struct GuideCanvasRep: UIViewRepresentable {
         v.setNeedsDisplay()   // `now` tick: now-line + live tints realign, zero rebuild
     }
     private func wire(_ v: GuideCanvasUIView) {
+        proxy?.view = v   // re-point every update — a re-created host proxy heals itself
         v.onTune = onTune
         v.onFav = onFav
         v.onCursor = onCursor
@@ -498,6 +603,7 @@ struct GuideCanvasView: View {
     let winEnd: Int
     let now: Int
     var cornerReserve: CGSize = .zero     // corner-player overlay: space for the video top-right
+    var proxy: GuideCanvasProxy? = nil    // tvOS: the host's focus surface drives the cursor
     let onTune: (LiveChannel) -> Void
     let onFav: (LiveChannel) -> Void      // host patches favs + resubmits (instant ★ re-sort)
 
@@ -526,7 +632,7 @@ struct GuideCanvasView: View {
                 }
                 .frame(minHeight: cornerReserve.height, alignment: .top)
             }
-            GuideCanvasRep(model: model, now: now,
+            GuideCanvasRep(model: model, now: now, proxy: proxy,
                            onTune: { ch in onTune(ch) },
                            onFav: { ch, _ in onFav(ch) },
                            onCursor: { ch, p in
@@ -549,38 +655,40 @@ struct GuideCanvasView: View {
     }
 
     /// FIXED height so cursor moves never shift the grid (Android dcCard, 92dp).
+    /// gk: phone-scale × 2 on the 10-foot screen (the TV.dp convention, Nov 15).
+    private var gk: CGFloat { Platform.isTV ? 2 : 1 }
     private var detailCard: some View {
         let live = selProg.map { $0.s <= now && now < $0.e } ?? false
         let frac: Double = {
             guard let p = selProg, live, p.e > p.s else { return 0 }
             return min(1, max(0, Double(now - p.s) / Double(p.e - p.s)))
         }()
-        return VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 7) {
+        return VStack(alignment: .leading, spacing: 2 * gk) {
+            HStack(spacing: 7 * gk) {
                 if let lg = selCh?.logo, !lg.isEmpty {
                     AsyncImage(url: URL(string: lg)) { img in img.resizable().aspectRatio(contentMode: .fit) }
                         placeholder: { Color.clear }
-                        .frame(width: 22, height: 22)
+                        .frame(width: 22 * gk, height: 22 * gk)
                 }
-                Text(chanLine).font(.system(size: 12)).foregroundStyle(Theme.dim).lineLimit(1)
+                Text(chanLine).font(.system(size: 12 * gk)).foregroundStyle(Theme.dim).lineLimit(1)
                 if live {   // accent progress through the airing programme
                     ZStack(alignment: .leading) {
                         Capsule().fill(Theme.card2)
-                        Capsule().fill(Theme.accent).frame(width: 120 * frac)
+                        Capsule().fill(Theme.accent).frame(width: 120 * gk * frac)
                     }
-                    .frame(width: 120, height: 3)
+                    .frame(width: 120 * gk, height: 3 * gk)
                 }
                 Spacer(minLength: 0)
             }
             Text(selProg?.t ?? (selCh == nil ? " " : "Live programming"))
-                .font(.system(size: 16.5, weight: .bold)).foregroundStyle(.white).lineLimit(1)
-            Text(selDesc).font(.system(size: 11.5)).foregroundStyle(Theme.dim).lineLimit(2)
+                .font(.system(size: 16.5 * gk, weight: .bold)).foregroundStyle(.white).lineLimit(1)
+            Text(selDesc).font(.system(size: 11.5 * gk)).foregroundStyle(Theme.dim).lineLimit(2)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 12).padding(.vertical, 8)
-        .frame(maxWidth: .infinity, minHeight: 92, maxHeight: 92, alignment: .topLeading)
+        .padding(.horizontal, 12 * gk).padding(.vertical, 8 * gk)
+        .frame(maxWidth: .infinity, minHeight: 92 * gk, maxHeight: 92 * gk, alignment: .topLeading)
         .background(Color(red: 0x17 / 255.0, green: 0x13 / 255.0, blue: 0x2B / 255.0),
-                    in: RoundedRectangle(cornerRadius: 10))
+                    in: RoundedRectangle(cornerRadius: 10 * gk))
     }
 
     private var chanLine: String {

@@ -152,7 +152,7 @@ struct PlayerView: View {
     @State var audioMenu = false           // TV audio sheet
     @State var liveFav = false             // Live TV: ★ this channel
     // remote / keyboard focus (Apple TV: the Firestick-style "controls hidden → arrows seek")
-    enum PFocus: Hashable { case picture, skip, skipDismiss, play, seek, ctrl(String), upNext, upDismiss, keep }
+    enum PFocus: Hashable { case picture, skip, skipDismiss, play, seek, ctrl(String), upNext, upDismiss, keep, guide }
     @FocusState var pfocus: PFocus?
 
     var isLive: Bool { request.meta.type == "tv" }
@@ -196,6 +196,8 @@ struct PlayerView: View {
             else if seeking && !failed, let hf = heldFrame { seekHold(hf) }
             tvOverlay
             if placeholder { placeholderBanner }
+            // GUIDE V3 in-player overlay (Android showFullGuide / Firestick parity, AJ Nov 15)
+            if showGuideOverlay { tvGuideOverlay.transition(.opacity) }
             if showNextUp, let ep = nextEp { tvNextUp(ep) }
             if showStillWatching { tvStillWatching }
             #elseif os(macOS)
@@ -243,8 +245,9 @@ struct PlayerView: View {
         })
         #endif
         #if os(tvOS)
-        .onPlayPauseCommand { togglePlay() }
-        .onExitCommand { tvBack() }   // Menu peels one layer: panels → next-up → controls → exit
+        // ⏯ on the open guide = ★ the cursored channel (AJ Nov 15; long-press OK does it too)
+        .onPlayPauseCommand { if showGuideOverlay { ovProxy.view?.dpadFav() } else { togglePlay() } }
+        .onExitCommand { tvBack() }   // Menu peels one layer: guide → panels → next-up → controls → exit
         .onChange(of: skipKey) { k in if !k.isEmpty { pfocus = .skip } }   // skip pill takes focus
         #endif
         #if os(macOS)
@@ -302,6 +305,11 @@ struct PlayerView: View {
         guard showGuideOverlay else { return nil }
         let w = min(size.width * 0.38, 400)
         return CGRect(x: size.width - w - 24, y: 16, width: w, height: w * 9 / 16)
+        #elseif os(tvOS)
+        // Android showFullGuide: 400×225dp top-right = 800×450pt at the 1dp = 2pt TV scale
+        guard showGuideOverlay else { return nil }
+        let w = min(size.width * 0.42, 800)
+        return CGRect(x: size.width - w - 48, y: 48, width: w, height: w * 9 / 16)
         #else
         return nil
         #endif
@@ -460,16 +468,26 @@ struct PlayerView: View {
     @State var miniSections: [(String, [LiveChannel])] = []
     @State var miniFavs: Set<String> = []
     @State var curFav = false
+    #endif
 
     // ---- GUIDE V3 corner-player guide (Android PlayerActivity showFullGuide, Nov 7): the
     // full guide as an overlay while the SAME live video keeps playing top-right. Tap the
     // playing channel or the corner video = fullscreen; tap another channel = retune in place
-    // (the guide stays up for back-to-back hops); swipe down = fullscreen. ----
+    // (the guide stays up for back-to-back hops); swipe down = fullscreen. Shared with the
+    // Apple TV in-player guide (AJ Nov 15 — Firestick parity). ----
+    #if os(iOS) || os(tvOS)
     @State var showGuideOverlay = false
     @State var ovGuide = LiveGuide()
     @State var ovNow = LiveTV.nowMs()
     @State var ovDayStart = 0
+    #endif
+    #if os(tvOS)
+    @State var ovProxy = GuideCanvasProxy()   // d-pad bridge into the drawn canvas (Nov 15)
+    @State var backToFsAt: Double = 0         // when BACK last closed the guide → quick 2nd BACK exits (Android v4.1)
+    @State var backExitHinted = false         // one-shot "BACK again to leave" flash per session
+    #endif
 
+    #if os(iOS) || os(tvOS)
     func openGuideOverlay() {
         guard isLive else { return }
         hideTask?.cancel()
@@ -477,11 +495,19 @@ struct PlayerView: View {
         ovNow = LiveTV.nowMs()
         ovDayStart = LiveTV.dayStart(0, now: ovNow)   // today, floored to the half hour
         withAnimation(.easeOut(duration: 0.22)) { showGuideOverlay = true }
+        #if os(tvOS)
+        pfocus = .guide   // the guide focus surface owns the remote (arrows → canvas cursor)
+        #endif
     }
     func closeGuideOverlay() {
         withAnimation(.easeOut(duration: 0.22)) { showGuideOverlay = false }
+        #if os(tvOS)
+        // back to the plain fullscreen picture (Android hideFullGuide: no controller pop)
+        hideTask?.cancel(); controlsVisible = false; pfocus = .picture
+        #else
         controlsVisible = true
         scheduleHide()
+        #endif
     }
     /// ★ from the overlay guide: patch the local + LiveTV caches so the star and the
     /// ★-Favorites re-sort land instantly, then POST the desired state (LiveTVView pattern).
@@ -491,12 +517,26 @@ struct PlayerView: View {
         ovGuide.favs.removeAll { $0 == ch.id }
         ovGuide.favChannels.removeAll { $0.id == ch.id }
         if on { ovGuide.favs.append(ch.id); ovGuide.favChannels.append(ch) }
+        // ★-ing what's PLAYING from the guide keeps the player's Favorite control honest (Nov 15)
+        if ch.id == request.meta.id.replacingOccurrences(of: "cklive:", with: "") { liveFav = on }
         let region = UserDefaults.standard.string(forKey: "liveRegion") ?? ""
         LiveTV.patchFav(profile: LiveTV.profile(session), region: region, id: ch.id, on: on, channel: ch)
         flashLabel(on ? "★ Added to favorites" : "Removed from favorites")
         Task { _ = await LiveTV.setFav(session, id: ch.id, on: on) }
     }
+    /// Overlay guide fetch + 30s clock tick — shared by the iPhone overlay and the tvOS one.
+    func ovGuideLoop() async {
+        let region = UserDefaults.standard.string(forKey: "liveRegion") ?? ""
+        if case .ok(let g) = await LiveTV.guide(session, region: region) { ovGuide = g }
+        while !Task.isCancelled {   // clock tick: now-line, live tints, detail progress
+            try? await Task.sleep(for: .seconds(30))
+            guard !Task.isCancelled else { return }
+            ovNow = LiveTV.nowMs()
+        }
+    }
+    #endif
 
+    #if os(iOS)
     var guideV3Overlay: some View {
         GeometryReader { geo in
             let hole = cornerVideoRect(geo.size)
@@ -540,15 +580,7 @@ struct PlayerView: View {
             })
         }
         .ignoresSafeArea()
-        .task {
-            let region = UserDefaults.standard.string(forKey: "liveRegion") ?? ""
-            if case .ok(let g) = await LiveTV.guide(session, region: region) { ovGuide = g }
-            while !Task.isCancelled {   // clock tick: now-line, live tints, detail progress
-                try? await Task.sleep(for: .seconds(30))
-                guard !Task.isCancelled else { return }
-                ovNow = LiveTV.nowMs()
-            }
-        }
+        .task { await ovGuideLoop() }
     }
     var miniGuidePanel: some View {
         HStack(spacing: 0) {
@@ -890,10 +922,11 @@ struct PlayerView: View {
     /// bring the controls back.
     @ViewBuilder var pictureCatcher: some View {
         #if os(tvOS)
-        // Firestick: hidden controller → OK = play/pause, any arrow shows the controller
+        // Firestick: hidden controller → OK = play/pause, any arrow shows the controller.
+        // Under the guide overlay it must NOT be focusable or it steals the arrows (Nov 15).
         Color.clear
             .ignoresSafeArea()
-            .focusable(!controlsVisible)
+            .focusable(!controlsVisible && !showGuideOverlay)
             .focused($pfocus, equals: .picture)
             .onTapGesture { epTouched = true; togglePlay(); showControls() }
             .onMoveCommand { _ in epTouched = true; showControls() }

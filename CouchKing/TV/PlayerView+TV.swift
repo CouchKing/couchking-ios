@@ -59,15 +59,94 @@ extension PlayerView {
         }
     }
 
-    /// Menu/BACK — one layer per press: captions panel → sheets → next-up → episode drawer →
-    /// controller → exit.
+    /// Menu/BACK — one layer per press: guide → captions panel → sheets → next-up → episode
+    /// drawer → controller → (live: open the guide / quick 2nd press exits) → exit.
     func tvBack() {
+        // the guide owns BACK first (Android dispatchKeyEvent fullGuide block): close it back
+        // to fullscreen, arm the quick-2nd-BACK exit + the one-shot hint (v4.1 TiviMate step-out)
+        if showGuideOverlay {
+            closeGuideOverlay()
+            backToFsAt = Date().timeIntervalSince1970
+            if !backExitHinted { backExitHinted = true; flashLabel("Press BACK again to leave Live TV") }
+            return
+        }
         if showSubPanel { showSubPanel = false; showControls(); return }
         if speedMenu || audioMenu { speedMenu = false; audioMenu = false; showControls(); return }
         if showNextUp { showNextUp = false; nextUpDismissed = true; return }
         if showEpisodes { showEpisodes = false; showControls(); return }
         if controlsVisible { hideTask?.cancel(); controlsVisible = false; pfocus = .picture; return }
+        // live fullscreen with nothing up: BACK opens the guide (AJ Nov 7 "click back and it
+        // just opens up the guide with the player top right"); within 1.6s of closing it,
+        // BACK ends the session instead — the "BACK BACK to leave" exit (Android v4.1)
+        if isLive, ckUseGuideV3 {
+            if Date().timeIntervalSince1970 - backToFsAt < 1.6 { close(); return }
+            openGuideOverlay(); return
+        }
         close()
+    }
+
+    // MARK: in-player live guide (GUIDE V3, Nov 15 — Android showFullGuide / Firestick parity)
+    // The iPhone corner-player overlay re-hosted for the remote: punched scrim, the SAME live
+    // video keeps playing top-right, the drawn canvas fills the rest. The focus surface here
+    // owns the remote while the guide is up (seek-bar pattern: focusable + onMoveCommand):
+    // arrows drive the canvas cursor, OK tunes in place, long-press OK / ⏯ = ★, BACK = fullscreen.
+    var tvGuideOverlay: some View {
+        GeometryReader { geo in
+            let hole = cornerVideoRect(geo.size)
+                ?? CGRect(x: geo.size.width - 848, y: 48, width: 800, height: 450)
+            ZStack(alignment: .topLeading) {
+                // scrim with the punched hole exactly where the corner video sits
+                PunchedScrim(hole: hole)
+                VStack(alignment: .leading, spacing: TV.dp(4)) {
+                    if ovGuide.channels.isEmpty {
+                        ProgressView().tint(.white).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        GuideCanvasView(guide: ovGuide, dayStart: ovDayStart,
+                                        winEnd: ovDayStart + 24 * 3_600_000, now: ovNow,
+                                        cornerReserve: CGSize(width: hole.width + TV.dp(8), height: hole.height + TV.dp(6)),
+                                        proxy: ovProxy,
+                                        onTune: { ch in
+                                            if "cklive:" + ch.id == request.meta.id || ch.id == request.meta.id {
+                                                closeGuideOverlay()   // OK on what's playing = fullscreen
+                                            } else {
+                                                flashLabel("Tuning \(ckCleanChannelName(ch.name))…")
+                                                Task {
+                                                    await switchLive(ch)   // retune, guide stays up
+                                                    // reloadInPlace flips the controls on — keep them
+                                                    // tucked behind the scrim + the remote on the guide
+                                                    if showGuideOverlay { controlsVisible = false; pfocus = .guide }
+                                                }
+                                            }
+                                        },
+                                        onFav: { ch in ovToggleFav(ch) })
+                    }
+                    Text("←→↑↓ move · OK watch · hold OK or ⏯ = ★ favorite · BACK for fullscreen")
+                        .font(.system(size: TV.sp(11))).foregroundStyle(TV.dim.opacity(0.8))
+                        .padding(.leading, TV.dp(2))
+                }
+                .padding(.leading, TV.dp(24)).padding(.trailing, TV.dp(24))
+                .padding(.top, TV.dp(16)).padding(.bottom, TV.dp(10))
+            }
+            // the remote lands HERE while the guide is up — fed straight into the canvas
+            // (Android sendKey pattern, zero focus wandering)
+            .focusable()
+            .focused($pfocus, equals: .guide)
+            .onMoveCommand { dir in
+                epTouched = true
+                switch dir {
+                case .up: ovProxy.view?.dpadVertical(-1)
+                case .down: ovProxy.view?.dpadVertical(1)
+                case .left: ovProxy.view?.dpadLeft()
+                case .right: ovProxy.view?.dpadRight()
+                default: break
+                }
+            }
+            .onTapGesture { epTouched = true; ovProxy.view?.dpadSelect() }   // Select = tune (seek-bar pattern)
+            .onLongPressGesture(minimumDuration: 0.5) { ovProxy.view?.dpadFav() }   // hold OK = ★ (TVLiveRow parity)
+        }
+        .ignoresSafeArea()
+        .task { await ovGuideLoop() }
+        .onAppear { pfocus = .guide }
     }
 
     // MARK: top (padding 24dp, top scrim)
@@ -160,6 +239,10 @@ extension PlayerView {
         if isLive {
             out.append(TVControl(id: "fav", caption: "Favorite", icon: liveFav ? "star.fill" : "star",
                                  tint: liveFav ? TV.favGold : .white) { toggleLiveFav() })
+            // Guide next to Favorite (Android live control row: Favorite · Guide — AJ Nov 15)
+            out.append(TVControl(id: "guide", caption: "Guide", icon: "list.bullet.below.rectangle") {
+                openGuideOverlay()
+            })
             return out
         }
         if request.season != nil {
