@@ -29,7 +29,9 @@ struct HomeView: View {
                             resume = item
                         }
                     }
-                    if !top10.isEmpty { Top10Row(metas: top10) }
+                    // per-profile row toggle (AJ Nov 15) — gate the PAINT too so OFF bites on
+                    // every build path, not just the next load
+                    if !top10.isEmpty && session.pref("top10Row", true) { Top10Row(metas: top10) }
                     ForEach(forYou, id: \.0) { row in PosterRow(title: row.0, metas: row.1) }
                     ForEach(rows, id: \.0) { row in PosterRow(title: row.0, metas: row.1) }
                     if loading { ProgressView().frame(maxWidth: .infinity).padding(.top, 40) }
@@ -96,8 +98,13 @@ struct HomeView: View {
         let (tm, ts) = await trendingT
         guard gen == loadGen else { return }
         let mix = Catalog.interleave(tm, ts, count: 40)
-        top10 = Array(mix.prefix(10))
-        hero = Array(mix.filter { $0.background != nil || $0.poster != nil }.prefix(7))
+        // Top 10 Today row is per-profile optional (AJ Nov 15) — Settings ▸ "Top 10 Today on Home"
+        top10 = session.pref("top10Row", true) ? Array(mix.prefix(10)) : []
+        // HOME hero source (AJ Nov 15): the person's own Continue Watching, newest first —
+        // "no top 10 [banner] if there is a continue watching". Empty CW (new profile) falls
+        // back to the trending mix exactly as before. Top 10 ROW is unaffected.
+        let cwHero = cw.map(\.meta).filter { $0.background != nil || $0.poster != nil }
+        hero = Array((cwHero.isEmpty ? mix.filter { $0.background != nil || $0.poster != nil } : cwHero).prefix(7))
         // For You — Movies then Shows, always on Home (addon algo → library rec graph → trending)
         let (fyM, fyS) = await forYouT
         guard gen == loadGen else { return }

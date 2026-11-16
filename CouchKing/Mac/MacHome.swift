@@ -37,7 +37,9 @@ struct MacHome: View {
                         }
                     }
                 }
-                if !top10.isEmpty {
+                // per-profile row toggle (AJ Nov 15) — gate the PAINT too so OFF bites on
+                // every build path, not just the next load
+                if !top10.isEmpty && session.pref("top10Row", true) {
                     DeskRowLabel(text: "Top 10 Today")
                     DeskStrip {
                         ForEach(Array(top10.enumerated()), id: \.element.id) { i, m in
@@ -150,7 +152,8 @@ struct MacHome: View {
         async let tt = TMDB.trendingDay(kind: "tv")
         let t10 = Catalog.interleave(await tm, await tt)
         guard gen == loadGen else { return }
-        top10 = t10
+        // Top 10 Today row is per-profile optional (AJ Nov 15) — Settings ▸ "Top 10 Today on Home"
+        top10 = session.pref("top10Row", true) ? t10 : []
         var fresh: [(String, [Meta])] = []
         rows = []
         // Android buildShelvesInto: For You — Movies / Shows always on Home (addon algo →

@@ -62,14 +62,22 @@ struct CKGuideModel {
     static func build(guide: LiveGuide, top: [CKGuideRow], dayStart: Int, winEnd: Int) -> CKGuideModel {
         let favs = Set(guide.favs)
         var rows: [CKGuideRow] = []
-        let favList = guide.channels.filter { favs.contains($0.id) }
+        // favorited channels OUTSIDE the lineup (starred locals): the server ships them WHOLE
+        // in favChannels exactly for this — merge before splitting fav/rest, or a starred
+        // local saved fine but never showed in ★ Favorites (GuideGrid / Android Nov 14 merge)
+        var all = guide.channels
+        var seen = Set(all.map(\.id))
+        for fc in guide.favChannels where favs.contains(fc.id) && !seen.contains(fc.id) {
+            all.append(fc); seen.insert(fc.id)
+        }
+        let favList = all.filter { favs.contains($0.id) }
         if !favList.isEmpty {
             rows.append(CKGuideRow(header: "★ Favorites"))
             rows += favList.map { CKGuideRow(channel: $0) }
         }
         rows += top
         var lastSec = ""
-        for c in guide.channels where !favs.contains(c.id) {
+        for c in all where !favs.contains(c.id) {
             let sec = !c.section.isEmpty ? c.section : (!c.genre.isEmpty ? c.genre : "More Channels")
             if sec != lastSec { rows.append(CKGuideRow(header: sec)); lastSec = sec }
             rows.append(CKGuideRow(channel: c))
@@ -159,6 +167,7 @@ final class GuideCanvasUIView: UIView {
 
     // cursor (pure state) + camera
     private var cursorChannel: String?
+    private var keepRowOnSubmit = false   // set by the ★ long-press; consumed by the next submit
     private var curRow = -1
     private var curEntry = 0
     private var inChannelCol = true
@@ -184,6 +193,12 @@ final class GuideCanvasUIView: UIView {
         if model.dayStart != dayStart { shiftPx = 0; scrollYpx = 0; curEntry = 0; inChannelCol = true }
         dayStart = model.dayStart; winEnd = model.winEnd
         modelSig = model.sig
+        // keepRowIndex (AJ Nov 15 "it brings my cursor all the way up there with it"): a ★
+        // toggle moves the CHANNEL into Favorites but the PERSON stays on the row where they
+        // were — id-tracking (default) is for refreshes, where following the channel is right.
+        // Only honored when the favs set really moved (a gated double-fire leaves no resubmit).
+        let keepIdx = keepRowOnSubmit && model.favs != favs
+        keepRowOnSubmit = false
         rows = model.rows; favs = model.favs
         redRow = []; rowY = [0]
         var red = false
@@ -194,7 +209,7 @@ final class GuideCanvasUIView: UIView {
         }
         contentH = rowY[rowY.count - 1]
         // cursor follows the channel by id across resubmits (fav re-sort, 🔴 section swap)
-        if let keep = cursorChannel, let idx = rows.firstIndex(where: { $0.channel?.id == keep }) {
+        if !keepIdx, let keep = cursorChannel, let idx = rows.firstIndex(where: { $0.channel?.id == keep }) {
             curRow = idx
         }
         if !rows.indices.contains(curRow) || rows[curRow].channel == nil {
@@ -261,6 +276,7 @@ final class GuideCanvasUIView: UIView {
         guard tapAt(p.x, p.y, tune: false),
               rows.indices.contains(curRow), let c = rows[curRow].channel else { return }
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        keepRowOnSubmit = true   // the ★ resubmit keeps the ROW, not the channel (AJ Nov 15)
         onFav?(c, !favs.contains(c.id))
     }
 
@@ -577,6 +593,12 @@ struct GuideCanvasView: View {
     /// "🔴 <emoji> <SPORT> — LIVE" header; sig-gated so the grid only resubmits on change.
     /// (NO upcoming games inside the guide — AJ Nov 7 "no no no"; the 📅 chip owns those.)
     private func refreshTop() async {
+        // 🔴 sections are per-profile optional (AJ Nov 15 "incase people dont want all those
+        // at the top all the time") — Settings ▸ "Live sports in Guide"
+        guard session.pref("guideSports", true) else {
+            if !topRows.isEmpty || !topSig.isEmpty { topRows = []; topSig = "" }
+            return
+        }
         let sports = await LiveTV.games(session)
         var byId: [String: LiveChannel] = [:]
         for c in guide.channels where byId[c.id] == nil { byId[c.id] = c }

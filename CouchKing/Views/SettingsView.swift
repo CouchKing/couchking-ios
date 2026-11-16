@@ -70,6 +70,21 @@ struct SettingsView: View {
                     SettingRow(label: "Hide watched titles", value: session.pref("hideWatched", false) ? "On" : "Off") {
                         session.setPref("hideWatched", !session.pref("hideWatched", false))
                     }
+                    // guide 🔴 live-sports sections are per-profile optional (AJ Nov 15 "incase
+                    // people dont want all those at the top all the time") — Live-TV plans only:
+                    // VOD-only plans never see a toggle for a guide their plan locks. Display-only
+                    // either way; live access is decided server-side on every request.
+                    if session.liveTvOn && session.canStream {
+                        SettingRow(label: "Live sports in Guide", value: session.pref("guideSports", true) ? "On" : "Off") {
+                            session.setPref("guideSports", !session.pref("guideSports", true))
+                        }
+                    }
+                    // Top 10 Today row toggle — addon users only (a home row the shell never has)
+                    if session.hasAddon {
+                        SettingRow(label: "Top 10 Today on Home", value: session.pref("top10Row", true) ? "On" : "Off") {
+                            session.setPref("top10Row", !session.pref("top10Row", true))
+                        }
+                    }
                     NavigationLink { AccentPickerView() } label: {
                         SettingRowLabel(label: "Accent color", value: session.pref("accentName", "Royal (default)"))
                     }

@@ -48,6 +48,25 @@ struct SettingsHub: View {
                 HubRow(label: "Hide watched titles", value: hideWatched ? "On" : "Off") {
                     session.setPref("hideWatched", !hideWatched)
                 }
+                // one Group = one ViewBuilder slot (two bare rows would push the outer Group
+                // past the 10-view ViewBuilder cap)
+                Group {
+                    // guide 🔴 live-sports sections are per-profile optional (AJ Nov 15 "incase
+                    // people dont want all those at the top all the time") — Live-TV plans only:
+                    // VOD-only plans never see a toggle for a guide their plan locks. Display-only
+                    // either way; live access is decided server-side on every request.
+                    if session.liveTvOn && session.canStream {
+                        HubRow(label: "Live sports in Guide", value: guideSports ? "On" : "Off") {
+                            session.setPref("guideSports", !guideSports)
+                        }
+                    }
+                    // Top 10 Today row toggle — addon users only (a home row the shell never has)
+                    if session.hasAddon {
+                        HubRow(label: "Top 10 Today on Home", value: top10Home ? "On" : "Off") {
+                            session.setPref("top10Row", !top10Home)
+                        }
+                    }
+                }
                 HubLink(label: "Accent color", value: session.pref("accentName", "Royal (default)"), route: .accent)
                 HubRow(label: "Open on", value: landingValue) {
                     let opts = landingOptions
@@ -96,6 +115,8 @@ struct SettingsHub: View {
     private var blur: Bool { session.pref("blurUnwatched", false) }
     private var titles: Bool { session.pref("showTitles", true) }
     private var hideWatched: Bool { session.pref("hideWatched", false) }
+    private var guideSports: Bool { session.pref("guideSports", true) }
+    private var top10Home: Bool { session.pref("top10Row", true) }
     private var notif: Bool { session.pref("notifNewEps", false) }
     private var landingOptions: [String] {
         (session.liveTvOn && session.canStream) ? ["Home", "Live TV", "Library"] : ["Home", "Library"]

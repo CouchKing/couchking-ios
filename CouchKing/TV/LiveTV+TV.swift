@@ -130,7 +130,11 @@ extension LiveTVView {
         } else if chip == "Guide" {
             if guide.channels.isEmpty { TVLive.dimText("Loading the guide…") }
             else {
-                TVGuide(guide: guide, sports: regionSports.filter { !$0.live.isEmpty }, day: $day, now: now, onTune: { tuneChannel($0) }, onFav: { toggleFav($0) })
+                // 🔴 sections are per-profile optional (AJ Nov 15 "incase people dont want all
+                // those at the top all the time") — Settings ▸ "Live sports in Guide"
+                TVGuide(guide: guide,
+                        sports: session.pref("guideSports", true) ? regionSports.filter { !$0.live.isEmpty } : [],
+                        day: $day, now: now, onTune: { tuneChannel($0) }, onFav: { toggleFav($0) })
             }
         } else if chip == "★ Favorites" {
             if guide.favChannels.isEmpty {

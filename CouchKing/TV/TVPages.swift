@@ -46,7 +46,9 @@ struct TVHome: View {
                         }
                     }
                 }
-                if !top10.isEmpty {
+                // per-profile row toggle (AJ Nov 15) — gate the PAINT too so OFF bites on
+                // every build path, not just the next load
+                if !top10.isEmpty && session.pref("top10Row", true) {
                     TVRow(id: "top10", label: "Top 10 Today", labelSize: 17, page: page) {
                         ForEach(Array(top10.enumerated()), id: \.element.id) { i, m in
                             TVTop10Tile(rank: i + 1, meta: m, rowId: "top10", page: page, model: board)
@@ -84,8 +86,12 @@ struct TVHome: View {
         async let tt = TMDB.trendingDay(kind: "tv")
         let pool = Catalog.interleave(await tm, await tt, count: 20)
         guard gen == loadGen else { return }
-        top10 = Array(pool.prefix(10))
-        board.startShowcase(Array(pool.prefix(8)))
+        // Top 10 Today row is per-profile optional (AJ Nov 15) — Settings ▸ "Top 10 Today on Home"
+        top10 = session.pref("top10Row", true) ? Array(pool.prefix(10)) : []
+        // HOME showcase source (AJ Nov 15): the person's own Continue Watching, newest first —
+        // "no top 10 [banner] if there is a continue watching"; empty CW falls back to trending
+        // (Android heroSource).
+        board.startShowcase(Array((cw.isEmpty ? pool : cw.map(\.meta)).prefix(8)))
         var fresh: [(String, [Meta])] = []
         rows = []
         // Android buildShelvesInto: For You — Movies / Shows always on Home (addon algo →
