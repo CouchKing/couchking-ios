@@ -507,9 +507,37 @@ struct Catalog {
     static func fullMeta(session: Session, type: String, id: String) async -> [String: Any] {
         if let base = session.addonBase(),
            let r = try? await API.json("/meta/\(type)/\(id).json", base: base),
-           let m = r["meta"] as? [String: Any] { return m }
+           let m = r["meta"] as? [String: Any] { return await airShift(m, type: type, id: id) }
         if let r = try? await API.json("/meta/\(type)/\(id).json", base: cinemeta),
-           let m = r["meta"] as? [String: Any] { return m }
+           let m = r["meta"] as? [String: Any] { return await airShift(m, type: type, id: id) }
         return [:]
+    }
+
+    /// Streaming-vs-linear air offset (Nov 21, Yellowjackets): Cinemeta/TMDB carry the LINEAR
+    /// slot (Showtime Sunday) for shows that actually drop on streaming days earlier. The
+    /// server knows the per-show offset (/airoffset, auto-detected for Showtime/P+); shift
+    /// every episode's released stamp ONCE here — fullMeta is the choke point every episode
+    /// list goes through — so picker dates, unaired flags and +N badges read the real drop.
+    @MainActor private static var airOffCache: [String: Double] = [:]
+    @MainActor
+    private static func airShift(_ m: [String: Any], type: String, id: String) async -> [String: Any] {
+        guard type == "series", id.hasPrefix("tt"),
+              var vids = m["videos"] as? [[String: Any]], !vids.isEmpty else { return m }
+        var h = airOffCache[id]
+        if h == nil {
+            let r = try? await API.json("/airoffset/\(id)", base: "https://couchking.app")
+            h = (r?["h"] as? Double) ?? Double(r?["h"] as? Int ?? 0)
+            airOffCache[id] = h
+        }
+        guard let h, h != 0 else { return m }
+        let iso = ISO8601DateFormatter()
+        for i in vids.indices {
+            guard let rel = vids[i]["released"] as? String else { continue }
+            let ms = Session.airMs(rel)
+            guard ms > 0 else { continue }
+            vids[i]["released"] = iso.string(from: Date(timeIntervalSince1970: (Double(ms) + h * 3_600_000) / 1000))
+        }
+        var out = m; out["videos"] = vids
+        return out
     }
 }
