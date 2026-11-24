@@ -505,6 +505,12 @@ struct Catalog {
     /// Full meta (videos, backdrop, logo, genres…) — addon first, Cinemeta as guest fallback.
     @MainActor
     static func fullMeta(session: Session, type: String, id: String) async -> [String: Any] {
+        // Series via the server's /ckmeta merge (Nov 23, 7 Little Johnstons: Cinemeta froze at
+        // S5 of the show's 18 seasons with no recovery path — the server backfills episodes,
+        // images and upcoming air dates from TMDB + TVMaze). Cinemeta stays as the fallback.
+        if type == "series", id.hasPrefix("tt"),
+           let r = try? await API.json("/ckmeta/series/\(id).json", base: "https://couchking.app"),
+           let m = r["meta"] as? [String: Any], m["id"] != nil { return await airShift(m, type: type, id: id) }
         if let base = session.addonBase(),
            let r = try? await API.json("/meta/\(type)/\(id).json", base: base),
            let m = r["meta"] as? [String: Any] { return await airShift(m, type: type, id: id) }
