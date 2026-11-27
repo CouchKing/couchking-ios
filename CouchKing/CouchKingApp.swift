@@ -206,6 +206,12 @@ struct MainTabs: View {
         if session.liveTvOn && session.canStream {
             items.append(NavItem(tag: 4, label: "Live TV", icon: "dot.radiowaves.left.and.right"))
         }
+        // OFFLINE DOWNLOADS (Android full-flavor Downloads tab, mobile only): streaming
+        // accounts get the tab; it also stays while saved items exist (expired plan can
+        // still play what's already on the phone).
+        if Downloads.ENABLED && (session.canStream || !Downloads.shared.items.isEmpty) {
+            items.append(NavItem(tag: 6, label: "Downloads", icon: "arrow.down.circle.fill"))
+        }
         items.append(NavItem(tag: 5, label: "Settings", icon: "gearshape.fill"))
         return items
     }
@@ -219,6 +225,7 @@ struct MainTabs: View {
                 case 3: LibraryView()
                 case 4: LiveTVView()
                 case 5: SettingsView()
+                case 6: DownloadsView()
                 default: HomeView()
                 }
             }

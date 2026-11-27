@@ -180,6 +180,13 @@ struct DetailView: View {
                          label: session.inLibrary(meta.id) ? "In Library" : "Library") { session.toggleLibrary(meta) }
             if meta.type == "movie" {
                 ActionCircle(icon: "eye", active: session.isWatched(meta.id), label: "Watched") { session.toggleWatched(meta) }
+                // ⬇ on the movie page (Android movie-page ⬇, iPhone only): same resolved
+                // stream the play path would use, saved onto the phone for offline play
+                #if os(iOS)
+                if session.canStream {
+                    DownloadButton(meta: meta, circle: true)
+                }
+                #endif
             }
             ActionCircle(icon: "hand.thumbsup", active: session.rating(meta.id) == 1, label: "Like") {
                 session.setRating(meta.id, 1)
