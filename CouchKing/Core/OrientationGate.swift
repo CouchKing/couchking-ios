@@ -39,5 +39,17 @@ final class CKAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCe
                      supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         OrientationGate.mask
     }
+
+    /// OFFLINE DOWNLOADS: iOS relaunched/woke us to deliver background-download events.
+    /// Touching the manager recreates its URLSession (same identifier) so the delegate
+    /// re-attaches; the stored completion is called from urlSessionDidFinishEvents once
+    /// the event queue drains.
+    func application(_ application: UIApplication,
+                     handleEventsForBackgroundURLSession identifier: String,
+                     completionHandler: @escaping () -> Void) {
+        guard identifier == "app.couchking.ios.downloads" else { completionHandler(); return }
+        Downloads.shared.backgroundCompletion = completionHandler
+        Downloads.shared.wake()
+    }
 }
 #endif

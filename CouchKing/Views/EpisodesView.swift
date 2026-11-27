@@ -253,6 +253,13 @@ struct EpisodeDetailView: View {
                                 .background(Theme.card, in: Capsule())
                                 .foregroundStyle(watched ? Theme.accent : .primary)
                         }
+                        // ⬇ next to Mark watched (Android epCard ⬇, iPhone only): save this
+                        // episode onto the phone — plays with no internet from the Downloads tab
+                        #if os(iOS)
+                        if session.canStream && !ep.unaired {
+                            DownloadButton(meta: meta, season: ep.season, episode: ep.episode, epName: ep.name)
+                        }
+                        #endif
                     }
                     // STREAMS RIGHT HERE (AJ: "when I click an episode it should pop up the
                     // streams and description on one page") — no extra Play step; they load
@@ -558,6 +565,11 @@ struct PlayRequest: Identifiable {
     var subtitles: [[String: Any]] = []      // the addon's ranked subtitle files for this stream
     var placeholder = false                  // "not yet available" clip → loop + re-probe + hot-swap
     var streamPath = ""                      // "/stream/<type>/<sid>.json" to re-request the list
+    // OFFLINE PLAY (iPhone Downloads, Android offlinePlay parity): the url is a LOCAL file —
+    // the player skips every server lane (slot beat, /player/resume, probe, remux, v3 subs);
+    // intro/credits windows + downloaded .srt files ride in on the request, captured at
+    // download time. Positions still land in pstate, so CW syncs out once back online.
+    var offline = false
 
     /// IOS_CONTRACTS §5: a stream is still a placeholder when its url is the /unavailable clip
     /// (or _downloading.mp4), its name is the ⏳ progress label, or behaviorHints.notWebReady.

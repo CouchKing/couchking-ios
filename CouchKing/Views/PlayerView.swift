@@ -1297,13 +1297,18 @@ struct PlayerView: View {
         // can pass while the slot is free and the slot be taken before the press — the play
         // URL then serves the too-many message CLIP. Ask at the press instead: "no slot" →
         // the banner, and the player never opens the clip.
-        if !isLive, !request.placeholder, await session.beat() == false {
+        if !isLive, !request.placeholder, !request.offline, await session.beat() == false {
             vodKicked = true
             return
         }
         if !isLive {
-            windows = await PlayerWindows.fetch(session: session, id: request.meta.id,
-                                                season: request.season, episode: request.episode)
+            // OFFLINE PLAY: no /player/resume — the intro/credits windows captured at
+            // download time ride the request's streamWindows instead (Android offlinePlay:
+            // the extras replace the serverState fetch), and no slot beat was taken above.
+            if !request.offline {
+                windows = await PlayerWindows.fetch(session: session, id: request.meta.id,
+                                                    season: request.season, episode: request.episode)
+            }
             // chapter windows riding on the stream object override /player/resume (Android
             // `windows` intent extra)
             if let sw = request.streamWindows, sw.hasWindows { windows.adopt(sw) }
@@ -1314,7 +1319,7 @@ struct PlayerView: View {
         player.replaceCurrentItem(with: item)
         observeItem(item)
         if placeholder { startPlaceholderPoll() }
-        else if !isLive { Task { await probeMedia() } }
+        else if !isLive && !request.offline { Task { await probeMedia() } }
         // audio: the audioLang pref picks the default track (Android audioLang), English fallback
         Task {
             guard let group = try? await item.asset.loadMediaSelectionGroup(for: .audible) else { return }
@@ -1344,7 +1349,7 @@ struct PlayerView: View {
         // KNOWN-BAD CONTAINER: don't waste up to 12s waiting for AVPlayer to fail on an MKV —
         // go straight to the /webhls remux at the resume point (AJ: "playing and skipping
         // around should be smooth").
-        if !isLive, !placeholder, request.url.path.lowercased().hasSuffix(".mkv") {
+        if !isLive, !placeholder, !request.offline, request.url.path.lowercased().hasSuffix(".mkv") {
             playRemux(fromMs: r0)
             if r0 > 0 { sessionStartMs = r0 }
             timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.25, preferredTimescale: 40),
@@ -1390,16 +1395,18 @@ struct PlayerView: View {
         subTracks = isLive ? [] : rankSubtitles(request.subtitles)
         await loadSubtitles()
         await mergeV3Subs()
-        // next episode from the REAL episode list (season-crossing, no e+1 guessing)
+        // next episode from the REAL episode list (season-crossing, no e+1 guessing).
+        // OFFLINE: no next-up — advancing would resolve a NETWORK stream mid-"offline" play
+        // (Android parity: downloaded plays are self-contained)
         await fetchMetaExtras()
-        nextEp = computeNextEpisode()
+        nextEp = request.offline ? nil : computeNextEpisode()
     }
 
     /// Fill in what a bare PlayRequest lacks: the episode list (CW resume has none — the
     /// Episodes button vanished) and the title LOGO for the loading screen (list metas
     /// carry no logo; Android always shows the graphic title).
     func fetchMetaExtras() async {
-        guard !isLive, !placeholder else { return }
+        guard !isLive, !placeholder, !request.offline else { return }
         if (request.meta.logo ?? "").isEmpty || (request.season != nil && request.episodes.isEmpty) {
             let m = await Catalog.fullMeta(session: session, type: request.season != nil ? "series" : "movie",
                                            id: request.meta.id)
@@ -1594,7 +1601,7 @@ struct PlayerView: View {
         // server message clip (29-31s / 295-305s = the WAITING clip's signature → full
         // placeholder mode instead). Checked BEFORE the heartbeat ever sees a duration, so
         // the clip's clock can't reach progress/watched/next-up even when detection raced.
-        if !notice, !noticeCleared {
+        if !notice, !noticeCleared, !request.offline {
             let d = remuxed ? probedDurMs : Self.safeMs(player.currentItem?.duration.seconds ?? .nan)
             if d > 0 { noticeCheck(d) }
         }
@@ -1662,7 +1669,7 @@ struct PlayerView: View {
         // 3 consecutive "no slot" answers (~45s, so a brief carrier IP flap never kicks the
         // only watcher) = another device took over → stop with the banner (mid-play
         // enforcement, the VOD version of Live TV's 429 mid-stream).
-        if beatCount % 15 == 0 && !isLive {
+        if beatCount % 15 == 0 && !isLive && !request.offline {
             Task {
                 let ok = await session.beat()
                 await MainActor.run {
@@ -1852,6 +1859,10 @@ struct PlayerView: View {
     }
 
     func playRemux(fromMs: Int) {
+        // OFFLINE: the remux lane is a SERVER transcode — there is no server for a local file.
+        // An MKV AVPlayer can't open lands here and surfaces the error card instead of
+        // hitting /webhls with a file:// url (the Downloads tab warns on MKV up front).
+        guard !request.offline else { failed = true; return }
         guard !API.serviceBase.isEmpty else { failed = true; return }
         let b64 = API.b64url(playURL.absoluteString)
         // /webhls, NOT /webplay: AVFoundation can't consume the piped fragmented-MP4 remux
@@ -1957,7 +1968,8 @@ struct PlayerView: View {
     /// only, capped at 12, deduped against addon-delivered subs, 1.5s so it can never
     /// delay first frame.
     func mergeV3Subs() async {
-        guard !isLive, !placeholder else { return }
+        // OFFLINE: only the .srt files saved at download time exist — never the network list
+        guard !isLive, !placeholder, !request.offline else { return }
         let id = request.season != nil ? "\(request.meta.id):\(request.season!):\(request.episode ?? 1)" : request.meta.id
         let kind = request.season != nil ? "series" : "movie"
         // plain await with a 6s request timeout — the old 1.5s watchdog RACE cancelled the
@@ -1988,7 +2000,7 @@ struct PlayerView: View {
 
     func loadSubtitles() async {
         guard session.pref("subLang", "off") != "off", !placeholder, !isLive else { subIndex = -1; return }
-        if subTracks.isEmpty, let base = session.addonBase(), !isLive {
+        if subTracks.isEmpty, !request.offline, let base = session.addonBase(), !isLive {
             // the addon attaches ranked subtitle files to each stream response — refetch the
             // stream list for this item and take this stream's list
             let u = session.profileSeg.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
@@ -2311,7 +2323,7 @@ struct PlayerView: View {
         if notice { player.seek(to: .zero); player.play(); return }
         // SIGNATURE-DURATION FALLBACK (AJ Oct 16): the waiting clips are exactly ~30s/~300s —
         // if detection missed, ending one must loop + enter placeholder mode, never "finish"
-        if (29_000...31_000).contains(durMs) || (295_000...305_000).contains(durMs), !isLive {
+        if (29_000...31_000).contains(durMs) || (295_000...305_000).contains(durMs), !isLive, !request.offline {
             seek(ms: 0); player.play()
             placeholder = true
             startPlaceholderPoll()
@@ -2358,9 +2370,15 @@ struct PlayerView: View {
                                        episode: request.episode, pos: pos, dur: durMs, stop: true)
             }
         }
+        // OFFLINE items honor the Downloads tab's "Auto-delete watched" toggle — finish
+        // something and its download cleans itself up (Android watchedOffline parity)
+        #if os(iOS)
+        if request.offline, finishedHandled { Downloads.shared.watchedOffline(itemId: posKey()) }
+        #endif
         // free this device's streaming slot the INSTANT the player closes (Live TV
         // close-free parity) — the stop-tagged report above has its own guards, this never
-        if !isLive { Task { await session.beat(stop: true) } }
+        // ran for an offline play (no slot was ever taken)
+        if !isLive && !request.offline { Task { await session.beat(stop: true) } }
         pip.stop()
         hideTask?.cancel(); hideTask = nil
         shuttleTimer?.invalidate(); shuttleTimer = nil; shuttleLevel = 0
