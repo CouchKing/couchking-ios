@@ -26,6 +26,7 @@ struct LiveTVView: View {
     @State var gamesTask: Task<Void, Never>?
     @State var creator: CreatorLive?
     @State var reminders: Set<String> = []     // game ids this profile has a 🔔 on
+    @State var showMultiview = false           // ⊞ up-to-4-channels grid (iPhone)
 
     var searching: Bool { !q.trimmingCharacters(in: .whitespaces).isEmpty }
     var chips: [String] {
@@ -119,6 +120,16 @@ struct LiveTVView: View {
             .background(Theme.bg)
             .navigationTitle("Live TV")
             .toolbar {
+                // ⊞ MULTIVIEW (Nov 28, Android parity): up to 4 channels at once
+                ToolbarItem(placement: .ckTrailing) {
+                    if session.canStream && !locked {
+                        Button { showMultiview = true } label: {
+                            Image(systemName: "square.grid.2x2").font(.caption)
+                                .padding(.horizontal, 10).padding(.vertical, 7)
+                                .background(Theme.card, in: Capsule())
+                        }
+                    }
+                }
                 ToolbarItem(placement: .ckTrailing) {
                     Menu {
                         ForEach(regionOptions) { r in
@@ -133,6 +144,7 @@ struct LiveTVView: View {
             }
             .searchable(text: $q, prompt: "Channels & shows airing soon")
             .onSubmit(of: .search) { searchTask?.cancel(); Task { await runSearch() } }
+            .fullScreenCover(isPresented: $showMultiview) { MultiviewView() }
         }
     }
     #endif
