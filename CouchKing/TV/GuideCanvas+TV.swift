@@ -282,7 +282,28 @@ final class GuideCanvasUIView: UIView {
         g.setTranslation(.zero, in: self)
         shiftPx = min(max(0, shiftPx - t.x), maxShift)
         scrollYpx = min(max(0, scrollYpx - t.y), maxScrollY)
+        syncCursorToCamera()
         setNeedsDisplay()
+    }
+
+    /// PHONE-ONLY (Nov 27, "scrolling the guide the program info doesn't change"): on tvOS
+    /// every d-pad move goes through moveRow/notifyCursor so the detail card follows the
+    /// cursor. Touch panning only moved the CAMERA (shiftPx/scrollYpx) — the cursor was never
+    /// touched, so the detail card sat on the first row forever. After each pan, re-aim the
+    /// cursor at the topmost visible channel row + the entry under the viewport's left edge,
+    /// and notify only when it actually moved. tvOS is untouched by construction: this lives
+    /// inside `#if os(iOS)` and the pan recognizer is never installed on tvOS.
+    private func syncCursorToCamera() {
+        let topEdge = scrollYpx + 1
+        guard let found = rows.indices.first(where: { rows[$0].channel != nil && rowY[$0 + 1] > topEdge }),
+              let c = rows[found].channel else { return }
+        let entry = entryAtTime(c, viewLeftMs() + 60_000)
+        if found == curRow && !inChannelCol && entry == curEntry { return }
+        curRow = found; cursorChannel = c.id
+        inChannelCol = false
+        curEntry = entry
+        travelMs = entryStart(c, entry)
+        notifyCursor()
     }
     @objc private func onTap(_ g: UITapGestureRecognizer) {
         let p = g.location(in: self)
