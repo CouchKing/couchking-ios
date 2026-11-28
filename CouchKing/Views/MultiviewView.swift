@@ -60,6 +60,7 @@ struct MultiviewView: View {
     @State private var gate = ""                 // non-empty = the access-gate modal
     @State private var full: Meta? = nil         // double-tap → the real player
     @State private var showPicker = false
+    @State private var pickQ = ""                // picker search (web Live parity, AJ Nov 28)
     @State private var hint = true
     private let maxTiles = 4
     private let region = UserDefaults.standard.string(forKey: "liveRegion") ?? ""
@@ -112,7 +113,7 @@ struct MultiviewView: View {
             Platform.lockLandscape(false)
             Platform.keepAwake(false)
         }
-        .sheet(isPresented: $showPicker) { picker }
+        .sheet(isPresented: $showPicker, onDismiss: { pickQ = "" }) { picker }
         .ckFullScreenCover(item: $full, onDismiss: {
             // back from the real player: the grid is still here — resume every tile
             for t in tiles { t.player.play() }
@@ -293,18 +294,31 @@ struct MultiviewView: View {
 
     // MARK: channel picker (★ favorites first, then the lineup in guide order)
 
+    /// name OR what's airing on it right now — the same net the web Live search casts
+    private func pickMatch(_ c: LiveChannel) -> Bool {
+        let q = pickQ.trimmingCharacters(in: .whitespaces)
+        if q.isEmpty { return true }
+        if c.name.localizedCaseInsensitiveContains(q) { return true }
+        if let p = c.now(LiveTV.nowMs()), p.t.localizedCaseInsensitiveContains(q) { return true }
+        return false
+    }
+
     private var picker: some View {
-        NavigationStack {
+        let favRows = guide.favChannels.filter { guide.favs.contains($0.id) && pickMatch($0) }
+        let allRows = guide.channels.filter(pickMatch)
+        return NavigationStack {
             List {
-                if !guide.favChannels.isEmpty {
-                    Section("★ Favorites") {
-                        ForEach(guide.favChannels.filter { guide.favs.contains($0.id) }) { pickerRow($0) }
+                if !favRows.isEmpty {
+                    Section("★ Favorites") { ForEach(favRows) { pickerRow($0) } }
+                }
+                Section(favRows.isEmpty ? "Channels" : "All channels") {
+                    ForEach(allRows) { pickerRow($0) }
+                    if allRows.isEmpty && !guide.channels.isEmpty {
+                        Text("Nothing matches “\(pickQ)”").foregroundStyle(.secondary)
                     }
                 }
-                Section(guide.favChannels.isEmpty ? "Channels" : "All channels") {
-                    ForEach(guide.channels) { pickerRow($0) }
-                }
             }
+            .searchable(text: $pickQ, prompt: "Search channels")
             .navigationTitle("＋ Add a channel")
             .ckInlineTitle()
             .toolbar { ToolbarItem(placement: .ckTrailing) { Button("Done") { showPicker = false } } }
