@@ -226,7 +226,8 @@ final class Downloads: NSObject, ObservableObject, URLSessionDownloadDelegate {
             if let d = try? await API.json("/dlpick/\(m.subKey)?i=\(imdb)\(se)&t=\(t)&u=download", base: m.base),
                let opts = d["options"] as? [[String: Any]], !opts.isEmpty {
                 // options arrive best-first — [0] is the quality-floor 1080p lean pick
-                let best = opts.first(where: { Self.num($0["bytes"]) > 0 }) ?? opts[0]
+                var best = opts[0]
+                for o in opts where Self.num(o["bytes"]) > 0 { best = o; break }
                 if let us = best["url"] as? String, !us.isEmpty {
                     return make(url: us, bytes: Self.num(best["bytes"]),
                                 q: best["q"] as? String ?? "",
