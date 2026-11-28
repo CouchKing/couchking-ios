@@ -238,6 +238,13 @@ struct DownloadButton: View {
     }
 
     var body: some View {
+        // ENTITLEMENT GATE (AJ Nov 27, server /dl/<key>/allowed.json): until the server has
+        // confirmed this key may download, the control simply doesn't exist — call sites
+        // stay one guarded line and never need to know.
+        if dl.allowed { control }
+    }
+
+    private var control: some View {
         Group {
             if circle {
                 ActionCircle(icon: icon, active: st == "done", label: label) { tap() }

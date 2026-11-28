@@ -148,6 +148,52 @@ final class Downloads: NSObject, ObservableObject, URLSessionDownloadDelegate {
         return items.filter { $0.profile == pk }.sorted { $0.ts > $1.ts }
     }
 
+    // ---------------- entitlement gate (server /dl/<subKey>/allowed.json) ----------------
+
+    /// The server's verdict on whether THIS key may download (AJ Nov 27 "download button only
+    /// if that person is whitelisted", same pattern as the Live TV gate): FALSE until the
+    /// server has ever said yes — an unknown or expired key never sees the feature at all.
+    /// The last confirmed verdict persists across launches (airplane-mode playback is the
+    /// whole point of downloads, so a relaunch with no signal must not hide the library);
+    /// only a CONFIRMED {"dl":false} flips it off — and that PURGES everything saved (an
+    /// expired member keeps nothing). Network misses / non-200s keep the last word.
+    @Published private(set) var allowed = UserDefaults.standard.bool(forKey: "downloadsAllowed")
+    private var allowedAskTs: TimeInterval = 0
+
+    /// Launch + every foreground (CouchKingApp), self-throttled to one ask per 10 minutes.
+    @MainActor func refreshAllowed(session s: Session) {
+        let key = s.subKey
+        guard !key.isEmpty, let base = gateBase(s) else { return }   // no addon yet — retry next call
+        let now = Date().timeIntervalSince1970
+        guard now - allowedAskTs >= 600 else { return }
+        allowedAskTs = now
+        Task {
+            guard let r = try? await API.jsonStatus("/dl/\(key)/allowed.json", base: base, fresh: true),
+                  r.1 == 200, let ok = r.0["dl"] as? Bool else { return }
+            self.setAllowed(ok)
+        }
+    }
+
+    /// scheme://host off the installed addon url — the SAME host /dlpick answers on (the
+    /// addon and the download gate live together; no baked domain, like firstTbplay).
+    @MainActor private func gateBase(_ s: Session) -> String? {
+        guard let a = s.addons.first, var c = URLComponents(string: a.url), c.host != nil else { return nil }
+        c.path = ""; c.query = nil; c.fragment = nil
+        return c.string
+    }
+
+    @MainActor private func setAllowed(_ ok: Bool) {
+        UserDefaults.standard.set(ok, forKey: "downloadsAllowed")
+        if allowed != ok { allowed = ok }
+        guard !ok else { return }
+        // the server said no (expired / revoked / off the whitelist): an expired member keeps
+        // NOTHING — stop every transfer, then clear the Downloads dir (files + index.json)
+        for it in items { delete(it) }   // iterates a value copy; delete() mutates self.items
+        for n in (try? FileManager.default.contentsOfDirectory(atPath: dirURL.path)) ?? [] {
+            try? FileManager.default.removeItem(at: dirURL.appendingPathComponent(n))
+        }
+    }
+
     // ---------------- resolve (the ⬇ tap) ----------------
 
     /// Resolve EXACTLY like the play path, then lean-pick: ask the addon for this item's
@@ -220,6 +266,7 @@ final class Downloads: NSObject, ObservableObject, URLSessionDownloadDelegate {
     /// The confirm dialog said Download: index the item NOW (the tab lists it the moment you
     /// tap), then capture extras + start the background transfer.
     @MainActor func enqueue(_ o: Offer, session s: Session) {
+        guard allowed else { return }   // gate closed between confirm and tap — never save
         let pk = profileKey(s)
         let key = safeKey(pk, o.itemId)
         if let cur = items.first(where: { $0.key == key }),

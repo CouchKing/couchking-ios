@@ -29,7 +29,13 @@ struct CouchKingApp: App {
                 .environmentObject(session)
                 .preferredColorScheme(.dark)
                 .tint(Theme.accent)
-                .task { await session.boot() }
+                .task {
+                    #if os(iOS)
+                    // downloads entitlement: ask at launch (10-min throttled inside)
+                    Downloads.shared.refreshAllowed(session: session)
+                    #endif
+                    await session.boot()
+                }
                 // Android onResume parity: every foreground silently pulls state, refreshes
                 // cached expiry, picks up a just-assigned addon, and re-detects Live TV.
                 .onChange(of: scenePhase) { phase in
@@ -50,6 +56,10 @@ struct CouchKingApp: App {
                                 session.profilePicked = false
                             }
                         }
+                        #endif
+                        #if os(iOS)
+                        // downloads entitlement re-check (expired key → feature folds up + purge)
+                        Downloads.shared.refreshAllowed(session: session)
                         #endif
                         Task { await session.foregroundResume() }
                     }
@@ -198,6 +208,9 @@ struct MainTabs: View {
     // 6th item into a "More" tab (the "…" AJ saw once Live TV appears) — so we draw our own
     // compact bar that fits all of them (Android navTabs parity).
     private struct NavItem { let tag: Int; let label: String; let icon: String }
+    /// entitlement gate + saved list drive the Downloads tab's presence LIVE (a confirmed
+    /// "no" purges the library and the tab folds up on the spot)
+    @ObservedObject private var dl = Downloads.shared
     private var navItems: [NavItem] {
         var items = [NavItem(tag: 0, label: "Search", icon: "magnifyingglass"),
                      NavItem(tag: 1, label: "Home", icon: "house.fill"),
@@ -207,9 +220,10 @@ struct MainTabs: View {
             items.append(NavItem(tag: 4, label: "Live TV", icon: "dot.radiowaves.left.and.right"))
         }
         // OFFLINE DOWNLOADS (Android full-flavor Downloads tab, mobile only): streaming
-        // accounts get the tab; it also stays while saved items exist (expired plan can
-        // still play what's already on the phone).
-        if Downloads.ENABLED && (session.canStream || !Downloads.shared.items.isEmpty) {
+        // accounts get the tab — but ONLY once the server confirmed the key may download
+        // (/dl allowed gate, AJ Nov 27). While allowed it also stays when saved items
+        // exist, so a briefly-offline plan still plays what's already on the phone.
+        if Downloads.ENABLED && dl.allowed && (session.canStream || !dl.items.isEmpty) {
             items.append(NavItem(tag: 6, label: "Downloads", icon: "arrow.down.circle.fill"))
         }
         items.append(NavItem(tag: 5, label: "Settings", icon: "gearshape.fill"))
